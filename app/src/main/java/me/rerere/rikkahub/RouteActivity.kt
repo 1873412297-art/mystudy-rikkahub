@@ -155,6 +155,24 @@ class RouteActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // Prevent TransactionTooLargeException by stripping Compose saveable state
+        // when it grows too large. All important data (conversations, settings)
+        // is already persisted in Room DB / DataStore.
+        val composeStateKey = "androidx.lifecycle.BundlableSavedStateRegistry.key"
+        val composeBundle = outState.getBundle(composeStateKey) ?: return
+        val parcel = android.os.Parcel.obtain()
+        try {
+            composeBundle.writeToParcel(parcel, 0)
+            if (parcel.dataSize() > 500_000) {
+                outState.remove(composeStateKey)
+            }
+        } finally {
+            parcel.recycle()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         disableNavigationBarContrast()
