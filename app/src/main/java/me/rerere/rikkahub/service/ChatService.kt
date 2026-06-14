@@ -535,7 +535,7 @@ class ChatService(
                     } else {
                         it
                     }
-                },
+                }.applyEnhancementPrompt(assistant),
                 assistant = assistant,
                 conversationSystemPrompt = conversation.customSystemPrompt,
                 conversationModeInjectionIds = conversation.modeInjectionIds,
@@ -1333,4 +1333,23 @@ class ChatService(
         runCatching { job.join() }
         finishInterruptedPendingTools(conversationId)
     }
+}
+
+/**
+ * 在最后一条 USER 文本消息末尾追加增强提示词（仅作用于发送给模型的消息列表，不修改持久化的对话）。
+ * 当 [Assistant.enableEnhancementPrompt] 关闭或文本为空时直接返回原列表。
+ */
+private fun List<UIMessage>.applyEnhancementPrompt(assistant: Assistant): List<UIMessage> {
+    if (!assistant.enableEnhancementPrompt) return this
+    val extra = assistant.enhancementPrompt
+    if (extra.isBlank()) return this
+    val lastUserIdx = indexOfLast { it.role == MessageRole.USER }
+    if (lastUserIdx < 0) return this
+    val userMsg = this[lastUserIdx]
+    val parts = userMsg.parts.toMutableList()
+    val lastTextIdx = parts.indexOfLast { it is UIMessagePart.Text }
+    if (lastTextIdx < 0) return this
+    val textPart = parts[lastTextIdx] as UIMessagePart.Text
+    parts[lastTextIdx] = textPart.copy(text = textPart.text + "\n\n" + extra)
+    return toMutableList().also { it[lastUserIdx] = userMsg.copy(parts = parts) }
 }

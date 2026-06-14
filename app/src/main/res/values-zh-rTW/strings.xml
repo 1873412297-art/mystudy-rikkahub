@@ -1213,5 +1213,7 @@
   <string name="tool_ui_file">文件</string>
   <string name="backup_page_s3_path_style">路徑樣式</string>
   <string name="backup_page_s3_path_style_desc">使用 endpoint/bucket/object。關閉後使用 bucket.endpoint/object。</string>
+  <string name="assistant_page_enhancement_prompt">增強提示詞</string>
+  <string name="assistant_page_enhancement_prompt_desc">隨使用者訊息傳送給 AI，不在聊天界面顯示</string>
 </resources>
 

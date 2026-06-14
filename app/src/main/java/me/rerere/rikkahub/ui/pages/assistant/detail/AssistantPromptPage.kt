@@ -252,6 +252,45 @@ private fun AssistantPromptContent(
             )
         }
 
+        // ── 增强提示词（在最后一条用户消息后追加）──
+        Card(
+            colors = CustomColors.cardColorsOnSurfaceContainer
+        ) {
+            Column(
+                modifier = Modifier.padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                FormItem(
+                    label = {
+                        Text(stringResource(R.string.assistant_page_enhancement_prompt))
+                    },
+                    description = {
+                        Text(stringResource(R.string.assistant_page_enhancement_prompt_desc))
+                    },
+                    tail = {
+                        Switch(
+                            checked = assistant.enableEnhancementPrompt,
+                            onCheckedChange = {
+                                onUpdate(assistant.copy(enableEnhancementPrompt = it))
+                            }
+                        )
+                    }
+                )
+                if (assistant.enableEnhancementPrompt) {
+                    OutlinedTextField(
+                        value = assistant.enhancementPrompt,
+                        onValueChange = { onUpdate(assistant.copy(enhancementPrompt = it)) },
+                        label = { Text(stringResource(R.string.assistant_page_enhancement_prompt)) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp),
+                        minLines = 3,
+                        maxLines = 8,
+                    )
+                }
+            }
+        }
+
         Card(
             colors = CustomColors.cardColorsOnSurfaceContainer
         ) {

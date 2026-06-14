@@ -1214,5 +1214,7 @@
   <string name="tool_ui_replay">Replay</string>
   <string name="tool_ui_delete_memory">Delete memory</string>
   <string name="tool_ui_file">file</string>
+  <string name="assistant_page_enhancement_prompt">Enhancement Prompt</string>
+  <string name="assistant_page_enhancement_prompt_desc">Appended to the last user message before sending to the AI; not shown in chat.</string>
 </resources>
 

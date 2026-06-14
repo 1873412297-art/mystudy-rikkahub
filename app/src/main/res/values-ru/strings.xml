@@ -1215,5 +1215,7 @@
   <string name="tool_ui_file">файл</string>
   <string name="backup_page_s3_path_style">Стиль пути</string>
   <string name="backup_page_s3_path_style_desc">Используйте endpoint/bucket/object. Отключите, чтобы использовать bucket.endpoint/object.</string>
+  <string name="assistant_page_enhancement_prompt">Усиливающий промпт</string>
+  <string name="assistant_page_enhancement_prompt_desc">Отправляется AI вместе с сообщением пользователя, в чате не отображается</string>
 </resources>
 

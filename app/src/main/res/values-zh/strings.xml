@@ -1215,5 +1215,7 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="tool_ui_replay">重播</string>
   <string name="tool_ui_delete_memory">删除记忆</string>
   <string name="tool_ui_file">文件</string>
+  <string name="assistant_page_enhancement_prompt">增强提示词</string>
+  <string name="assistant_page_enhancement_prompt_desc">随用户消息发送给AI，不在聊天界面显示</string>
 </resources>
 

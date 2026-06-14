@@ -46,6 +46,8 @@ data class Assistant(
     val enableTimeReminder: Boolean = false,            // 时间间隔提醒注入
     val allowConversationSystemPrompt: Boolean = false, // 允许对话单独重写 system prompt
     val allowConversationPromptInjection: Boolean = false, // 允许对话单独绑定提示词注入
+    val enableEnhancementPrompt: Boolean = false, // 在最后一条用户消息后追加增强提示词
+    val enhancementPrompt: String = "",           // 增强提示词正文
 )
 
 @Serializable
