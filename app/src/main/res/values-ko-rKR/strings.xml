@@ -1217,5 +1217,7 @@ mDNS 주소: .local 호스트네임을 사용하며, IP를 몰라도 같은 네�
   <string name="backup_page_s3_path_style_desc">endpoint/bucket/object를 사용합니다. 끄면 bucket.endpoint/object를 사용합니다.</string>
   <string name="assistant_page_enhancement_prompt">강화 프롬프트</string>
   <string name="assistant_page_enhancement_prompt_desc">사용자 메시지와 함께 AI 에게 전송되며, 채팅 화면에는 표시되지 않습니다</string>
+  <string name="setting_display_page_auto_show_greeting_picker_title">새 대화 시 인사말 자동 선택</string>
+  <string name="setting_display_page_auto_show_greeting_picker_desc">어시스턴트에 여러 인사말이 있을 때 선택 창을 자동으로 엽니다. 끄면 캐릭터 카드 보기에서 수동 선택할 수 있습니다.</string>
 </resources>
 

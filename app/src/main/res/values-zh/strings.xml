@@ -1217,5 +1217,7 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="tool_ui_file">文件</string>
   <string name="assistant_page_enhancement_prompt">增强提示词</string>
   <string name="assistant_page_enhancement_prompt_desc">随用户消息发送给AI，不在聊天界面显示</string>
+  <string name="setting_display_page_auto_show_greeting_picker_title">新对话时自动选择开场白</string>
+  <string name="setting_display_page_auto_show_greeting_picker_desc">打开后，进入新对话且角色卡含多个开场白时自动弹出选择框；关闭则改为在「查看角色卡」里手动挑。</string>
 </resources>
 

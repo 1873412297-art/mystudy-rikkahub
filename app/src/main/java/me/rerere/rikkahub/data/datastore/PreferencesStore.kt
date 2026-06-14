@@ -599,6 +599,9 @@ data class DisplaySetting(
     val chatCustomFontName: String = "",
     val enableVolumeKeyScroll: Boolean = false,
     val volumeKeyScrollRatio: Float = 1.0f,
+    /** 新对话/角色卡含多个开场白时是否自动弹窗让用户选。
+     *  默认关闭——用户可在角色卡查看页手动选。*/
+    val autoShowGreetingPicker: Boolean = false,
 )
 
 @Serializable
