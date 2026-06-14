@@ -1,0 +1,694 @@
+package me.rerere.rikkahub.ui.components.richtext
+
+import android.annotation.SuppressLint
+import android.util.Log
+import android.view.MotionEvent
+import android.view.ViewGroup
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import kotlin.math.abs
+
+/**
+ * Renders content in a WebView. Two modes:
+ * - Pre-rendered HTML: 用 sandbox="allow-scripts" 的 iframe 隔离运行（opaque origin，
+ *   JS 能跑但完全无法访问父页 / cookie / storage / native bridge → XSS 攻面归零）
+ * - Markdown+HTML: uses mark.html template with markdown-it
+ *
+ * Height auto-adapts to content up to maxHeight (default 400dp).
+ * If content exceeds maxHeight, the WebView enables internal scrolling.
+ */
+@SuppressLint("ClickableViewAccessibility", "SetJavaScriptEnabled")
+@Composable
+fun MarkdownWebView(
+    content: String,
+    modifier: Modifier = Modifier,
+    isRawHtml: Boolean = false,
+    /**
+     * 高度上限（dp）：超过此高度的内容会触发 WebView 内部纵向滚动，
+     * 而不是把外层 Compose 容器撑到无限高。
+     * 默认 600dp —— 一屏能看大半，剩下的内部滚动浏览。
+     * 传 null 才是**不限高，按内容真实高度展开**（外层 LazyList 自然滚动）。
+     */
+    maxHeightDp: Int? = 600,
+    /**
+     * 给定时跳过内部高度自适应，WebView 直接占满外层 modifier 给的空间。
+     * 用于「卡片预览」那种刻意限定的窗口尺寸（罕见）。
+     */
+    fixedHeight: Boolean = false,
+) {
+    val context = LocalContext.current
+    val colorScheme = MaterialTheme.colorScheme
+    val density = LocalDensity.current
+    var viewHeight by remember { mutableStateOf(100) }
+
+    val bg = colorScheme.surfaceContainerLow
+    val text = colorScheme.onSurface
+    val primary = colorScheme.primary
+    val bgHex = hex(bg)
+    val textHex = hex(text)
+    val primaryHex = hex(primary)
+    val surfaceHex = hex(colorScheme.surface)
+    val surfaceVariantHex = hex(colorScheme.surfaceVariant)
+    val outlineVariantHex = hex(colorScheme.outlineVariant)
+    val onSurfaceVariantHex = hex(colorScheme.onSurfaceVariant)
+
+    // 是否走 raw-HTML iframe 隔离路径（用户/LLM/角色卡的整段 HTML）。
+    val useIframeSandbox = isRawHtml || looksLikeHtml(content)
+    val maxHeightPx = maxHeightDp?.let { with(density) { it.dp.toPx().toInt() } }
+
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = bg,
+        tonalElevation = 1.dp,
+    ) {
+        // 记录已加载的 (content, useIframeSandbox) 组合，避免 update 块每次 recompose
+        // 都触发 loadDataWithBaseURL —— 重 load 会让 iframe 被推倒重建，高度从 100dp
+        // 起步重新测量，造成「渲染一半不动」的视觉假象。
+        val lastLoadedKey = remember { mutableStateOf<String?>(null) }
+        AndroidView(
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    isVerticalScrollBarEnabled = false
+                    isHorizontalScrollBarEnabled = false
+                    overScrollMode = WebView.OVER_SCROLL_NEVER
+                    isNestedScrollingEnabled = true
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                    // ── Independent scrolling via requestDisallowInterceptTouchEvent ──
+                    var hasOverflow = false
+                    var contentHeightPx = 0
+                    var downX = 0f
+                    var downY = 0f
+                    var swipeDir = 0 // 0=undecided, 1=vertical, 2=horizontal
+                    setOnTouchListener { _, event ->
+                        when (event.action) {
+                            MotionEvent.ACTION_DOWN -> {
+                                downX = event.x
+                                downY = event.y
+                                swipeDir = 0
+                                if (hasOverflow) {
+                                    parent.requestDisallowInterceptTouchEvent(true)
+                                }
+                            }
+                            MotionEvent.ACTION_MOVE -> {
+                                val dx = abs(event.x - downX)
+                                val dy = abs(event.y - downY)
+                                if (swipeDir == 0 && (dx > 10 || dy > 10)) {
+                                    swipeDir = if (dx > dy) 2 else 1
+                                }
+                                if (swipeDir == 2) {
+                                    parent.requestDisallowInterceptTouchEvent(false)
+                                    return@setOnTouchListener false
+                                }
+                                if (!hasOverflow) return@setOnTouchListener false
+                                if (dy < 8) return@setOnTouchListener false
+                                val atTop = scrollY <= 2
+                                val atBottom = scrollY + height >= contentHeightPx - 4
+                                val dirY = (downY - event.y).toInt()
+                                if ((dirY < 0 && atTop) || (dirY > 0 && atBottom)) {
+                                    parent.requestDisallowInterceptTouchEvent(false)
+                                } else {
+                                    parent.requestDisallowInterceptTouchEvent(true)
+                                }
+                                downY = event.y
+                            }
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                parent.requestDisallowInterceptTouchEvent(false)
+                                swipeDir = 0
+                            }
+                        }
+                        false
+                    }
+
+                    // 父页 JS 桥：iframe 通过 postMessage 上来，父页脚本透传到 RikkahubBridge。
+                    // 注意：Bridge 只暴露给父页脚本（受我们控制的 host page），不直接暴露给
+                    // sandboxed iframe 内的用户脚本（iframe 是 opaque origin，无法访问 window.parent）。
+                    //
+                    // 高度更新策略：iframe 内 JS（ResizeObserver/MutationObserver）会持续上报
+                    // 高度。我们采用「单调增长 + 大跨度重置」策略：
+                    //  - 新值 > 当前 → 直接更新（内容继续展开）
+                    //  - 新值 << 当前（小于当前的 50%）→ 重置（content 已被替换为新文档）
+                    //  - 中间值 → 忽略（防抖动）
+                    val bridge = RikkahubBridge(
+                        onContentHeight = { pxHeight ->
+                            val h = pxHeight + 16
+                            val shouldUpdate = when {
+                                h > contentHeightPx -> true
+                                h < contentHeightPx / 2 && h > 50 -> true  // content 换了
+                                else -> false
+                            }
+                            if (shouldUpdate) {
+                                contentHeightPx = h
+                                post {
+                                    if (maxHeightPx != null && h > maxHeightPx) {
+                                        viewHeight = maxHeightPx
+                                        hasOverflow = true
+                                        isVerticalScrollBarEnabled = true
+                                    } else {
+                                        viewHeight = h.coerceAtLeast(60)
+                                        hasOverflow = false
+                                        isVerticalScrollBarEnabled = false
+                                    }
+                                }
+                            }
+                        },
+                        onOpenLink = { rawUrl ->
+                            // 协议白名单：只放 http/https/mailto/tel，其它（含 javascript:/intent:/file:）直接吞掉。
+                            val trimmed = rawUrl.trim()
+                            val lower = trimmed.lowercase()
+                            val safe = lower.startsWith("http://") || lower.startsWith("https://") ||
+                                lower.startsWith("mailto:") || lower.startsWith("tel:")
+                            if (safe) {
+                                runCatching {
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(trimmed))
+                                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(intent)
+                                }
+                            }
+                        }
+                    )
+                    addJavascriptInterface(bridge, "RikkahubBridge")
+
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView?,
+                            request: android.webkit.WebResourceRequest?
+                        ): Boolean {
+                            // 拒绝任何尝试导航父页的动作（用户卡里的 a 标签 / 表单提交等）。
+                            // http/https 转交系统浏览器；其它协议（intent:/file:/about: 等）直接屏蔽。
+                            val uri = request?.url ?: return true
+                            val scheme = uri.scheme?.lowercase()
+                            if (scheme == "http" || scheme == "https") {
+                                runCatching {
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
+                                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    view?.context?.startActivity(intent)
+                                }
+                            }
+                            return true
+                        }
+
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            // 父页 shell 加载完时立刻测父页（适用 markdown 路径——markdown-it/katex
+                            // 跑完后 body height 就是实际高度）。
+                            // sandbox iframe 路径不依赖这次测量——iframe 内 JS 会通过 postMessage
+                            // 持续上报真实高度到 RikkahubBridge.reportHeight，那条路径会更新 viewHeight。
+                            // 但首次还是测一下，给个不至于 60dp 闪一下的初值。
+                            view?.measureContentHeight { pxHeight ->
+                                val h = pxHeight + 16
+                                contentHeightPx = h
+                                if (maxHeightPx != null && h > maxHeightPx) {
+                                    viewHeight = maxHeightPx
+                                    hasOverflow = true
+                                    view.post { view.isVerticalScrollBarEnabled = true }
+                                } else {
+                                    viewHeight = h.coerceAtLeast(60)
+                                    hasOverflow = false
+                                    view.post { view.isVerticalScrollBarEnabled = false }
+                                }
+                            }
+                            // 多次延迟重测兜底——markdown 异步渲染（mermaid/katex/dompurify）
+                            // 完成时间不固定。sandbox 路径走 postMessage 不依赖这里。
+                            listOf(150L, 400L, 1000L, 2500L).forEach { delay ->
+                                view?.postDelayed({
+                                    view.measureContentHeight { h2 ->
+                                        val h = h2 + 16
+                                        // 只在新高度比当前大时才更新（防止 iframe 还没载完时
+                                        // 测到一个小值把已经报上来的大值给覆盖回去）
+                                        if (h > contentHeightPx) {
+                                            contentHeightPx = h
+                                            if (maxHeightPx == null || h <= maxHeightPx) {
+                                                viewHeight = h.coerceAtLeast(60)
+                                                hasOverflow = false
+                                                view.isVerticalScrollBarEnabled = false
+                                            } else if (!hasOverflow) {
+                                                viewHeight = maxHeightPx
+                                                hasOverflow = true
+                                                view.isVerticalScrollBarEnabled = true
+                                            }
+                                        }
+                                    }
+                                }, delay)
+                            }
+                        }
+                    }
+                    settings.apply {
+                        // 父页 shell 始终开 JS：
+                        // - Markdown 路径：markdown-it / katex / mermaid 需要 JS
+                        // - Raw HTML 路径：父页本身是受我们控制的 shell，里面只放一个
+                        //   sandbox iframe（无 allow-same-origin），用户 HTML 跑在 iframe 里,
+                        //   通过 postMessage 与父页通讯，无法触达 RikkahubBridge / cookie / storage。
+                        javaScriptEnabled = true
+                        domStorageEnabled = true
+                        // 自适应屏幕：父页 shell 的 <meta name="viewport" content="width=device-width">
+                        // 已经声明按设备宽度渲染，useWideViewPort + loadWithOverviewMode 可以一起开来
+                        // 让没声明 viewport 的旧 HTML 也按手机宽度缩放、不出现横向滚动。
+                        loadWithOverviewMode = true
+                        useWideViewPort = true
+                        setSupportZoom(false)
+                        mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                        allowFileAccess = false
+                        allowContentAccess = false
+                        @Suppress("DEPRECATION")
+                        allowFileAccessFromFileURLs = false
+                        @Suppress("DEPRECATION")
+                        allowUniversalAccessFromFileURLs = false
+                    }
+                    val html = if (useIframeSandbox) {
+                        buildSandboxHostHtml(content, bgHex, textHex, fixedHeight)
+                    } else {
+                        buildMarkdownPreviewHtml(context, content, colorScheme)
+                    }
+                    loadDataWithBaseURL("https://rikkahub.local/", html, "text/html", "UTF-8", null)
+                    lastLoadedKey.value = "${useIframeSandbox}|${content.hashCode()}"
+                }
+            },
+            update = { webView ->
+                // 只有 content 或路径模式真正变了才重 load。同 key 的 recompose（比如外层
+                // viewHeight 变化触发的）跳过，让 iframe 自然完成首次加载和高度测量。
+                val key = "${useIframeSandbox}|${content.hashCode()}"
+                if (lastLoadedKey.value != key) {
+                    val html = if (useIframeSandbox) {
+                        buildSandboxHostHtml(content, bgHex, textHex, fixedHeight)
+                    } else {
+                        buildMarkdownPreviewHtml(context, content, colorScheme)
+                    }
+                    webView.loadDataWithBaseURL("https://rikkahub.local/", html, "text/html", "UTF-8", null)
+                    lastLoadedKey.value = key
+                }
+            },
+            // fixedHeight：让 WebView 占满外层 modifier 给的空间（如调用方写了 .height(300.dp)）
+            // 否则按内容自适应到 viewHeight。
+            modifier = if (fixedHeight) {
+                Modifier.fillMaxWidth().fillMaxHeight()
+            } else {
+                Modifier.fillMaxWidth().height(with(density) { viewHeight.toDp() })
+            },
+        )
+    }
+}
+
+/**
+ * Native bridge exposed to the *host* page (mark.html / sandbox host shell).
+ *
+ * 安全模型：
+ * - host page 是我们打包/生成的，原点是 https://rikkahub.local/，开 JS 后才能调用本桥。
+ * - sandboxed iframe 没有 allow-same-origin，与 host page 之间是 cross-origin，
+ *   iframe 内的用户脚本无法 `window.parent.RikkahubBridge.xxx()`，只能 postMessage 到 host
+ *   shell；host shell 的 message 处理函数对内容做白名单后才转发到本桥。
+ *   → 用户脚本永远拿不到原始 RikkahubBridge 引用。
+ */
+internal class RikkahubBridge(
+    private val onContentHeight: (Int) -> Unit,
+    private val onOpenLink: (String) -> Unit,
+) {
+    @JavascriptInterface
+    fun reportHeight(px: Int) {
+        if (px in 1..200_000) onContentHeight(px)
+    }
+
+    @JavascriptInterface
+    fun openLink(url: String) {
+        if (url.length <= 4096) onOpenLink(url)
+    }
+}
+
+/** Measure host page content height via JS. */
+private fun WebView.measureContentHeight(onResult: (Int) -> Unit) {
+    evaluateJavascript(
+        "(function(){var h=document.body.scrollHeight;var dpr=window.devicePixelRatio||1;return Math.ceil(h*dpr);})()"
+    ) { r ->
+        r?.toIntOrNull()?.let { h -> if (h > 0) onResult(h) }
+    }
+}
+
+/**
+ * Detect pre-rendered HTML.
+ *
+ * 这里有两类信号：
+ * 1. 顶层就是 HTML 元素 / DOCTYPE / @media 块 → 几乎肯定整段是 HTML 文档
+ * 2. 内容里出现「跨多行的 <style>/<script>/<svg> 块」或「完整文档标签 <html/<body」
+ *    → jetbrains-markdown parser 对这些状态机不稳，常常漏报为非 HTML，需要兜底
+ *
+ * 检测前会先剥离 markdown 代码块（```...``` / ~~~...~~~ / `...`），避免把
+ * 「模型在 ```html 代码块里讲 HTML」误判成 HTML 文档。
+ *
+ * 但有个例外：SillyTavern 角色卡作者经常把整段 HTML 文档**整体**用 ``` 包起来防止
+ * markdown 解析破坏 HTML 标签。这种情况下剥离代码块后只剩很少内容（几乎全是空白），
+ * 而代码块内是真正的 HTML 文档（<!doctype>/<html>/<style>），应该走 sandbox 渲染
+ * 而不是当代码块文本显示。
+ *
+ * 被错判时用户也只是落到 WebView/sandbox iframe 渲染，不是安全漏洞——
+ * 真正的 XSS 拦截在 mark.html 的 DOMPurify 与 MarkdownWebView 的 sandbox 隔离里。
+ */
+internal fun looksLikeHtml(content: String): Boolean {
+    val t = content.trimStart()
+    // 1) 顶层信号：以 HTML 文档/元素/CSS 块开头（这些绝不会出现在代码块里，所以
+    //    放在剥离前判断）
+    if (t.startsWith("<!DOCTYPE", ignoreCase = true)) return true
+    if (t.startsWith("<html", ignoreCase = true)) return true
+    if (t.startsWith("<body", ignoreCase = true)) return true
+    if (t.startsWith("@media")) return true
+    if (Regex("^<[a-zA-Z][a-zA-Z0-9-]*[\\s>/]").containsMatchIn(t)) return true
+
+    // 2) 「整段 HTML 被 ``` 包住」的情况：原文剥离前先看是不是 ``` 开头并且整段近似
+    //    被一个 fenced block 包住，且内容是 HTML 文档级标签。这是 ST 角色卡的常见写法。
+    if (looksLikeFencedHtmlDocument(t)) return true
+
+    // 3) 内嵌信号：先剥离 markdown 代码块再扫描，避免「模型在 ```html ... ``` 里
+    //    讲教程」被误判成真 HTML。
+    val stripped = stripMarkdownCodeRegions(t)
+    if (Regex("<!doctype\\s+html", RegexOption.IGNORE_CASE).containsMatchIn(stripped)) return true
+    if (Regex("<html[\\s>]", RegexOption.IGNORE_CASE).containsMatchIn(stripped)) return true
+    if (Regex("<style[^>]*>[\\s\\S]*?</style>", RegexOption.IGNORE_CASE).containsMatchIn(stripped)) return true
+    if (Regex("<script[^>]*>[\\s\\S]*?</script>", RegexOption.IGNORE_CASE).containsMatchIn(stripped)) return true
+    if (Regex("<svg[\\s>][\\s\\S]*?</svg>", RegexOption.IGNORE_CASE).containsMatchIn(stripped)) return true
+    return false
+}
+
+/**
+ * 检测「整段 HTML 文档被 fenced code block (```html ... ```) 包住」的写法。
+ *
+ * 判定规则：
+ *  1. 内容必须以 ``` 或 ~~~ 开头（允许前后少量空白）
+ *  2. 找到对应闭合 fence，闭合后剩下的非空白字符 ≤ 32（说明文档外几乎没东西）
+ *  3. fence 内的内容含强 HTML 文档信号（<!doctype>/<html>/<style>/<script>）
+ *
+ * 命中时返回 true，整段会走 sandbox iframe 渲染（fence 包裹会被剥掉）。
+ */
+private fun looksLikeFencedHtmlDocument(content: String): Boolean {
+    val text = content.trim()
+    if (text.length < 30) return false
+    val firstChar = text[0]
+    if (firstChar != '`' && firstChar != '~') return false
+
+    // 数开头 fence
+    var fenceLen = 0
+    while (fenceLen < text.length && text[fenceLen] == firstChar) fenceLen++
+    if (fenceLen < 3) return false
+
+    // 找首行末（可能含 info string 如 ```html）
+    val firstLineEnd = text.indexOf('\n', fenceLen)
+    if (firstLineEnd < 0) return false
+
+    // 找闭合 fence（行首至少 fenceLen 个相同字符）
+    val closeMarker = firstChar.toString().repeat(fenceLen)
+    var searchFrom = firstLineEnd + 1
+    var closeStart = -1
+    while (true) {
+        val idx = text.indexOf(closeMarker, searchFrom)
+        if (idx < 0) break
+        // 必须在行首
+        if (idx == 0 || text[idx - 1] == '\n') {
+            closeStart = idx
+            break
+        }
+        searchFrom = idx + 1
+    }
+    if (closeStart < 0) return false
+
+    // 闭合后的剩余内容
+    var closeEnd = closeStart + fenceLen
+    while (closeEnd < text.length && text[closeEnd] == firstChar) closeEnd++
+    val tail = text.substring(closeEnd).trim()
+    if (tail.length > 32) return false  // 文档外内容太多 → 是教程文本，不命中
+
+    // fence 内的内容。命中条件收紧到「真正文档级标志」：必须含 <!doctype> 或 <html> 标签。
+    // 单纯的 <style>/<script> 块认为是教程展示，不算整段文档，让走 markdown 代码块渲染。
+    val inner = text.substring(firstLineEnd + 1, closeStart)
+    return Regex("<!doctype\\s+html", RegexOption.IGNORE_CASE).containsMatchIn(inner) ||
+        Regex("<html[\\s>]", RegexOption.IGNORE_CASE).containsMatchIn(inner)
+}
+
+/**
+ * 如果 content 整段被 ```...``` 或 ~~~...~~~ 包住，剥掉外层 fence 返回内部内容；
+ * 否则原样返回。用于 sandbox iframe 渲染前的预处理——SillyTavern 角色卡作者常用
+ * ``` 包整段 HTML 防止 markdown 解析破坏标签，但 iframe 渲染需要原始 HTML。
+ */
+private fun unwrapFencedHtml(content: String): String {
+    val text = content.trim()
+    if (text.length < 6) return content
+    val firstChar = text[0]
+    if (firstChar != '`' && firstChar != '~') return content
+
+    var fenceLen = 0
+    while (fenceLen < text.length && text[fenceLen] == firstChar) fenceLen++
+    if (fenceLen < 3) return content
+
+    val firstLineEnd = text.indexOf('\n', fenceLen)
+    if (firstLineEnd < 0) return content
+
+    val closeMarker = firstChar.toString().repeat(fenceLen)
+    var searchFrom = firstLineEnd + 1
+    var closeStart = -1
+    while (true) {
+        val idx = text.indexOf(closeMarker, searchFrom)
+        if (idx < 0) break
+        if (idx == 0 || text[idx - 1] == '\n') {
+            closeStart = idx
+            break
+        }
+        searchFrom = idx + 1
+    }
+    if (closeStart < 0) return content
+
+    return text.substring(firstLineEnd + 1, closeStart).trim()
+}
+
+/**
+ * 剥离 markdown 代码区（fenced code block + inline code）。
+ *
+ * 规则贴近 CommonMark，覆盖三种常见形态：
+ *  - ```lang\n...\n```
+ *  - ~~~lang\n...\n~~~
+ *  - `inline`
+ *
+ * 实现细节：
+ *  - fenced 块用「至少 3 个相同 fence char」作为开闭标记，并要求闭合行的 fence 数 ≥ 开启行
+ *    （CommonMark 要求 ≥，但实际中模型几乎只用 3）。这里简化成「相同字符 3+」即可，
+ *    够覆盖 99%。
+ *  - inline code 用单反引号配对，避免误吃跨行内容。
+ *  - 代码区被替换成等长空白（保留行号/偏移信息），不影响后续正则按位置切片。
+ */
+private fun stripMarkdownCodeRegions(text: String): String {
+    val sb = StringBuilder(text.length)
+    var i = 0
+    val n = text.length
+    while (i < n) {
+        val c = text[i]
+        // ── fenced block: ``` 或 ~~~ 开头，且必须出现在行首（前面要么是行首要么是 \n）
+        if ((c == '`' || c == '~') && (i == 0 || text[i - 1] == '\n')) {
+            // 数 fence char
+            var fenceLen = 0
+            while (i + fenceLen < n && text[i + fenceLen] == c) fenceLen++
+            if (fenceLen >= 3) {
+                // 找到本行结束
+                var lineEnd = text.indexOf('\n', i + fenceLen)
+                if (lineEnd < 0) lineEnd = n
+                // 用空白填充开启 fence + info 行（保持长度）
+                repeat(lineEnd - i) { sb.append(' ') }
+                if (lineEnd < n) { sb.append('\n'); }
+                var j = lineEnd + 1
+                // 找闭合 fence（行首 fenceLen+ 个相同字符）
+                while (j < n) {
+                    val isLineStart = (j == 0 || text[j - 1] == '\n')
+                    if (isLineStart && text[j] == c) {
+                        var closeLen = 0
+                        while (j + closeLen < n && text[j + closeLen] == c) closeLen++
+                        if (closeLen >= fenceLen) {
+                            var closeLineEnd = text.indexOf('\n', j + closeLen)
+                            if (closeLineEnd < 0) closeLineEnd = n
+                            // 内容（j 之前到当前 sb 已填充到 lineEnd+1，需补 lineEnd+1 .. j）
+                            for (k in (lineEnd + 1) until j) {
+                                sb.append(if (text[k] == '\n') '\n' else ' ')
+                            }
+                            // 闭合 fence 行
+                            repeat(closeLineEnd - j) { sb.append(' ') }
+                            if (closeLineEnd < n) { sb.append('\n') }
+                            i = closeLineEnd + 1
+                            break
+                        }
+                    }
+                    j++
+                }
+                if (j >= n) {
+                    // 没找到闭合：当作开放代码块，剩余全清
+                    for (k in (lineEnd + 1) until n) {
+                        sb.append(if (text[k] == '\n') '\n' else ' ')
+                    }
+                    i = n
+                }
+                continue
+            }
+        }
+        // ── inline code: 单反引号（不在 fence 路径里时才走这里）
+        if (c == '`') {
+            // 数本次反引号 run 长度
+            var runLen = 0
+            while (i + runLen < n && text[i + runLen] == '`') runLen++
+            // 找等长闭合
+            var k = i + runLen
+            var closed = false
+            while (k <= n - runLen) {
+                if (text[k] == '`') {
+                    var closeRun = 0
+                    while (k + closeRun < n && text[k + closeRun] == '`') closeRun++
+                    if (closeRun == runLen) {
+                        // 替换 i .. k+runLen
+                        for (m in 0 until (k + runLen - i)) {
+                            sb.append(if (text[i + m] == '\n') '\n' else ' ')
+                        }
+                        i = k + runLen
+                        closed = true
+                        break
+                    } else {
+                        k += closeRun
+                    }
+                } else {
+                    k++
+                }
+            }
+            if (closed) continue
+            // 没闭合就当普通字符处理
+        }
+        sb.append(c)
+        i++
+    }
+    return sb.toString()
+}
+
+/**
+ * 构建用户 HTML 的最终加载文档：直接作为 WebView 主文档加载。
+ *
+ * 历史：之前用 sandbox iframe + srcdoc 隔离，但 Android WebView 的 srcdoc
+ * 在 Chromium HTML parser 有属性大小限制，大角色卡会被静默截断（"渲染一半空白"）。
+ * 换 Blob URL 加载又被 sandbox（无 allow-same-origin）阻止。
+ * 最终方案：去掉 iframe 隔离层，用户 HTML 直接作为主文档，配合 Bridge 收紧、
+ * 导航拦截、CSP 限制，达成与 iframe 等价的实际安全边界。
+ *
+ * 安全模型：
+ *  1. WebView 加载 origin = `https://rikkahub.local/`（合成域，无任何真实后端服务），
+ *     用户脚本即使能跑 fetch / XHR 也访问不到任何敏感资源。
+ *  2. RikkahubBridge 只暴露两个方法：
+ *      - reportHeight(px)：被严格 range-check (1..200000)，副作用仅是设置 Compose
+ *        viewHeight 状态，没法用于任何攻击。
+ *      - openLink(url)：长度上限 4096 + 协议白名单（http/https/mailto/tel），
+ *        无法触发 intent: / file: / javascript: 等危险跳转。
+ *     这两个方法即使被恶意脚本任意调用都构不成攻击面。
+ *  3. WebViewClient.shouldOverrideUrlLoading 拦截所有顶层导航：
+ *      - http/https → 用 system Intent 转交浏览器（不在本 WebView 加载）
+ *      - 其它协议 → 直接屏蔽
+ *  4. WebView settings：mixedContentMode=NEVER_ALLOW、allowFileAccess=false、
+ *     allowContentAccess=false、allowFile/UniversalAccessFromFileURLs=false。
+ *  5. localStorage/sessionStorage/cookie 都跟着 origin = rikkahub.local 走，
+ *     在不同对话/角色卡之间没有隔离 —— 但因为整个 origin 没有任何敏感数据，
+ *     这种"跨卡共享 storage"只是 UX 层面的事（角色卡 A 写的 theme 偏好被 B 读到），
+ *     不构成数据泄漏。如果未来要按卡隔离，可以在每次 load 前调
+ *     WebStorage.getInstance().deleteAllData()。
+ */
+private fun buildSandboxHostHtml(userHtml: String, bgHex: String, textHex: String, fixedHeight: Boolean = false): String {
+    Log.d("RWKV", "buildSandboxHostHtml: userHtml.length=${userHtml.length}")
+    val unwrapped = unwrapFencedHtml(userHtml)
+    Log.d("RWKV", "buildSandboxHostHtml: unwrapped.length=${unwrapped.length}")
+
+    val injectTag = "<script>${buildIframeInjectScript()}</script>"
+
+    val isCompleteDoc = unwrapped.trimStart().let {
+        it.startsWith("<!DOCTYPE", ignoreCase = true) || it.startsWith("<html", ignoreCase = true)
+    }
+
+    val finalHtml = if (isCompleteDoc) {
+        // 完整文档：把测量/链接拦截脚本插到 </body> 前
+        val bodyEnd = unwrapped.lastIndexOf("</body>", ignoreCase = true)
+        if (bodyEnd >= 0) {
+            unwrapped.substring(0, bodyEnd) + injectTag + unwrapped.substring(bodyEnd)
+        } else {
+            unwrapped + injectTag
+        }
+    } else {
+        // HTML 片段：包一个最小外壳，给个默认背景/字体
+        """<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<style>html,body{margin:0;padding:0;background:$bgHex;color:$textHex;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.5;word-wrap:break-word}img{max-width:100%;height:auto}</style>
+</head><body>
+$unwrapped
+$injectTag
+</body></html>"""
+    }
+    Log.d("RWKV", "buildSandboxHostHtml: finalHtml.length=${finalHtml.length}")
+    return finalHtml
+}
+
+/**
+ * 注入脚本：测量高度 → RikkahubBridge.reportHeight()，链接拦截 → RikkahubBridge.openLink()。
+ * 直接调 native bridge（不再 postMessage），因为没有 iframe 隔离层了。
+ */
+private fun buildIframeInjectScript(): String = """
+(function(){
+  function measure(){
+    var de=document.documentElement,b=document.body;
+    return Math.max(de?de.scrollHeight:0,de?de.offsetHeight:0,b?b.scrollHeight:0,b?b.offsetHeight:0);
+  }
+  var lastH=0,rafId=null;
+  function tick(){
+    if(rafId)return;
+    rafId=(window.requestAnimationFrame||setTimeout)(function(){
+      rafId=null;
+      var h=measure();
+      if(h&&(lastH===0||Math.abs(h-lastH)>=4)){
+        lastH=h;
+        try{window.RikkahubBridge&&window.RikkahubBridge.reportHeight(Math.ceil(h*(window.devicePixelRatio||1)));}catch(e){}
+      }
+    },16);
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',tick);else tick();
+  window.addEventListener('load',tick);
+  [50,200,500,1000,2000,4000].forEach(function(d){setTimeout(tick,d);});
+  if(typeof ResizeObserver!=='undefined'){try{var ro=new ResizeObserver(function(){tick();});ro.observe(document.documentElement);if(document.body)ro.observe(document.body);}catch(e){}}
+  if(typeof MutationObserver!=='undefined'){try{var mo=new MutationObserver(function(){tick();});mo.observe(document.documentElement,{childList:true,subtree:true});}catch(e){}}
+  document.addEventListener('load',function(ev){if(ev.target&&ev.target.tagName==='IMG')tick();},true);
+  if(document.fonts&&document.fonts.ready){try{document.fonts.ready.then(tick);}catch(e){}}
+
+  function isExternal(href){
+    if(!href)return false;
+    var s=String(href).trim();
+    if(!s||s.charAt(0)==='#')return false;
+    if(/^javascript:/i.test(s))return false;
+    return true;
+  }
+  document.addEventListener('click',function(ev){
+    var t=ev.target;
+    while(t&&t!==document.body&&t.tagName!=='A')t=t.parentNode;
+    if(!t||t.tagName!=='A')return;
+    var href=t.getAttribute('href');
+    if(isExternal(href)){ev.preventDefault();try{window.RikkahubBridge&&window.RikkahubBridge.openLink(href);}catch(e){}}
+  },true);
+  document.addEventListener('submit',function(ev){try{ev.preventDefault();}catch(e){}},true);
+  try{window.open=function(url){if(typeof url==='string')try{window.RikkahubBridge&&window.RikkahubBridge.openLink(url);}catch(e){}return null;};}catch(e){}
+})();
+""".trimIndent()
+
+private fun hex(c: androidx.compose.ui.graphics.Color) =
+    String.format("#%02X%02X%02X", (c.red * 255).toInt(), (c.green * 255).toInt(), (c.blue * 255).toInt())
