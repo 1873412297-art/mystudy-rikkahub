@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
@@ -59,7 +60,9 @@ import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
+import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.components.ai.ChatInput
@@ -294,7 +297,22 @@ private fun ChatPageContent(
                 )
             },
             bottomBar = {
-                ChatInput(
+                Column {
+                    val selectedIds = vm.selectedGroupMemberIds.collectAsStateWithLifecycle().value
+                    val ga = setting.assistants.find { it.id == conversation.assistantId }
+                    val isGrp = ga != null && ga.assistantType == AssistantType.GROUP &&
+                        ga.turnTakingStrategy == TurnTakingStrategy.MANUAL && ga.groupMembers.isNotEmpty()
+                    if (isGrp) {
+                        GroupMemberSelector(
+                            members = ga!!.groupMembers,
+                            selectedMemberIds = selectedIds,
+                            settings = setting,
+                            onToggle = { vm.toggleGroupMember(it) },
+                            onSelectionChange = { vm.setGroupMemberSelection(it) },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
+                    }
+                    ChatInput(
                     state = inputState,
                     loading = loadingJob != null,
                     settings = setting,
@@ -320,9 +338,18 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
-                            vm.handleMessageSend(inputState.getContents())
-                            scope.launch {
-                                chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
+                            if (isGrp) {
+                                if (selectedIds.isNotEmpty()) {
+                                    vm.handleGroupSend(content = inputState.getContents())
+                                } else {
+                                    toaster.show("请先选择发言角色")
+                                    return@ChatInput
+                                }
+                            } else {
+                                vm.handleMessageSend(inputState.getContents())
+                                scope.launch {
+                                    chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
+                                }
                             }
                         }
                         inputState.clearInput()
@@ -372,6 +399,7 @@ private fun ChatPageContent(
                         vm.handleCompressContext(additionalPrompt, targetTokens, keepRecentMessages)
                     },
                 )
+                }
             },
             containerColor = Color.Transparent,
         ) { innerPadding ->

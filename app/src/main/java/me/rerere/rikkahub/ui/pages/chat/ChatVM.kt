@@ -14,11 +14,14 @@ import androidx.lifecycle.viewModelScope
 import com.google.firebase.analytics.FirebaseAnalytics
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessage
@@ -119,6 +122,20 @@ class ChatVM(
 
     fun clearAllErrors() = chatService.clearAllErrors()
 
+    // ── 群组手动模式：选中成员状态（会话级，由 ChatPage 读取并驱动 UI）──
+    private val _selectedGroupMemberIds = MutableStateFlow<List<Uuid>>(emptyList())
+    val selectedGroupMemberIds: StateFlow<List<Uuid>> = _selectedGroupMemberIds.asStateFlow()
+
+    fun toggleGroupMember(memberId: Uuid) {
+        _selectedGroupMemberIds.update { ids ->
+            if (memberId in ids) ids - memberId else ids + memberId
+        }
+    }
+
+    fun setGroupMemberSelection(ids: List<Uuid>) {
+        _selectedGroupMemberIds.value = ids
+    }
+
     /** 触发群组指定成员回复 —— 仅手动模式下有效。 */
     fun triggerMember(memberId: Uuid) {
         viewModelScope.launch {
@@ -138,9 +155,9 @@ class ChatVM(
 
     /**
      * 群组手动模式批量发送：先写入用户消息（非空时），再依次触发每个指定成员回复。
-     * 所有步骤共用一个协程 scope，被取消时整个链中断。
+     * 不传 memberIds 时自动使用当前 VM 内的 _selectedGroupMemberIds。
      */
-    fun handleGroupSend(memberIds: List<Uuid>, content: List<UIMessagePart>) {
+    fun handleGroupSend(memberIds: List<Uuid> = _selectedGroupMemberIds.value, content: List<UIMessagePart>) {
         viewModelScope.launch {
             val isEmpty = content.isEmpty() ||
                 content.all { it is UIMessagePart.Text && it.text.isBlank() }
