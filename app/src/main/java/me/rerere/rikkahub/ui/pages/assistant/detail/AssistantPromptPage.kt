@@ -419,7 +419,7 @@ private fun AssistantPromptContent(
                             ChatMessage(
                                 node = message.toMessageNode(),
                                 onFork = {},
-                                onRegenerate = {},
+                                onRegenerate = { },
                                 onEdit = {},
                                 onShare = {},
                                 onDelete = {},

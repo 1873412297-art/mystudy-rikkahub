@@ -61,13 +61,38 @@ fun ChatMessageAssistantAvatar(
     val settings = LocalSettings.current
     val showIcon = settings.displaySetting.showModelIcon
     val useAssistantAvatar = assistant?.useAssistantAvatar == true
-    if (message.role == MessageRole.ASSISTANT && (model != null || useAssistantAvatar)) {
+    val isGroupMember = message.memberId != null && assistant?.assistantType == me.rerere.rikkahub.data.model.AssistantType.GROUP
+    val groupMember = if (isGroupMember) assistant?.groupMembers?.find { it.id == message.memberId } else null
+    if (message.role == MessageRole.ASSISTANT && (model != null || useAssistantAvatar || isGroupMember)) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
             modifier = modifier
         ) {
-            if (useAssistantAvatar) {
+            if (isGroupMember && groupMember != null) {
+                val memberName = groupMember.displayName.ifBlank { assistant?.name ?: "?" }
+                if (showIcon) {
+                    UIAvatar(
+                        name = memberName,
+                        modifier = Modifier.size(28.dp),
+                        value = groupMember.avatar,
+                        loading = loading,
+                    )
+                }
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (settings.displaySetting.showModelName) {
+                        Text(
+                            text = memberName,
+                            style = MaterialTheme.typography.labelLargeEmphasized,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            } else if (useAssistantAvatar) {
                 if (showIcon) {
                     UIAvatar(
                         name = assistant.name,

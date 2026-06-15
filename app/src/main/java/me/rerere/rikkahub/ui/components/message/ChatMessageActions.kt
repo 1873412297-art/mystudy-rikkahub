@@ -70,16 +70,20 @@ fun ColumnScope.ChatMessageActionButtons(
     message: UIMessage,
     node: MessageNode,
     onUpdate: (MessageNode) -> Unit,
-    onRegenerate: () -> Unit,
+    onRegenerate: (memberId: kotlin.uuid.Uuid?) -> Unit,
     onOpenActionSheet: () -> Unit,
     onTranslate: ((UIMessage, Locale) -> Unit)? = null,
     onClearTranslation: (UIMessage) -> Unit = {},
+    assistant: me.rerere.rikkahub.data.model.Assistant? = null,
+    settingsForGroup: me.rerere.rikkahub.data.datastore.Settings? = null,
 ) {
     val context = LocalContext.current
     val settings = LocalSettings.current
     var isPendingDelete by remember { mutableStateOf(false) }
     var showTranslateDialog by remember { mutableStateOf(false) }
     var showRegenerateConfirm by remember { mutableStateOf(false) }
+    var showRegenerateMemberPicker by remember { mutableStateOf(false) }
+    val isGroupMode = assistant?.assistantType == me.rerere.rikkahub.data.model.AssistantType.GROUP
 
     LaunchedEffect(isPendingDelete) {
         if (isPendingDelete) {
@@ -111,10 +115,10 @@ fun ColumnScope.ChatMessageActionButtons(
             modifier = Modifier
                 .clip(CircleShape)
                 .clickable {
-                    if (message.role == MessageRole.USER) {
-                        showRegenerateConfirm = true
-                    } else {
-                        onRegenerate()
+                    when {
+                        message.role == MessageRole.USER -> showRegenerateConfirm = true
+                        isGroupMode && assistant != null -> showRegenerateMemberPicker = true
+                        else -> onRegenerate(null)
                     }
                 }
                 .padding(8.dp)
@@ -232,11 +236,96 @@ fun ColumnScope.ChatMessageActionButtons(
         dismissText = stringResource(R.string.cancel),
         onConfirm = {
             showRegenerateConfirm = false
-            onRegenerate()
+            onRegenerate(null)
         },
         onDismiss = { showRegenerateConfirm = false },
         text = { Text(stringResource(R.string.regenerate_confirm_message)) }
     )
+
+    if (showRegenerateMemberPicker && assistant != null) {
+        RegenerateMemberPickerSheet(
+            assistant = assistant,
+            settings = settingsForGroup,
+            currentMemberId = message.memberId,
+            onPick = { memberId ->
+                showRegenerateMemberPicker = false
+                onRegenerate(memberId)
+            },
+            onDismiss = { showRegenerateMemberPicker = false },
+        )
+    }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun RegenerateMemberPickerSheet(
+    assistant: me.rerere.rikkahub.data.model.Assistant,
+    settings: me.rerere.rikkahub.data.datastore.Settings?,
+    currentMemberId: kotlin.uuid.Uuid?,
+    onPick: (kotlin.uuid.Uuid) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
+        androidx.compose.foundation.layout.Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+        ) {
+            Text("让谁重新回应这条？", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "选中成员后，将用其人格在该位置重新生成回复。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            currentMemberId?.let { curId ->
+                val curMember = assistant.groupMembers.find { it.id == curId }
+                if (curMember != null) {
+                    val src = settings?.assistants?.find { it.id == curMember.assistantId }
+                    val name = curMember.displayName.ifBlank { src?.name ?: "?" }
+                    androidx.compose.material3.OutlinedCard(
+                        onClick = { onPick(curId) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        androidx.compose.foundation.layout.Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text("↻", style = MaterialTheme.typography.titleLarge)
+                            androidx.compose.foundation.layout.Column {
+                                Text("用同一成员重生成", style = MaterialTheme.typography.labelMedium)
+                                Text(name, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                    androidx.compose.material3.HorizontalDivider()
+                }
+            }
+            if (assistant.groupMembers.any { it.id != currentMemberId }) {
+                Text(
+                    "或选其他成员：",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            assistant.groupMembers.filter { it.id != currentMemberId }.forEach { member ->
+                val src = settings?.assistants?.find { it.id == member.assistantId }
+                val name = member.displayName.ifBlank { src?.name ?: "?" }
+                androidx.compose.material3.Card(
+                    onClick = { onPick(member.id) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    androidx.compose.foundation.layout.Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        Text(name, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

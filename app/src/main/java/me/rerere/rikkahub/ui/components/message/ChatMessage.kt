@@ -107,7 +107,7 @@ fun ChatMessage(
     assistant: Assistant? = null,
     lastMessage: Boolean = false,
     onFork: () -> Unit,
-    onRegenerate: () -> Unit,
+    onRegenerate: (memberId: kotlin.uuid.Uuid?) -> Unit,
     onEdit: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit,
@@ -120,7 +120,8 @@ fun ChatMessage(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
 ) {
     val message = node.messages[node.selectIndex]
-    val settings = LocalSettings.current.displaySetting
+    val fullSettings = LocalSettings.current
+    val settings = fullSettings.displaySetting
     val chatFontFamily = LocalChatFontFamily.current ?: rememberChatFontFamily(settings)
     val textStyle = LocalTextStyle.current.copy(
         fontSize = LocalTextStyle.current.fontSize * settings.fontSizeRatio,
@@ -203,7 +204,9 @@ fun ChatMessage(
                         showActionsSheet = true
                     },
                     onTranslate = onTranslate,
-                    onClearTranslation = onClearTranslation
+                    onClearTranslation = onClearTranslation,
+                    assistant = assistant,
+                    settingsForGroup = fullSettings,
                 )
             }
         }
@@ -352,7 +355,15 @@ private fun MessagePartsBlock(
             is MessagePartBlock.ContentBlock -> key(block.index) {
                 when (val part = block.part) {
                     is UIMessagePart.Text -> {
-                        SelectionContainer {
+                        // Tavern HTML 渲染模式：直接走 sandboxed WebView（角色卡 first_mes 等）
+                        if (part.renderMode == UIMessagePart.RenderMode.HTML) {
+                            MarkdownWebView(
+                                content = part.text,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                            )
+                        } else SelectionContainer {
                             if (role == MessageRole.USER) {
                                 Surface(
                                     modifier = Modifier.animateContentSize(),

@@ -52,6 +52,8 @@ fun WebViewPage(url: String, content: String) {
                 displayZoomControls = false
                 useWideViewPort = true
                 loadWithOverviewMode = true
+                javaScriptEnabled = true
+                domStorageEnabled = true
             })
     } else {
         rememberWebViewState(
@@ -63,6 +65,8 @@ fun WebViewPage(url: String, content: String) {
                 displayZoomControls = false
                 useWideViewPort = true
                 loadWithOverviewMode = true
+                javaScriptEnabled = true
+                domStorageEnabled = true
             }
         )
     }
@@ -117,8 +121,11 @@ fun WebViewPage(url: String, content: String) {
                                 onClick = {
                                     showDropdown = false
                                     state.currentUrl?.let { url ->
-                                        if (url.isNotBlank()) {
-                                            urlHandler.openUri(url)
+                                        val trimmed = url.trim()
+                                        val isSafe = trimmed.startsWith("http://", ignoreCase = true) ||
+                                            trimmed.startsWith("https://", ignoreCase = true)
+                                        if (trimmed.isNotBlank() && isSafe) {
+                                            runCatching { urlHandler.openUri(trimmed) }
                                         }
                                     }
                                 }
