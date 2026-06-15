@@ -79,6 +79,8 @@ import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.ai.slash.ScriptManager
+import me.rerere.rikkahub.data.ai.slash.SlashCommandInterceptor
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.data.model.toMessageNode
@@ -156,6 +158,10 @@ class ChatService(
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
+
+    // Slash 命令脚本引擎（懒加载——仅当用户首次发斜杠命令时才扫描磁盘脚本）
+    private val scriptManager by lazy { ScriptManager(context, settingsStore) }
+    private val slashInterceptor by lazy { SlashCommandInterceptor(scriptManager) }
 
     // 统一会话管理
     private val sessions = ConcurrentHashMap<Uuid, ConversationSession>()
@@ -547,6 +553,7 @@ class ChatService(
                     memoryRepository.getMemoriesOfAssistant(assistant.id.toString())
                 },
                 inputTransformers = buildList {
+                    add(slashInterceptor)
                     addAll(inputTransformers)
                     add(templateTransformer)
                     add(workspaceReminderTransformer)
