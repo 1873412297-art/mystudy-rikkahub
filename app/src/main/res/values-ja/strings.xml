@@ -1219,5 +1219,6 @@ mDNSアドレス: .localホスト名を使用し、IPを知らなくても同じ
   <string name="assistant_page_enhancement_prompt_desc">ユーザーメッセージとともに AI に送信され、チャット画面には表示されません</string>
   <string name="setting_display_page_auto_show_greeting_picker_title">新規会話時に挨拶を自動選択</string>
   <string name="setting_display_page_auto_show_greeting_picker_desc">アシスタントに複数の挨拶がある場合に自動的にピッカーを開きます。オフではキャラクターカード画面から手動で選択できます。</string>
+  <string name="render_html">HTMLで表示</string>
 </resources>
 

@@ -1219,5 +1219,6 @@
   <string name="assistant_page_enhancement_prompt_desc">Отправляется AI вместе с сообщением пользователя, в чате не отображается</string>
   <string name="setting_display_page_auto_show_greeting_picker_title">Автовыбор приветствия в новом чате</string>
   <string name="setting_display_page_auto_show_greeting_picker_desc">Если у ассистента несколько приветствий — открывать диалог выбора автоматически. Отключите, чтобы выбирать вручную в просмотре карточки персонажа.</string>
+  <string name="render_html">Отображать HTML</string>
 </resources>
 

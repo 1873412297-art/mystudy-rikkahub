@@ -9,6 +9,7 @@ import me.rerere.rikkahub.ui.pages.debug.DebugVM
 import me.rerere.rikkahub.ui.pages.developer.DeveloperVM
 import me.rerere.rikkahub.ui.pages.favorite.FavoriteVM
 import me.rerere.rikkahub.ui.pages.search.SearchVM
+import me.rerere.rikkahub.ui.pages.tavern.TavernCardEditorVM
 import me.rerere.rikkahub.ui.pages.history.HistoryVM
 import me.rerere.rikkahub.ui.pages.stats.StatsVM
 import me.rerere.rikkahub.ui.pages.imggen.ImgGenVM
@@ -76,6 +77,12 @@ val viewModelModule = module {
         )
     }
     viewModelOf(::FavoriteVM)
+    viewModel<TavernCardEditorVM> {
+        TavernCardEditorVM(
+            assistantId = it.get(),
+            settingsStore = get(),
+        )
+    }
     viewModelOf(::SearchVM)
     viewModelOf(::StatsVM)
 }

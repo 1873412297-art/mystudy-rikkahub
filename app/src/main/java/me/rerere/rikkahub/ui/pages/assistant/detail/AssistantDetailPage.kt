@@ -4,6 +4,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.BookOpen01
 import me.rerere.hugeicons.stroke.Brain02
 import me.rerere.hugeicons.stroke.ArrowRight01
+import me.rerere.hugeicons.stroke.IdentityCard
 import me.rerere.hugeicons.stroke.Code
 import me.rerere.hugeicons.stroke.Message02
 import me.rerere.hugeicons.stroke.Settings03
@@ -98,6 +99,26 @@ fun AssistantDetailPage(id: String) {
                         leadingContent = { Icon(HugeIcons.Settings03, null) },
                         supportingContent = { Text(stringResource(R.string.assistant_detail_basic_desc)) },
                         headlineContent = { Text(stringResource(R.string.assistant_page_tab_basic)) },
+                        trailingContent = { Icon(HugeIcons.ArrowRight01, null) },
+                    )
+                    item(
+                        onClick = {
+                            val cardJson = assistant.tavernCardJson
+                            when {
+                                cardJson != null -> navController.navigate(
+                                    Screen.TavernCardViewer(cardJson = cardJson, assistantId = id)
+                                )
+                                assistant.background?.let { bg ->
+                                    bg.startsWith("content://") || bg.endsWith(".png", ignoreCase = true)
+                                } == true -> navController.navigate(
+                                    Screen.TavernCardViewer(cardUri = assistant.background, assistantId = id)
+                                )
+                                else -> navController.navigate(Screen.TavernCardEditor(assistantId = id))
+                            }
+                        },
+                        leadingContent = { Icon(HugeIcons.IdentityCard, null) },
+                        supportingContent = { Text(stringResource(R.string.tavern_card_view_card)) },
+                        headlineContent = { Text(stringResource(R.string.tavern_card_viewer_title)) },
                         trailingContent = { Icon(HugeIcons.ArrowRight01, null) },
                     )
                     item(

@@ -1217,5 +1217,6 @@
   <string name="assistant_page_enhancement_prompt_desc">隨使用者訊息傳送給 AI，不在聊天界面顯示</string>
   <string name="setting_display_page_auto_show_greeting_picker_title">新對話時自動選擇開場白</string>
   <string name="setting_display_page_auto_show_greeting_picker_desc">開啟後，進入新對話且角色卡含多個開場白時自動彈出選擇框；關閉則改為在「查看角色卡」中手動挑選。</string>
+  <string name="render_html">HTML 渲染</string>
 </resources>
 

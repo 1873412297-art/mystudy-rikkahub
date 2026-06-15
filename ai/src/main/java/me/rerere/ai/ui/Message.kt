@@ -207,6 +207,16 @@ data class UIMessage(
             role = MessageRole.ASSISTANT,
             parts = listOf(UIMessagePart.Text(prompt))
         )
+
+        /**
+         * Construct an assistant message whose Text part will be rendered as raw HTML
+         * (sandbox iframe). Used for character-card-sourced content like first_mes /
+         * alternate_greetings — those fields are designed as full HTML documents.
+         */
+        fun assistantHtml(prompt: String) = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(UIMessagePart.Text(prompt, renderMode = UIMessagePart.RenderMode.HTML))
+        )
     }
 }
 
@@ -352,10 +362,24 @@ fun ToolApprovalState.canResumeToolExecution(): Boolean {
 sealed class UIMessagePart {
     abstract val metadata: JsonObject?
 
+    /**
+     * 文本渲染模式。
+     * - MARKDOWN（默认）：通过 markdown 渲染器
+     * - HTML：直接当作完整 HTML 文档塞进沙箱 iframe
+     *
+     * 旧消息（无该字段的）会以 MARKDOWN 反序列化，不影响兼容性。
+     */
+    @Serializable
+    enum class RenderMode {
+        @SerialName("markdown") MARKDOWN,
+        @SerialName("html") HTML,
+    }
+
     @Serializable
     @SerialName("text")
     data class Text(
         val text: String,
+        val renderMode: RenderMode = RenderMode.MARKDOWN,
         override var metadata: JsonObject? = null
     ) : UIMessagePart()
 

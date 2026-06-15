@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fontsapi.zeoseven.com https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://esm.sh; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com https://fontsapi.zeoseven.com; connect-src 'self' https://cdn.jsdelivr.net https://esm.sh;">
+    <title>Character Card</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/atom-one-dark.min.css">
+    <style>
+        :root {
+            --bg: {{BACKGROUND_COLOR}};
+            --on-bg: {{ON_BACKGROUND_COLOR}};
+            --surface: {{SURFACE_COLOR}};
+            --on-surface: {{ON_SURFACE_COLOR}};
+            --surface-variant: {{SURFACE_VARIANT_COLOR}};
+            --on-surface-variant: {{ON_SURFACE_VARIANT_COLOR}};
+            --primary: {{PRIMARY_COLOR}};
+            --outline: {{OUTLINE_COLOR}};
+            --outline-variant: {{OUTLINE_VARIANT_COLOR}};
+            --radius: 12px;
+            --radius-sm: 8px;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Noto Sans', sans-serif;
+            line-height: 1.6;
+            color: var(--on-bg);
+            background: var(--bg);
+            margin: 0;
+            padding: 24px 16px 48px;
+            font-size: 16px;
+            -webkit-text-size-adjust: 100%;
+        }
+        @media (min-width: 768px) { body { max-width: 800px; margin: 0 auto; padding: 32px 20px 64px; } }
+
+        /* ── Card Header ── */
+        .card-header { margin-bottom: 28px; }
+        .card-header h1 { font-size: 1.6em; font-weight: 800; margin: 0 0 6px; line-height: 1.2; color: var(--on-bg); }
+        .card-header .meta { font-size: 0.9em; color: var(--on-surface-variant); margin-top: 4px; }
+        .card-header .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+        .tag-badge {
+            display: inline-block; padding: 2px 10px; border-radius: 99px;
+            background: var(--surface-variant);
+            color: var(--primary); font-size: 0.78em; font-weight: 500;
+            border: 1px solid var(--outline-variant);
+            white-space: nowrap;
+        }
+
+        /* ── Typography ── */
+        h1, h2, h3, h4, h5, h6 { color: var(--on-bg); }
+        h1 { font-size: 1.5em; font-weight: 700; margin: 24px 0 12px; line-height: 1.3; }
+        h2 { font-size: 1.25em; font-weight: 700; margin: 22px 0 10px; line-height: 1.3; }
+        h3 { font-size: 1.1em; font-weight: 600; margin: 18px 0 8px; }
+        h4 { font-size: 1em; font-weight: 600; margin: 14px 0 6px; color: var(--on-surface-variant); }
+        p  { margin: 0 0 12px; }
+
+        /* ── Card Sections ── */
+        .card-section {
+            border-bottom: 1px solid var(--outline-variant);
+            padding: 0 0 14px 0;
+            margin-bottom: 18px;
+        }
+        .card-section:last-child { border-bottom: none; }
+        .card-section .section-title {
+            font-size: 0.95em; font-weight: 700; color: var(--primary);
+            margin-bottom: 10px;
+        }
+        .card-section .section-body { }
+        .card-section .section-body p:last-child { margin-bottom: 0; }
+
+        /* Creator notes — subtle callout */
+        .creator-notes-box {
+            background: var(--surface);
+            border: 1px solid var(--outline-variant);
+            border-radius: 6px;
+            padding: 12px 14px;
+            margin-bottom: 18px;
+            font-size: 0.9em; color: var(--on-surface-variant);
+        }
+        .creator-notes-box .section-title { margin-bottom: 6px; }
+
+        /* ── Code ── */
+        code {
+            background: var(--surface-variant);
+            border-radius: 4px; font-size: 0.88em; padding: 0.15em 0.4em;
+            font-family: 'SF Mono', Monaco, 'Roboto Mono', monospace; color: var(--primary);
+        }
+        pre {
+            background: var(--surface-variant); border-radius: var(--radius-sm);
+            font-size: 0.85em; line-height: 1.55; overflow-x: auto;
+            padding: 14px 16px; margin: 0 0 14px; border: 1px solid var(--outline-variant);
+        }
+        pre code { background: transparent; padding: 0; border: 0; color: inherit; }
+
+        /* ── Tables ── */
+        table { border-collapse: collapse; width: 100%; margin-bottom: 14px; font-size: 0.92em; }
+        table th, table td { border: 1px solid var(--outline-variant); padding: 6px 12px; text-align: left; }
+        table th { background: var(--surface-variant); font-weight: 600; }
+        table tr:nth-child(2n) { background: var(--surface-variant); }
+
+        /* ── Blockquote ── */
+        blockquote {
+            border-left: 3px solid var(--primary); margin: 0 0 12px; padding: 6px 12px;
+            border-radius: 0 4px 4px 0; color: var(--on-surface-variant); font-size: 0.95em;
+        }
+        blockquote p:last-child { margin-bottom: 0; }
+
+        /* ── Links ── */
+        a { color: var(--primary); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        /* ── Lists ── */
+        ul, ol { margin-bottom: 12px; padding-left: 1.6em; }
+        li { margin-bottom: 2px; }
+        .task-list-item { list-style-type: none; }
+        .task-list-item input[type="checkbox"] { margin-right: 8px; }
+
+        /* ── HR ── */
+        hr { border: 0; height: 1px; background: var(--outline-variant); margin: 18px 0; }
+
+        /* ── Macros ── */
+        .tavern-macro {
+            display: inline-block; padding: 0 6px; border-radius: 3px;
+            background: var(--surface-variant); color: var(--primary);
+            font-family: 'SF Mono', Monaco, 'Roboto Mono', monospace;
+            font-size: 0.85em; font-weight: 500; white-space: nowrap;
+            border: 1px solid var(--outline-variant);
+        }
+        .tavern-action { font-style: italic; opacity: 0.8; }
+        .dialogue-block {
+            margin-bottom: 10px; padding: 8px 12px;
+            border-radius: 4px; border-left: 3px solid var(--primary);
+        }
+
+        /* ── KaTeX / Mermaid ── */
+        .katex { font-size: 1.1em; }
+        .katex-display { margin: 14px 0; overflow-x: auto; }
+        .mermaid { text-align: center; margin: 14px 0; }
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--outline-variant); border-radius: 4px; }
+
+        /* ── Selection ── */
+        ::selection { background: var(--surface-variant); }
+
+        /* ── Font tag support (from card HTML) ── */
+        font { transition: color 0.2s; }
+    </style>
+</head>
+<body><div id="content"></div>
+
+<script type="module">
+import MarkdownIt from 'https://esm.sh/markdown-it@14.0.0';
+import vscodemarkdownItKatex from 'https://esm.sh/@vscode/markdown-it-katex';
+import markdownItTaskLists from 'https://esm.sh/markdown-it-task-lists@2.1.1';
+import katex from 'https://esm.sh/katex@0.16.8';
+import hljs from 'https://esm.sh/highlight.js@11.9.0';
+import mermaid from 'https://esm.sh/mermaid@11';
+import { Base64 } from 'https://esm.sh/js-base64@3.7.5';
+import DOMPurify from 'https://esm.sh/dompurify@3.1.7';
+
+const md = new MarkdownIt({
+    html: true,         // 允许 raw HTML，但渲染后用 DOMPurify 白名单过滤（见 render() 末尾）
+    xhtmlOut: false,
+    breaks: true,
+    langPrefix: 'language-',
+    linkify: true,
+    typographer: true,
+    quotes: '“”‘’',
+    highlight(str, lang) {
+        if (lang && hljs.getLanguage(lang)) {
+            try { return '<pre class="hljs"><code>'+hljs.highlight(str,{language:lang,ignoreIllegals:true}).value+'</code></pre>'; }
+            catch(__) {}
+        }
+        return '<pre class="hljs"><code>'+md.utils.escapeHtml(str)+'</code></pre>';
+    }
+});
+md.use(vscodemarkdownItKatex);
+md.use(markdownItTaskLists, { enabled: true, label: true, labelAfter: true });
+
+// Mermaid fence
+const fence = md.renderer.rules.fence||((t,i,o,e,r)=>r.renderToken(t,i,o));
+md.renderer.rules.fence = function(t,i,o,e,r) {
+    if (t[i].info==='mermaid') {
+        const id='mermaid-'+Math.random().toString(36).substr(2,9);
+        return `<div class="mermaid" id="${id}">${t[i].content.trim()}</div>`;
+    }
+    return fence(t,i,o,e,r);
+};
+mermaid.initialize({startOnLoad:false,theme:'default',securityLevel:'strict',fontFamily:'inherit'});
+
+const rawContent = Base64.decode(`{{CONTENT_BASE64}}`);
+
+// Pre-process: handle ST-specific formatting
+function preProcess(content) {
+    // LaTeX delimiters
+    content = content.replace(/\\\[([\s\S]*?)\\\]/g, (_,f)=>'\n$$\n'+f.trim()+'\n$$\n');
+    content = content.replace(/\\\(([\s\S]*?)\\\)/g, '$$$1$$');
+    // Macro 高亮已迁移到 markdown 渲染后的 DOM 后处理（见 render() 末尾），
+    // 因为 markdown-it 此处 html:false，预处理阶段无法注入 raw HTML。
+    return content;
+}
+
+async function render() {
+    try {
+        const processed = preProcess(rawContent);
+        const rawHtml = md.render(processed);
+        // DOMPurify 白名单净化（拦截 <script>/<iframe>/on* 事件 / javascript: 协议）
+        const cleanHtml = DOMPurify.sanitize(rawHtml, {
+            USE_PROFILES: { html: true, svg: false, mathMl: false },
+            ADD_TAGS: ['details', 'summary', 'font', 'mark', 'kbd'],
+            ADD_ATTR: ['open', 'color', 'face', 'size', 'target'],
+            FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'frame', 'frameset', 'noframes', 'meta', 'base', 'link', 'form', 'input', 'button', 'textarea', 'select', 'option'],
+            FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onmouseout', 'onfocus', 'onblur', 'onchange', 'onsubmit', 'formaction', 'srcdoc'],
+            ALLOW_DATA_ATTR: false,
+            ALLOW_UNKNOWN_PROTOCOLS: false,
+        });
+        document.getElementById('content').innerHTML = cleanHtml;
+
+        // Mermaid
+        const mm = document.querySelectorAll('.mermaid');
+        if (mm.length) await mermaid.run({ nodes: mm });
+
+        // KaTeX
+        document.querySelectorAll('.math.inline').forEach(el=>{try{katex.render(el.textContent,el,{throwOnError:false})}catch(e){}});
+        document.querySelectorAll('.math.block').forEach(el=>{try{katex.render(el.textContent,el,{displayMode:true,throwOnError:false})}catch(e){}});
+
+        // External links
+        document.querySelectorAll('a[href^="http"]').forEach(l=>{l.target='_blank';l.rel='noopener noreferrer'});
+
+        // Post-process single *text* that markdown-it missed
+        document.querySelectorAll('p,li,td,th,blockquote,figcaption').forEach(el=>{
+            const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+            const nodes = []; let n;
+            while (n=walker.nextNode()) nodes.push(n);
+            nodes.forEach(tn=>{
+                const re = /(?<!\*)\*(?!\*)([^*]+?)(?<!\*)\*(?!\*)/g;
+                if (re.test(tn.textContent)) {
+                    const span = document.createElement('span');
+                    span.innerHTML = tn.textContent.replace(re, '<em class="tavern-action">$1</em>');
+                    tn.parentNode.replaceChild(span, tn);
+                }
+            });
+        });
+
+        // SillyTavern macro 高亮：DOM 后处理（在 markdown-it html:false 模式下保证安全）
+        // 跳过 <code> / <pre> 内的内容，避免破坏代码块。
+        (function highlightMacros() {
+            const root = document.getElementById('content');
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+                acceptNode(node) {
+                    let p = node.parentNode;
+                    while (p && p !== root) {
+                        const t = p.tagName;
+                        if (t === 'CODE' || t === 'PRE' || t === 'SCRIPT' || t === 'STYLE') return NodeFilter.FILTER_REJECT;
+                        p = p.parentNode;
+                    }
+                    return /\{\{[^{}]+\}\}/.test(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+                }
+            });
+            const targets = []; let t;
+            while (t = walker.nextNode()) targets.push(t);
+            targets.forEach(textNode => {
+                const text = textNode.nodeValue;
+                const frag = document.createDocumentFragment();
+                let last = 0;
+                const re = /\{\{([^{}]+)\}\}/g;
+                let m;
+                while ((m = re.exec(text)) !== null) {
+                    if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+                    const span = document.createElement('span');
+                    span.className = 'tavern-macro';
+                    span.textContent = '{{' + m[1].trim() + '}}'; // textContent 自动转义，安全
+                    frag.appendChild(span);
+                    last = m.index + m[0].length;
+                }
+                if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+                textNode.parentNode.replaceChild(frag, textNode);
+            });
+        })();
+
+    } catch(e) {
+        document.getElementById('content').innerHTML='<p style="color:#c00">Render error: '+e.message+'</p>';
+    }
+}
+render();
+</script>
+<script nomodule>alert('WebView too old — please update Android System WebView.');</script>
+</body>
+</html>

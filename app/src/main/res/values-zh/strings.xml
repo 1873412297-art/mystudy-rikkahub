@@ -1219,5 +1219,31 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="assistant_page_enhancement_prompt_desc">随用户消息发送给AI，不在聊天界面显示</string>
   <string name="setting_display_page_auto_show_greeting_picker_title">新对话时自动选择开场白</string>
   <string name="setting_display_page_auto_show_greeting_picker_desc">打开后，进入新对话且角色卡含多个开场白时自动弹出选择框；关闭则改为在「查看角色卡」里手动挑。</string>
+  <string name="assistant_importer_imported_lorebook">已导入角色书，包含 %d 条条目</string>
+  <string name="assistant_importer_imported_regexes">已导入 %d 条正则脚本</string>
+  <string name="render_html">HTML 渲染</string>
+  <string name="tavern_card_viewer_title">角色卡</string>
+  <string name="tavern_card_load_error">加载角色卡失败</string>
+  <string name="tavern_card_section_overview">概览</string>
+  <string name="tavern_card_section_details">详情</string>
+  <string name="tavern_card_section_examples">示例</string>
+  <string name="tavern_card_creator_notes">创作者备注</string>
+  <string name="tavern_card_description">角色描述</string>
+  <string name="tavern_card_personality">性格</string>
+  <string name="tavern_card_scenario">场景</string>
+  <string name="tavern_card_system_prompt">系统提示词</string>
+  <string name="tavern_card_post_history">历史后指令</string>
+  <string name="tavern_card_first_message">开场白</string>
+  <string name="tavern_card_alternate_greeting">备选问候</string>
+  <string name="tavern_card_example_messages">示例对话</string>
+  <string name="tavern_card_character_book">角色书</string>
+  <string name="tavern_card_view_card">查看角色卡</string>
+  <string name="tavern_card_import_card">导入角色卡</string>
+  <string name="tavern_card_view_full">查看完整卡片</string>
+  <string name="tavern_card_no_data">无角色卡数据，请重新导入角色卡。</string>
+  <string name="tavern_card_export_title">导出角色卡</string>
+  <string name="tavern_card_export_desc">导出为 SillyTavern V2 JSON</string>
+  <string name="tavern_card_export_success">角色卡导出成功</string>
+  <string name="tavern_card_export_failed">角色卡导出失败</string>
 </resources>
 

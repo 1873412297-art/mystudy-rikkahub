@@ -48,6 +48,7 @@ data class Assistant(
     val allowConversationPromptInjection: Boolean = false, // 允许对话单独绑定提示词注入
     val enableEnhancementPrompt: Boolean = false, // 在最后一条用户消息后追加增强提示词
     val enhancementPrompt: String = "",           // 增强提示词正文
+    val tavernCardJson: String? = null,           // SillyTavern 角色卡原始 JSON（V2/V3 格式），用于查看/导出
 )
 
 @Serializable

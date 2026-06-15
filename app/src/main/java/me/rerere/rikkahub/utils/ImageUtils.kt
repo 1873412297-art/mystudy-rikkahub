@@ -230,26 +230,59 @@ object ImageUtils {
     /**
      * 获取酒馆角色卡中的角色元数据（如果存在）
      *
-     * @param context Android上下文
-     * @param uri 图片URI
-     * @return Result<String> 包含角色元数据的Result对象
+     * 直接解析 PNG 二进制结构，完全匹配 SillyTavern 官方 character-card-parser.js 的行为：
+     * 1. 解析 PNG chunks，筛选 tEXt 类型
+     * 2. 按 keyword 匹配 "ccv3"（优先）或 "chara"（回退），大小写不敏感
+     * 3. 返回原始 base64 文本（调用方解码 → JSON 字符串）
      */
     fun getTavernCharacterMeta(context: Context, uri: Uri): Result<String> = runCatching {
-        val metadata = context.contentResolver.openInputStream(uri)?.use { ImageMetadataReader.readMetadata(it) }
-        if (metadata == null) error("Metadata is null, please check if the image is a character card")
-        if (!metadata.containsDirectoryOfType(PngDirectory::class.java)) error("No PNG directory found, please check if the image is a character card")
-
-        val pngDirectory = metadata.getDirectoriesOfType(PngDirectory::class.java)
-            .firstOrNull { directory ->
-                directory.pngChunkType == PngChunkType.tEXt
-                    && directory.getString(PngDirectory.TAG_TEXTUAL_DATA).startsWith("[chara:")
-            } ?: error("No tEXt chunk found, please check if the image is a character card")
-
-        val value = pngDirectory.getString(PngDirectory.TAG_TEXTUAL_DATA)
-
-        val regex = Regex("""\[chara:\s*(.+?)]""")
-        return Result.success(regex.find(value)?.groupValues?.get(1) ?: error("No character data found"))
+        val inputStream = context.contentResolver.openInputStream(uri)
+            ?: error("Cannot open image file")
+        inputStream.use { stream ->
+            parsePngCharacterData(stream)
+                ?: error("No character card data found in PNG. Expected a tEXt chunk with keyword 'ccv3' or 'chara'.")
+        }
     }
+
+    /**
+     * 直接解析 PNG 二进制流中的 tEXt chunk，提取角色卡 JSON。
+     *
+     * PNG 文件结构: [8 bytes signature] [chunk]* [IEND chunk]
+     * Chunk: [4 bytes len] [4 bytes type] [data] [4 bytes CRC]
+     * tEXt chunk: [keyword (1-79 bytes null-terminated)] [text]
+     */
+    private fun parsePngCharacterData(inputStream: java.io.InputStream): String? {
+        val dataInput = java.io.DataInputStream(inputStream)
+        val signature = ByteArray(8)
+        dataInput.readFully(signature)
+        if (!signature.contentEquals(PNG_SIGNATURE)) return null
+        var charaData: String? = null
+        while (true) {
+            val length = dataInput.readInt()
+            val typeBytes = ByteArray(4)
+            dataInput.readFully(typeBytes)
+            val type = String(typeBytes, Charsets.US_ASCII)
+            val chunkData = ByteArray(length)
+            dataInput.readFully(chunkData)
+            dataInput.skipBytes(4) // skip CRC
+            if (type == "IEND") break
+            if (type != "tEXt") continue
+            val nullIndex = chunkData.indexOf(0.toByte())
+            if (nullIndex <= 0 || nullIndex >= 80) continue
+            val keyword = String(chunkData, 0, nullIndex, Charsets.US_ASCII)
+            val text = String(chunkData, nullIndex + 1, length - nullIndex - 1, Charsets.ISO_8859_1)
+            when (keyword.lowercase()) {
+                "ccv3" -> return text
+                "chara" -> charaData = text
+            }
+        }
+        return charaData
+    }
+
+    /** PNG 文件签名 (8 bytes) */
+    private val PNG_SIGNATURE = byteArrayOf(
+        0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
+    )
 
     data class ImageInfo(
         val width: Int,

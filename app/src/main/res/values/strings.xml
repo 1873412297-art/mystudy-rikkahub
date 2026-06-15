@@ -1218,5 +1218,31 @@
   <string name="assistant_page_enhancement_prompt_desc">Appended to the last user message before sending to the AI; not shown in chat.</string>
   <string name="setting_display_page_auto_show_greeting_picker_title">Auto pick greeting on new chat</string>
   <string name="setting_display_page_auto_show_greeting_picker_desc">When the assistant has multiple greetings, automatically open the picker. Off lets you pick from the character-card view.</string>
+  <string name="assistant_importer_imported_lorebook">Imported character book with %d entries</string>
+  <string name="assistant_importer_imported_regexes">Imported %d regex scripts</string>
+  <string name="render_html">Render HTML</string>
+  <string name="tavern_card_viewer_title">Character Card</string>
+  <string name="tavern_card_load_error">Failed to load character card</string>
+  <string name="tavern_card_section_overview">Overview</string>
+  <string name="tavern_card_section_details">Details</string>
+  <string name="tavern_card_section_examples">Examples</string>
+  <string name="tavern_card_creator_notes">Creator Notes</string>
+  <string name="tavern_card_description">Description</string>
+  <string name="tavern_card_personality">Personality</string>
+  <string name="tavern_card_scenario">Scenario</string>
+  <string name="tavern_card_system_prompt">System Prompt</string>
+  <string name="tavern_card_post_history">Post-history Instructions</string>
+  <string name="tavern_card_first_message">First Message</string>
+  <string name="tavern_card_alternate_greeting">Alternate Greeting</string>
+  <string name="tavern_card_example_messages">Example Messages</string>
+  <string name="tavern_card_character_book">Character Book</string>
+  <string name="tavern_card_view_card">View Character Card</string>
+  <string name="tavern_card_import_card">Import Character Card</string>
+  <string name="tavern_card_view_full">View Full Card</string>
+  <string name="tavern_card_no_data">No character card data available. Please re-import the card.</string>
+  <string name="tavern_card_export_title">Export Character Card</string>
+  <string name="tavern_card_export_desc">Export as SillyTavern V2 JSON</string>
+  <string name="tavern_card_export_success">Character card exported successfully</string>
+  <string name="tavern_card_export_failed">Failed to export character card</string>
 </resources>
 
