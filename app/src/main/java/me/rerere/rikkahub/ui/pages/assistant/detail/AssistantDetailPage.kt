@@ -5,6 +5,7 @@ import me.rerere.hugeicons.stroke.BookOpen01
 import me.rerere.hugeicons.stroke.Brain02
 import me.rerere.hugeicons.stroke.ArrowRight01
 import me.rerere.hugeicons.stroke.IdentityCard
+import me.rerere.hugeicons.stroke.UserGroup
 import me.rerere.hugeicons.stroke.Code
 import me.rerere.hugeicons.stroke.Message02
 import me.rerere.hugeicons.stroke.Settings03
@@ -36,6 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.components.ui.UIAvatar
@@ -121,6 +123,15 @@ fun AssistantDetailPage(id: String) {
                         headlineContent = { Text(stringResource(R.string.tavern_card_viewer_title)) },
                         trailingContent = { Icon(HugeIcons.ArrowRight01, null) },
                     )
+                    if (assistant.assistantType == AssistantType.GROUP) {
+                        item(
+                            onClick = { navController.navigate(Screen.AssistantGroupMembers(id)) },
+                            leadingContent = { Icon(HugeIcons.UserGroup, null) },
+                            supportingContent = { Text("${assistant.groupMembers.size} 个成员") },
+                            headlineContent = { Text("群组成员") },
+                            trailingContent = { Icon(HugeIcons.ArrowRight01, null) },
+                        )
+                    }
                     item(
                         onClick = { navController.navigate(Screen.AssistantPrompt(id)) },
                         leadingContent = { Icon(HugeIcons.Message02, null) },

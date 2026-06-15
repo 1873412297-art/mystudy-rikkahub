@@ -281,6 +281,9 @@ class ConversationRepository(
             modeInjectionIds = JsonInstant.encodeToString(conversation.modeInjectionIds),
             lorebookIds = JsonInstant.encodeToString(conversation.lorebookIds),
             workspaceCwd = conversation.workspaceCwd ?: "",
+            activeGroupMemberId = conversation.activeGroupMemberId?.toString() ?: "",
+            groupMemberQueue = JsonInstant.encodeToString(conversation.groupMemberQueue),
+            groupMemberQueueIndex = conversation.groupMemberQueueIndex,
         )
     }
 
@@ -301,6 +304,11 @@ class ConversationRepository(
             modeInjectionIds = JsonInstant.decodeFromString(conversationEntity.modeInjectionIds),
             lorebookIds = JsonInstant.decodeFromString(conversationEntity.lorebookIds),
             workspaceCwd = conversationEntity.workspaceCwd.ifEmpty { null },
+            activeGroupMemberId = conversationEntity.activeGroupMemberId.ifEmpty { null }?.let { Uuid.parse(it) },
+            groupMemberQueue = runCatching {
+                JsonInstant.decodeFromString<List<Uuid>>(conversationEntity.groupMemberQueue)
+            }.getOrDefault(emptyList()),
+            groupMemberQueueIndex = conversationEntity.groupMemberQueueIndex,
         )
     }
 

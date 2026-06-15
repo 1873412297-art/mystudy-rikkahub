@@ -29,6 +29,10 @@ data class Conversation(
     val lorebookIds: Set<Uuid> = emptySet(),
     // Absolute path inside the workspace rootfs
     val workspaceCwd: String? = null,
+    // 群组助手运行时状态：当前发言成员、本轮发言队列、队列内位置
+    val activeGroupMemberId: Uuid? = null,
+    val groupMemberQueue: List<Uuid> = emptyList(),
+    val groupMemberQueueIndex: Int = 0,
     @Transient
     val newConversation: Boolean = false
 ) {
@@ -86,6 +90,37 @@ data class Conversation(
         return this.copy(
             messageNodes = newNodes
         )
+    }
+
+    /**
+     * 按消息 ID（而非数组下标）合并 chunk 流。
+     * - 已存在 ID 的 message → 原地更新（流式 chunk）
+     * - 全新 ID → 追加为新 MessageNode（并行成员回复时用）
+     *
+     * 用下标合并会造成多个成员并行流式时互相覆盖，所以这里改成按 ID 匹配。
+     */
+    fun mergeMessages(messages: List<UIMessage>): Conversation {
+        val newNodes = this.messageNodes.toMutableList()
+        messages.forEach { message ->
+            val nodeIndex = newNodes.indexOfFirst { node ->
+                node.messages.any { it.id == message.id }
+            }
+            if (nodeIndex >= 0) {
+                val node = newNodes[nodeIndex]
+                val newMessages = node.messages.toMutableList()
+                val msgIdx = newMessages.indexOfFirst { it.id == message.id }
+                if (msgIdx >= 0) {
+                    newMessages[msgIdx] = message
+                }
+                newNodes[nodeIndex] = node.copy(
+                    messages = newMessages,
+                    selectIndex = msgIdx.coerceAtLeast(0)
+                )
+            } else {
+                newNodes.add(message.toMessageNode())
+            }
+        }
+        return this.copy(messageNodes = newNodes)
     }
 
     companion object {

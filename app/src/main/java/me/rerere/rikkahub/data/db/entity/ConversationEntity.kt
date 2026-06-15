@@ -30,4 +30,11 @@ data class ConversationEntity(
     val lorebookIds: String = "[]",
     @ColumnInfo("workspace_cwd", defaultValue = "")
     val workspaceCwd: String = "",
+    // 群组助手运行时状态
+    @ColumnInfo("active_group_member_id", defaultValue = "")
+    val activeGroupMemberId: String = "",
+    @ColumnInfo("group_member_queue", defaultValue = "[]")
+    val groupMemberQueue: String = "[]",
+    @ColumnInfo("group_member_queue_index", defaultValue = "0")
+    val groupMemberQueueIndex: Int = 0,
 )

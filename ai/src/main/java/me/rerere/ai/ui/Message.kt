@@ -27,7 +27,11 @@ data class UIMessage(
     val finishedAt: LocalDateTime? = null,
     val modelId: Uuid? = null,
     val usage: TokenUsage? = null,
-    val translation: String? = null
+    val translation: String? = null,
+    /** 群组对话中所属成员的 GroupMember.id；非群组对话为 null */
+    val memberId: Uuid? = null,
+    /** 群组对话中显示用的成员名（也用于 OpenAI 的 message.name 字段）；非群组对话为 null */
+    val name: String? = null,
 ) {
     private fun appendChunk(chunk: MessageChunk): UIMessage {
         val choice = chunk.choices.getOrNull(0)

@@ -470,7 +470,8 @@ class ChatCompletionsAPI(
                     buildAssistantMessageJson(
                         contentParts = contentBuffer,
                         tools = group.tools,
-                        reasoningPart = reasoningPart
+                        reasoningPart = reasoningPart,
+                        name = message.name
                     )?.let { assistantMessage ->
                         add(assistantMessage)
                     }
@@ -497,7 +498,8 @@ class ChatCompletionsAPI(
             buildAssistantMessageJson(
                 contentParts = contentBuffer,
                 tools = emptyList(),
-                reasoningPart = reasoningPart
+                reasoningPart = reasoningPart,
+                name = message.name
             )?.let { assistantMessage ->
                 add(assistantMessage)
             }
@@ -507,7 +509,8 @@ class ChatCompletionsAPI(
     private fun buildAssistantMessageJson(
         contentParts: List<UIMessagePart>,
         tools: List<UIMessagePart.Tool>,
-        reasoningPart: UIMessagePart.Reasoning?
+        reasoningPart: UIMessagePart.Reasoning?,
+        name: String? = null,
     ): JsonObject? {
         val hasUsableContent = contentParts.any { part ->
             when (part) {
@@ -523,6 +526,9 @@ class ChatCompletionsAPI(
 
         return buildJsonObject {
             put("role", "assistant")
+            if (!name.isNullOrBlank()) {
+                put("name", name)
+            }
 
             // reasoning_content
             if (hasReasoning) {
@@ -587,6 +593,9 @@ class ChatCompletionsAPI(
     private fun JsonArrayBuilder.addNonAssistantMessage(message: UIMessage) {
         add(buildJsonObject {
             put("role", JsonPrimitive(message.role.name.lowercase()))
+            if (!message.name.isNullOrBlank()) {
+                put("name", message.name)
+            }
 
             if (message.parts.isOnlyTextPart()) {
                 put("content", message.parts.filterIsInstance<UIMessagePart.Text>().first().text)
