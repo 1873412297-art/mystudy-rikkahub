@@ -606,7 +606,7 @@ private suspend fun importAssistantFromUri(
         // Build the final assistant with all imported data
         var finalAssistant = assistant.copy(
             tavernCardJson = jsonString,
-            // statusRenderJs = extras.statusRenderJs, // 等 C8 状态渲染 commit 启用
+            statusRenderJs = extras.statusRenderJs,
         )
 
         // Import character book as lorebook

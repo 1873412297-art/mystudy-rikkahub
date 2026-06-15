@@ -50,7 +50,7 @@ class SlashCommandInterceptor(
         val slashCtx = SlashContext(
             charName = ctx.assistant.name,
             userName = ctx.settings.displaySetting.userNickname.ifBlank { "User" },
-            conversationId = null, // 等 C8 给 TransformerContext 加 conversationId 后启用
+            conversationId = ctx.conversationId?.toString(),
             chatMessageCount = messages.size,
             recentMessages = messages.takeLast(8),
             variables = ScriptVariableAccessor(script.name, scriptManager.variableStore),
@@ -95,8 +95,12 @@ class SlashCommandInterceptor(
         }
         // Render HTML inline if present
         if (!html.isNullOrBlank()) {
-            // C8 启用后改为 UIMessagePart.StatusPlaceholder(htmlContent = html)
-            result.add(UIMessage.assistantHtml(html))
+            result.add(
+                UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    parts = listOf(UIMessagePart.StatusPlaceholder(htmlContent = html)),
+                )
+            )
         }
         return result.ifEmpty { messages }
     }

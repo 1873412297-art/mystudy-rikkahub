@@ -281,6 +281,7 @@ class ConversationRepository(
             modeInjectionIds = JsonInstant.encodeToString(conversation.modeInjectionIds),
             lorebookIds = JsonInstant.encodeToString(conversation.lorebookIds),
             workspaceCwd = conversation.workspaceCwd ?: "",
+            statusVariables = JsonInstant.encodeToString(conversation.statusVariables),
             activeGroupMemberId = conversation.activeGroupMemberId?.toString() ?: "",
             groupMemberQueue = JsonInstant.encodeToString(conversation.groupMemberQueue),
             groupMemberQueueIndex = conversation.groupMemberQueueIndex,
@@ -304,6 +305,9 @@ class ConversationRepository(
             modeInjectionIds = JsonInstant.decodeFromString(conversationEntity.modeInjectionIds),
             lorebookIds = JsonInstant.decodeFromString(conversationEntity.lorebookIds),
             workspaceCwd = conversationEntity.workspaceCwd.ifEmpty { null },
+            statusVariables = runCatching {
+                JsonInstant.decodeFromString<kotlinx.serialization.json.JsonObject>(conversationEntity.statusVariables)
+            }.getOrDefault(kotlinx.serialization.json.JsonObject(emptyMap())),
             activeGroupMemberId = conversationEntity.activeGroupMemberId.ifEmpty { null }?.let { Uuid.parse(it) },
             groupMemberQueue = runCatching {
                 JsonInstant.decodeFromString<List<Uuid>>(conversationEntity.groupMemberQueue)

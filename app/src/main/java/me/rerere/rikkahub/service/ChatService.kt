@@ -81,6 +81,8 @@ import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.ai.slash.ScriptManager
 import me.rerere.rikkahub.data.ai.slash.SlashCommandInterceptor
+import me.rerere.rikkahub.data.ai.status.StatusVariableStore
+import me.rerere.rikkahub.data.ai.transformers.StatusPlaceholderTransformer
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.data.model.toMessageNode
@@ -138,6 +140,7 @@ private val outputTransformers by lazy {
         ThinkTagTransformer,
         Base64ImageToLocalFileTransformer,
         RegexOutputTransformer,
+        StatusPlaceholderTransformer,
     )
 }
 
@@ -155,6 +158,7 @@ class ChatService(
     private val filesManager: FilesManager,
     private val skillManager: SkillManager,
     private val workspaceRepository: WorkspaceRepository,
+    private val statusVariableStore: StatusVariableStore,
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)

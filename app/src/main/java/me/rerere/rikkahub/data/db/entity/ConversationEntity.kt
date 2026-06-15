@@ -30,6 +30,9 @@ data class ConversationEntity(
     val lorebookIds: String = "[]",
     @ColumnInfo("workspace_cwd", defaultValue = "")
     val workspaceCwd: String = "",
+    // 状态变量（C8）—— 整段 JSON 字符串
+    @ColumnInfo("status_variables", defaultValue = "{}")
+    val statusVariables: String = "{}",
     // 群组助手运行时状态
     @ColumnInfo("active_group_member_id", defaultValue = "")
     val activeGroupMemberId: String = "",

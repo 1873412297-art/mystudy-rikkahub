@@ -80,6 +80,7 @@ import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
+import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
 import me.rerere.rikkahub.ui.components.richtext.ZoomableAsyncImage
 import me.rerere.rikkahub.ui.components.richtext.buildMarkdownPreviewHtml
 import me.rerere.rikkahub.ui.components.ui.ChainOfThought
@@ -541,6 +542,23 @@ private fun MessagePartsBlock(
                                     )
                                 }
                             }
+                        }
+                    }
+
+                    is UIMessagePart.StatusPlaceholder -> {
+                        if (part.characterPages.isNotEmpty()) {
+                            MultiCharacterStatusView(
+                                part = part,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            MarkdownWebView(
+                                content = part.htmlContent,
+                                isRawHtml = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                            )
                         }
                     }
 

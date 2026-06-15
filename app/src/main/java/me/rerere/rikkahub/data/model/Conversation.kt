@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.core.net.toUri
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -29,6 +30,8 @@ data class Conversation(
     val lorebookIds: Set<Uuid> = emptySet(),
     // Absolute path inside the workspace rootfs
     val workspaceCwd: String? = null,
+    // 状态变量系统：会话级 JSON 状态对象，由 LLM 通过 status block 增量 patch
+    val statusVariables: JsonObject = JsonObject(emptyMap()),
     // 群组助手运行时状态：当前发言成员、本轮发言队列、队列内位置
     val activeGroupMemberId: Uuid? = null,
     val groupMemberQueue: List<Uuid> = emptyList(),

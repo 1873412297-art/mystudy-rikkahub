@@ -49,6 +49,7 @@ data class Assistant(
     val enableEnhancementPrompt: Boolean = false, // 在最后一条用户消息后追加增强提示词
     val enhancementPrompt: String = "",           // 增强提示词正文
     val tavernCardJson: String? = null,           // SillyTavern 角色卡原始 JSON（V2/V3 格式），用于查看/导出
+    val statusRenderJs: String? = null,           // 状态渲染 JS 脚本（renderStatus 函数）
     // ── 群组助手 ──
     val assistantType: AssistantType = AssistantType.SOLO,
     val groupMembers: List<GroupMember> = emptyList(),

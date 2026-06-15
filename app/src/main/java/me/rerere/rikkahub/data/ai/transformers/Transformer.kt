@@ -17,6 +17,8 @@ class TransformerContext(
     val conversationLorebookIds: Set<Uuid> = emptySet(),
     val processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
     val workspaceCwd: String? = null,
+    /** 当前对话的 ID，状态变量 transformer 用它读写 conversation.statusVariables */
+    val conversationId: Uuid? = null,
 )
 
 interface MessageTransformer {

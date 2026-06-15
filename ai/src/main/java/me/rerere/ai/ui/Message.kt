@@ -426,6 +426,23 @@ sealed class UIMessagePart {
         override var metadata: JsonObject? = null
     ) : UIMessagePart()
 
+    /** 单个角色的状态页：[name] 显示标签，[html] 已渲染好的 HTML 片段（用于 MultiCharacterStatusView）。*/
+    @Serializable
+    @SerialName("character_status_page")
+    data class CharacterStatusPage(
+        val name: String,
+        val html: String,
+    )
+
+    /** 占位消息部分：状态变量系统由 LLM 流式输出 status block，渲染后用本部分插到对话里替代原文本。*/
+    @Serializable
+    @SerialName("status_placeholder")
+    data class StatusPlaceholder(
+        val htmlContent: String,
+        val characterPages: List<CharacterStatusPage> = emptyList(),
+        override var metadata: JsonObject? = null
+    ) : UIMessagePart()
+
     @Deprecated("Deprecated")
     @Serializable
     @SerialName("search")
@@ -531,6 +548,7 @@ fun List<UIMessagePart>.toSortedMessageParts(): List<UIMessagePart> {
             is UIMessagePart.ToolCall -> 0
             is UIMessagePart.ToolResult -> 0
             is UIMessagePart.Search -> 0
+            is UIMessagePart.StatusPlaceholder -> 0
             is UIMessagePart.Image -> 1
             is UIMessagePart.Video -> 1
             is UIMessagePart.Audio -> 1
