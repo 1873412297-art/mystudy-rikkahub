@@ -121,6 +121,9 @@ private val parser by lazy {
 
 private val INLINE_LATEX_REGEX = Regex("\\\\\\((.+?)\\\\\\)")
 private val BLOCK_LATEX_REGEX = Regex("\\\\\\[(.+?)\\\\\\]", RegexOption.DOT_MATCHES_ALL)
+
+/** SillyTavern 角色卡的 <status!>...</status!> 状态栏标签。带或不带 ! 都识别。 */
+private val STATUS_BLOCK_REGEX = Regex("<status!?>[\\s\\S]*?</status!?>", RegexOption.IGNORE_CASE)
 val THINKING_REGEX = Regex("<think>([\\s\\S]*?)(?:</think>|$)", RegexOption.DOT_MATCHES_ALL)
 private val CODE_BLOCK_REGEX = Regex("```[\\s\\S]*?```|`[^`\n]*`", RegexOption.DOT_MATCHES_ALL)
 private val BREAK_LINE_REGEX = Regex("(?i)<br\\s*/?>")
@@ -250,7 +253,11 @@ fun MarkdownBlock(
             .collect { setData(it) }
     }
 
-    if (data.hasHtml) {
+    val hasStatusBlock = STATUS_BLOCK_REGEX.containsMatchIn(content)
+
+    if (hasStatusBlock) {
+        MarkdownWebView(content = content, modifier = modifier)
+    } else if (data.hasHtml) {
         MarkdownNew(
             content = content,
             modifier = modifier,

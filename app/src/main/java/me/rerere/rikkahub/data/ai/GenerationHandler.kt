@@ -86,6 +86,8 @@ class GenerationHandler(
         conversationModeInjectionIds: Set<Uuid> = emptySet(),
         conversationLorebookIds: Set<Uuid> = emptySet(),
         workspaceCwd: String? = null,
+        conversationId: Uuid? = null,
+        memberId: Uuid? = null,
     ): Flow<GenerationChunk> = flow {
         val provider = model.findProvider(settings.providers) ?: error("Provider not found")
         val providerImpl = providerManager.getProviderByType(provider)
@@ -164,6 +166,7 @@ class GenerationHandler(
                     conversationModeInjectionIds = conversationModeInjectionIds,
                     conversationLorebookIds = conversationLorebookIds,
                     workspaceCwd = workspaceCwd,
+                    conversationId = conversationId,
                 )
                 messages = messages.visualTransforms(
                     transformers = outputTransformers,
@@ -338,7 +341,8 @@ class GenerationHandler(
                         context = context,
                         model = model,
                         assistant = assistant,
-                        settings = settings
+                        settings = settings,
+                        conversationId = conversationId,
                     )
                 )
             )
@@ -363,6 +367,7 @@ class GenerationHandler(
         conversationModeInjectionIds: Set<Uuid> = emptySet(),
         conversationLorebookIds: Set<Uuid> = emptySet(),
         workspaceCwd: String? = null,
+        conversationId: Uuid? = null,
     ) {
         val internalMessages = buildList {
             val system = buildString {
@@ -404,6 +409,7 @@ class GenerationHandler(
             conversationLorebookIds = conversationLorebookIds,
             processingStatus = processingStatus,
             workspaceCwd = workspaceCwd,
+            conversationId = conversationId,
         )
 
         var messages: List<UIMessage> = messages
