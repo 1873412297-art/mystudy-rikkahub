@@ -238,7 +238,10 @@ fun List<UIMessage>.handleMessageChunk(chunk: MessageChunk, model: Model? = null
     }
     val choice = chunk.choices.getOrNull(0) ?: return this
     val message = choice.delta ?: choice.message ?: return this
-    if (this.last().role != message.role) {
+    // Create a new message if:
+    // - the role differs from the last message (normal case: user → assistant), OR
+    // - the last message is already finished (group chat: previous member's reply is complete)
+    if (this.last().role != message.role || this.last().finishedAt != null) {
         return this + (UIMessage(modelId = model?.id, role = message.role, parts = emptyList()) + chunk)
     } else {
         val last = this.last() + chunk

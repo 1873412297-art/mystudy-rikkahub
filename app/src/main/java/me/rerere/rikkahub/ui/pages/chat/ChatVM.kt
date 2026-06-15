@@ -13,6 +13,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.analytics.FirebaseAnalytics
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -117,6 +118,41 @@ class ChatVM(
     fun dismissError(id: Uuid) = chatService.dismissError(id)
 
     fun clearAllErrors() = chatService.clearAllErrors()
+
+    /** 触发群组指定成员回复 —— 仅手动模式下有效。 */
+    fun triggerMember(memberId: Uuid) {
+        viewModelScope.launch {
+            chatService.triggerMemberReply(_conversationId, memberId)
+        }
+    }
+
+    /** 更新单个 Assistant（群组合保存/改名等用，不改变其它 assistant）。 */
+    fun updateAssistant(updated: Assistant) {
+        viewModelScope.launch {
+            val cur = settings.value
+            settingsStore.update(
+                cur.copy(assistants = cur.assistants.map { if (it.id == updated.id) updated else it })
+            )
+        }
+    }
+
+    /**
+     * 群组手动模式批量发送：先写入用户消息（非空时），再依次触发每个指定成员回复。
+     * 所有步骤共用一个协程 scope，被取消时整个链中断。
+     */
+    fun handleGroupSend(memberIds: List<Uuid>, content: List<UIMessagePart>) {
+        viewModelScope.launch {
+            val isEmpty = content.isEmpty() ||
+                content.all { it is UIMessagePart.Text && it.text.isBlank() }
+            if (!isEmpty) {
+                chatService.sendMessage(_conversationId, content, answer = false)
+            }
+            for (memberId in memberIds) {
+                ensureActive()
+                chatService.triggerMemberReply(_conversationId, memberId)
+            }
+        }
+    }
 
     // 生成完成
     val generationDoneFlow: SharedFlow<Uuid> = chatService.generationDoneFlow

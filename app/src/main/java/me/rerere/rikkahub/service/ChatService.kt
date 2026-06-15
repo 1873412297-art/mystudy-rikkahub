@@ -83,6 +83,9 @@ import me.rerere.rikkahub.data.ai.slash.ScriptManager
 import me.rerere.rikkahub.data.ai.slash.SlashCommandInterceptor
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.transformers.StatusPlaceholderTransformer
+import me.rerere.rikkahub.data.model.AssistantType
+import me.rerere.rikkahub.data.model.ContextScope
+import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.data.model.toMessageNode
@@ -390,12 +393,33 @@ class ChatService(
         }
     }
 
+    /**
+     * 触发指定群组成员回复（不发新用户消息，直接让对应 member 说话）。
+     * 仅在群组助手 + 手动模式时使用。
+     */
+    fun triggerMemberReply(conversationId: Uuid, memberId: Uuid) {
+        val session = getOrCreateSession(conversationId)
+        session.getJob()?.cancel()
+        val job = appScope.launch {
+            try {
+                finishInterruptedPendingTools(conversationId)
+                handleMessageComplete(conversationId, memberId = memberId)
+                _generationDoneFlow.emit(conversationId)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                addError(e, conversationId, title = "群组成员回复失败")
+            }
+        }
+        session.setJob(job)
+    }
+
     // ---- 重新生成消息 ----
 
     fun regenerateAtMessage(
         conversationId: Uuid,
         message: UIMessage,
-        regenerateAssistantMsg: Boolean = true
+        regenerateAssistantMsg: Boolean = true,
+        memberId: Uuid? = null,
     ) {
         val session = getOrCreateSession(conversationId)
         session.getJob()?.cancel()
@@ -412,12 +436,12 @@ class ChatService(
                         messageNodes = conversation.messageNodes.subList(0, indexAt + 1)
                     )
                     saveConversation(conversationId, newConversation)
-                    handleMessageComplete(conversationId)
+                    handleMessageComplete(conversationId, memberId = memberId)
                 } else {
                     if (regenerateAssistantMsg) {
                         val node = conversation.getMessageNodeByMessage(message)
                         val nodeIndex = conversation.messageNodes.indexOf(node)
-                        handleMessageComplete(conversationId, messageRange = 0..<nodeIndex)
+                        handleMessageComplete(conversationId, memberId = memberId, messageRange = 0..<nodeIndex)
                     } else {
                         saveConversation(conversationId, conversation)
                     }
@@ -499,13 +523,44 @@ class ChatService(
 
     private suspend fun handleMessageComplete(
         conversationId: Uuid,
-        messageRange: ClosedRange<Int>? = null
+        messageRange: ClosedRange<Int>? = null,
+        memberId: Uuid? = null,
     ) {
         val settings = settingsStore.settingsFlow.first()
         val initialConversation = getConversationFlow(conversationId).value
-        val assistant = settings.getAssistantById(initialConversation.assistantId)
+        val groupAssistant = settings.getAssistantById(initialConversation.assistantId)
             ?: settings.getCurrentAssistant()
-        val model = settings.findModelById(assistant.chatModelId ?: settings.chatModelId) ?: return
+
+        // 群组对话：解析当前发言成员，并按成员的 systemPrompt/model 覆盖派生出 effective Assistant
+        val (assistant, model, effectiveMemberId) = if (groupAssistant.assistantType == AssistantType.GROUP) {
+            val resolvedMemberId = memberId
+                ?: resolveNextSpeaker(initialConversation, groupAssistant, settings)
+            val baseModel = settings.findModelById(groupAssistant.chatModelId ?: settings.chatModelId)
+                ?: return
+            if (resolvedMemberId != null) {
+                val member = groupAssistant.groupMembers.find { it.id == resolvedMemberId }
+                if (member != null && member.enabled) {
+                    val sourceAssistant = settings.getAssistantById(member.assistantId) ?: groupAssistant
+                    val modelId = member.chatModelIdOverride ?: groupAssistant.chatModelId ?: settings.chatModelId
+                    val resolvedModel = settings.findModelById(modelId) ?: baseModel
+                    val merged = groupAssistant.copy(
+                        systemPrompt = member.systemPromptOverride
+                            ?: sourceAssistant.systemPrompt.takeIf { it.isNotBlank() }
+                            ?: groupAssistant.systemPrompt,
+                        chatModelId = resolvedModel.id,
+                        regexes = (groupAssistant.regexes + sourceAssistant.regexes).distinct(),
+                    )
+                    Triple(merged, resolvedModel, resolvedMemberId)
+                } else {
+                    Triple(groupAssistant, baseModel, null)
+                }
+            } else {
+                Triple(groupAssistant, baseModel, null)
+            }
+        } else {
+            val soloModel = settings.findModelById(groupAssistant.chatModelId ?: settings.chatModelId) ?: return
+            Triple(groupAssistant, soloModel, null)
+        }
 
         val senderName = if (assistant.useAssistantAvatar) {
             assistant.name.ifEmpty { context.getString(R.string.assistant_page_default_assistant) }
@@ -545,7 +600,9 @@ class ChatService(
                     } else {
                         it
                     }
-                }.applyEnhancementPrompt(assistant),
+                }.applyGroupContextFilter(groupAssistant, effectiveMemberId)
+                  .applyEnhancementPrompt(assistant)
+                  .applyGroupApiRewrite(groupAssistant, effectiveMemberId),
                 assistant = assistant,
                 conversationSystemPrompt = conversation.customSystemPrompt,
                 conversationModeInjectionIds = conversation.modeInjectionIds,
@@ -612,13 +669,25 @@ class ChatService(
             }.collect { chunk ->
                 when (chunk) {
                     is GenerationChunk.Messages -> {
-                        val updatedConversation = getConversationFlow(conversationId).value
-                            .updateCurrentMessages(chunk.messages)
+                        // 群组对话：给每个 chunk message 打当前发言成员的 memberId + name
+                        val stampedMessages = if (effectiveMemberId != null) {
+                            val member = groupAssistant.groupMembers.find { it.id == effectiveMemberId }
+                            val memberName = member?.displayName?.takeIf { it.isNotBlank() }
+                            chunk.messages.map { msg ->
+                                if (msg.memberId == null && memberName != null)
+                                    msg.copy(memberId = effectiveMemberId, name = memberName)
+                                else if (msg.memberId == null)
+                                    msg.copy(memberId = effectiveMemberId)
+                                else msg
+                            }
+                        } else chunk.messages
+                        val currentConv = getConversationFlow(conversationId).value
+                        val updatedConversation = currentConv.mergeMessages(stampedMessages)
                         updateConversation(conversationId, updatedConversation)
 
                         // 如果应用不在前台，发送 Live Update 通知
                         if (!isForeground.value && settings.displaySetting.enableNotificationOnMessageGeneration && settings.displaySetting.enableLiveUpdateNotification) {
-                            sendLiveUpdateNotification(conversationId, chunk.messages, senderName)
+                            sendLiveUpdateNotification(conversationId, stampedMessages, senderName)
                         }
                     }
                 }
@@ -635,11 +704,14 @@ class ChatService(
             val finalConversation = getConversationFlow(conversationId).value
             saveConversation(conversationId, finalConversation)
 
-            launchWithConversationReference(conversationId) {
-                generateTitle(conversationId, finalConversation)
-            }
-            launchWithConversationReference(conversationId) {
-                generateSuggestion(conversationId, finalConversation)
+            // Only generate title/suggestions for main generation, not group member replies
+            if (effectiveMemberId == null) {
+                launchWithConversationReference(conversationId) {
+                    generateTitle(conversationId, finalConversation)
+                }
+                launchWithConversationReference(conversationId) {
+                    generateSuggestion(conversationId, finalConversation)
+                }
             }
         }
     }
@@ -1344,6 +1416,108 @@ class ChatService(
         runCatching { job.join() }
         finishInterruptedPendingTools(conversationId)
     }
+
+    // ---- 群组发言决策 ----
+
+    /** 取下一个轮转发言者（round-robin），不修改 conversation。 */
+    private fun getNextSpeakerRoundRobin(conversation: Conversation): Uuid? {
+        val queue = conversation.groupMemberQueue
+        if (queue.isEmpty()) return null
+        val nextIndex = (conversation.groupMemberQueueIndex + 1) % queue.size
+        return queue[nextIndex]
+    }
+
+    /** 解析下一个发言者：依据助手的 turnTakingStrategy。返回 null 表示无可用成员。 */
+    private suspend fun resolveNextSpeaker(
+        conversation: Conversation,
+        groupAssistant: Assistant,
+        settings: me.rerere.rikkahub.data.datastore.Settings,
+    ): Uuid? {
+        when (groupAssistant.turnTakingStrategy) {
+            TurnTakingStrategy.MANUAL -> return conversation.activeGroupMemberId
+                ?: groupAssistant.groupMembers.firstOrNull { it.enabled }?.id
+            TurnTakingStrategy.AUTO_ROUND_ROBIN -> {
+                val nextId = getNextSpeakerRoundRobin(conversation)
+                    ?: groupAssistant.groupMembers.firstOrNull { it.enabled }?.id
+                if (nextId != null) {
+                    val queue = conversation.groupMemberQueue.ifEmpty {
+                        groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
+                    }
+                    val nextIndex = (conversation.groupMemberQueueIndex + 1) % queue.size.coerceAtLeast(1)
+                    saveConversation(conversation.id, conversation.copy(
+                        activeGroupMemberId = nextId,
+                        groupMemberQueue = queue,
+                        groupMemberQueueIndex = nextIndex,
+                    ))
+                }
+                return nextId
+            }
+            TurnTakingStrategy.AUTO_MODERATOR -> {
+                return resolveNextSpeakerViaModerator(conversation, groupAssistant, settings)
+            }
+        }
+    }
+
+    /** AUTO_MODERATOR：用一个轻量模型决定下一发言者，失败时回退到 round-robin。 */
+    private suspend fun resolveNextSpeakerViaModerator(
+        conversation: Conversation,
+        groupAssistant: Assistant,
+        settings: me.rerere.rikkahub.data.datastore.Settings,
+    ): Uuid? {
+        val enabled = groupAssistant.groupMembers.filter { it.enabled }
+        if (enabled.isEmpty()) return null
+        if (enabled.size == 1) return enabled.first().id
+
+        val descriptions = enabled.joinToString("\n") { m ->
+            val source = settings.getAssistantById(m.assistantId)
+            val name = m.displayName.ifBlank { source?.name ?: "Unknown" }
+            "- ID:${m.id} | $name"
+        }
+        val prompt = buildString {
+            appendLine("You are a conversation moderator. Decide which character should speak next.")
+            appendLine("Reply ONLY with the character ID (UUID).")
+            appendLine()
+            appendLine("Characters:")
+            appendLine(descriptions)
+            appendLine()
+            appendLine("Recent conversation:")
+            conversation.currentMessages.takeLast(6).forEach { msg ->
+                val tag = when (msg.role) {
+                    MessageRole.USER -> "User"
+                    MessageRole.ASSISTANT -> {
+                        msg.memberId?.let { mid ->
+                            groupAssistant.groupMembers.find { it.id == mid }?.displayName
+                        } ?: "Assistant"
+                    }
+                    else -> msg.role.name
+                }
+                appendLine("[$tag]: ${msg.toText().take(200)}")
+            }
+        }
+
+        return try {
+            val moderatorModel = settings.findModelById(
+                groupAssistant.chatModelId ?: settings.chatModelId
+            ) ?: return getNextSpeakerRoundRobin(conversation)
+            val moderatorProvider = moderatorModel.findProvider(settings.providers)
+                ?: return getNextSpeakerRoundRobin(conversation)
+            val providerImpl = providerManager.getProviderByType(moderatorProvider)
+            val result = providerImpl.generateText(
+                providerSetting = moderatorProvider,
+                messages = listOf(UIMessage.system(prompt)),
+                params = TextGenerationParams(model = moderatorModel, maxTokens = 32),
+            )
+            val responseText = result.choices.firstOrNull()?.message
+                ?.parts?.filterIsInstance<UIMessagePart.Text>()
+                ?.joinToString("") { it.text }?.trim().orEmpty()
+            (enabled.find { it.id.toString() == responseText }
+                ?: enabled.firstOrNull { responseText.contains(it.id.toString()) })?.id
+                ?: getNextSpeakerRoundRobin(conversation)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            getNextSpeakerRoundRobin(conversation)
+        }
+    }
 }
 
 /**
@@ -1363,4 +1537,93 @@ private fun List<UIMessage>.applyEnhancementPrompt(assistant: Assistant): List<U
     val textPart = parts[lastTextIdx] as UIMessagePart.Text
     parts[lastTextIdx] = textPart.copy(text = textPart.text + "\n\n" + extra)
     return toMutableList().also { it[lastUserIdx] = userMsg.copy(parts = parts) }
+}
+
+/**
+ * 群组对话：按当前发言成员的 ContextFilter 筛选可见消息（scope/exclude/mention/maxMessages 四层）。
+ * 非群组对话或解析不到成员时直接返回原列表。
+ */
+private fun List<UIMessage>.applyGroupContextFilter(
+    groupAssistant: Assistant,
+    effectiveMemberId: Uuid?,
+): List<UIMessage> {
+    if (groupAssistant.assistantType != AssistantType.GROUP) return this
+    if (effectiveMemberId == null) return this
+    val member = groupAssistant.groupMembers.find { it.id == effectiveMemberId } ?: return this
+    val filter = member.contextFilter
+    if (filter.scope == ContextScope.ALL
+        && filter.excludedMemberIds.isEmpty()
+        && !filter.mentionEnabled
+        && filter.maxMessages <= 0
+    ) return this
+
+    var result: List<UIMessage> = this
+    // Layer 1: 范围
+    result = when (filter.scope) {
+        ContextScope.ALL -> result
+        ContextScope.SELF -> result.filter { it.role == MessageRole.USER || it.memberId == effectiveMemberId }
+        ContextScope.MEMBER_LIST -> result.filter { it.role == MessageRole.USER || it.memberId in filter.visibleMemberIds }
+        ContextScope.DIRECTED -> result.filter { it.memberId == effectiveMemberId }
+    }
+    // Layer 2: 排除
+    if (filter.excludedMemberIds.isNotEmpty()) {
+        result = result.filter { it.memberId !in filter.excludedMemberIds }
+    }
+    // Layer 3: 提及关键词
+    if (filter.mentionEnabled && filter.mentionKeywords.isNotEmpty()) {
+        result = result.filter { msg ->
+            msg.role == MessageRole.USER || filter.mentionKeywords.any { kw ->
+                msg.toText().contains(kw, ignoreCase = true)
+            }
+        }
+    }
+    // Layer 4: 截断（保留所有 USER 消息）
+    if (filter.maxMessages > 0 && result.size > filter.maxMessages) {
+        val users = result.filter { it.role == MessageRole.USER }
+        val others = result.filter { it.role != MessageRole.USER }
+        val keep = (filter.maxMessages - users.size).coerceAtLeast(0)
+        result = others.takeLast(keep) + users
+    }
+    return result
+}
+
+/**
+ * 群组对话 API 序列化重写：
+ *  - 其它成员的 ASSISTANT 消息 → USER + speaker 前缀（避免连续 ASSISTANT 触发 Gemini 报错）
+ *  - 当前成员的消息 → 保留 ASSISTANT 并塞 message.name（OpenAI 等支持）
+ *  - 真实用户消息 → 加 [User] 前缀
+ *  - 序列若以 ASSISTANT 结尾 → 追加一条空 USER 让 chat completion API 接受
+ */
+private fun List<UIMessage>.applyGroupApiRewrite(
+    groupAssistant: Assistant,
+    effectiveMemberId: Uuid?,
+): List<UIMessage> {
+    if (groupAssistant.assistantType != AssistantType.GROUP || effectiveMemberId == null) return this
+    val rewritten = map { message ->
+        when {
+            message.role == MessageRole.ASSISTANT
+                    && message.memberId != null
+                    && message.memberId != effectiveMemberId -> {
+                val member = groupAssistant.groupMembers.find { it.id == message.memberId }
+                val prefix = member?.displayName?.takeIf { it.isNotBlank() }?.let { "[$it] " } ?: ""
+                message.copy(
+                    role = MessageRole.USER,
+                    parts = listOf(UIMessagePart.Text(prefix + message.toText())),
+                    name = null,
+                )
+            }
+            message.memberId != null -> {
+                val member = groupAssistant.groupMembers.find { it.id == message.memberId }
+                val memberName = member?.displayName?.takeIf { it.isNotBlank() }
+                if (memberName != null && message.name != memberName) message.copy(name = memberName) else message
+            }
+            message.role == MessageRole.USER && message.memberId == null -> {
+                message.copy(parts = listOf(UIMessagePart.Text("[User] " + message.toText())))
+            }
+            else -> message
+        }
+    }
+    return if (rewritten.isNotEmpty() && rewritten.last().role == MessageRole.ASSISTANT) {
+        rewritten + UIMessage.user("")
+    } else rewritten
 }
