@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.components.message
 
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
@@ -57,6 +58,7 @@ fun ChatMessageAssistantAvatar(
     loading: Boolean,
     model: Model?,
     assistant: Assistant?,
+    onLongPressMention: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val settings = LocalSettings.current
@@ -64,11 +66,20 @@ fun ChatMessageAssistantAvatar(
     val useAssistantAvatar = assistant?.useAssistantAvatar == true
     val isGroupMember = message.memberId != null && assistant?.assistantType == me.rerere.rikkahub.data.model.AssistantType.GROUP
     val groupMember = if (isGroupMember) assistant?.groupMembers?.find { it.id == message.memberId } else null
-    if (message.role == MessageRole.ASSISTANT && (model != null || useAssistantAvatar || isGroupMember)) {
+    if ((message.role == MessageRole.ASSISTANT || isGroupMember) && (model != null || useAssistantAvatar || isGroupMember)) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            modifier = modifier
+            modifier = modifier.then(
+                if (isGroupMember && groupMember != null && onLongPressMention != null) {
+                    Modifier.combinedClickable(
+                        onClick = {},
+                        onLongClick = { onLongPressMention(groupMember.displayName.ifBlank { assistant?.name.orEmpty() }) },
+                    )
+                } else {
+                    Modifier
+                }
+            )
         ) {
             if (isGroupMember && groupMember != null) {
                 val memberName = groupMember.displayName.ifBlank { assistant?.name ?: "?" }

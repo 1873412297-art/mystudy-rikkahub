@@ -109,6 +109,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesThemePage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesNotificationPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesGeneralPage
+import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesRuntimePage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesUIPage
 import me.rerere.rikkahub.ui.pages.setting.SettingThemePage
 import me.rerere.rikkahub.ui.pages.setting.SettingDonatePage
@@ -341,7 +342,8 @@ class RouteActivity : ComponentActivity() {
                                     id = Uuid.parse(key.id),
                                     text = key.text,
                                     files = key.files.map { it.toUri() },
-                                    nodeId = key.nodeId?.let { Uuid.parse(it) }
+                                    nodeId = key.nodeId?.let { Uuid.parse(it) },
+                                    greeting = key.greeting,
                                 )
                             }
 
@@ -450,6 +452,10 @@ class RouteActivity : ComponentActivity() {
 
                             entry<Screen.SettingPreferencesGeneral> {
                                 SettingPreferencesGeneralPage()
+                            }
+
+                            entry<Screen.SettingPreferencesRuntime> {
+                                SettingPreferencesRuntimePage()
                             }
 
                             entry<Screen.SettingPreferencesUI> {
@@ -688,6 +694,9 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object SettingPreferencesGeneral : Screen
+
+    @Serializable
+    data object SettingPreferencesRuntime : Screen
 
     @Serializable
     data object SettingPreferencesUI : Screen

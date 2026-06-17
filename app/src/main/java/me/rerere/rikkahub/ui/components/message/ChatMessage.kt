@@ -108,6 +108,7 @@ fun ChatMessage(
     assistant: Assistant? = null,
     runtimeState: GroupRuntimeState? = null,
     lastMessage: Boolean = false,
+    onMentionRole: ((String) -> Unit)? = null,
     onFork: () -> Unit,
     onRegenerate: (memberId: kotlin.uuid.Uuid?) -> Unit,
     onEdit: () -> Unit,
@@ -165,6 +166,7 @@ fun ChatMessage(
                     model = model,
                     assistant = assistant,
                     loading = loading,
+                    onLongPressMention = onMentionRole,
                     modifier = Modifier.weight(1f)
                 )
                 ChatMessageUserAvatar(

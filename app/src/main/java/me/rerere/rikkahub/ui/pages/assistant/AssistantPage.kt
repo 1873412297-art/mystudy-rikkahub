@@ -511,8 +511,9 @@ private fun AssistantCreationSheet(
                         LazyColumn(modifier = Modifier.height(400.dp)) {
                             items(soloAssistants, key = { it.id }) { candidate ->
                                 val alreadyAdded = assistant.groupMembers.any { it.assistantId == candidate.id }
+                                val candidateName = candidate.name.ifBlank { "默认助手" }
                                 ListItem(
-                                    headlineContent = { Text(candidate.name) },
+                                    headlineContent = { Text(candidateName) },
                                     supportingContent = { if (alreadyAdded) Text("已添加") },
                                     modifier = Modifier.clickable {
                                         if (!alreadyAdded) {
@@ -520,7 +521,7 @@ private fun AssistantCreationSheet(
                                                 groupMembers = assistant.groupMembers + GroupMember(
                                                     id = Uuid.random(),
                                                     assistantId = candidate.id,
-                                                    displayName = candidate.name,
+                                                    displayName = candidateName,
                                                     avatar = candidate.avatar,
                                                 )
                                             ))

@@ -278,9 +278,6 @@ dependencies {
     implementation(libs.slf4j.api)
     implementation(libs.slf4j.android)
 
-    // sqlite-android (requery SQLite for Android)
-    implementation(libs.sqlite.android)
-
     // modules
     implementation(project(":ai"))
     implementation(project(":web"))

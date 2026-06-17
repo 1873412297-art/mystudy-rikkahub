@@ -46,6 +46,7 @@ import me.rerere.rikkahub.data.model.AssistantRegex
 import me.rerere.rikkahub.data.model.InjectionPosition
 import me.rerere.rikkahub.data.model.Lorebook
 import me.rerere.rikkahub.data.model.PromptInjection
+import me.rerere.rikkahub.data.model.normalizeTavernCardText
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.ui.components.ui.AutoAIIcon
@@ -425,34 +426,34 @@ private fun buildAssistantPrompt(
         appendLine("You are roleplaying as $name.")
         appendLine()
         if (!system.isNullOrBlank()) {
-            appendLine(system)
+            appendLine(system.normalizeTavernCardText(charName = name))
             appendLine()
         }
         if (!description.isNullOrBlank()) {
             appendLine("## Description of the character")
-            appendLine(description)
+            appendLine(description.normalizeTavernCardText(charName = name))
             appendLine()
         }
         if (!personality.isNullOrBlank()) {
             appendLine("## Personality of the character")
-            appendLine(personality)
+            appendLine(personality.normalizeTavernCardText(charName = name))
             appendLine()
         }
         if (!scenario.isNullOrBlank()) {
             appendLine("## Scenario")
-            appendLine(scenario)
+            appendLine(scenario.normalizeTavernCardText(charName = name))
             appendLine()
         }
         if (!mesExample.isNullOrBlank()) {
             appendLine("## Example Dialogue")
             appendLine("The following examples demonstrate how $name speaks and behaves. Use them as a reference for tone, style, and formatting:")
             appendLine()
-            appendLine(mesExample)
+            appendLine(mesExample.normalizeTavernCardText(charName = name))
             appendLine()
         }
         if (!postHistoryInstructions.isNullOrBlank()) {
             appendLine("## Post-history Instructions")
-            appendLine(postHistoryInstructions)
+            appendLine(postHistoryInstructions.normalizeTavernCardText(charName = name))
         }
     }.trim()
 }

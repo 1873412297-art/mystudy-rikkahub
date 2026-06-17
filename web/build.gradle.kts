@@ -14,7 +14,11 @@ val buildWebUi = tasks.register<Exec>("buildWebUi") {
     if (isWindows) {
         commandLine("cmd", "/c", "pnpm.cmd run build")
     } else {
-        commandLine("zsh", "-ic", "pnpm run build")
+        commandLine(
+            "sh",
+            "-lc",
+            "if command -v zsh >/dev/null 2>&1; then exec zsh -ic 'pnpm run build'; else exec pnpm run build; fi"
+        )
     }
 
     inputs.files(

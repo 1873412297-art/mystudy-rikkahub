@@ -177,7 +177,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                     val candidates = listOfNotNull(
                         updateMatch?.let { TagMatch("update", it.range.first, it.range.last + 1) },
                         exprMatch?.let { TagMatch("expr", it.range.first, it.range.last + 1) },
-                        barePatchRange?.let { TagMatch("barePatch", it.first, it.last) },
+                        barePatchRange?.let { TagMatch("barePatch", it.first, it.last + 1) },
                     )
                     val first = candidates.minByOrNull { it.start }
 
