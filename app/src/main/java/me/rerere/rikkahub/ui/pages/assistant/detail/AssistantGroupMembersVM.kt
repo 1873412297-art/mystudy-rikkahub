@@ -17,7 +17,9 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.data.model.Avatar
+import me.rerere.rikkahub.data.model.GroupContextOptions
 import me.rerere.rikkahub.data.model.GroupMember
+import me.rerere.rikkahub.data.model.GroupReplyOptions
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import kotlin.uuid.Uuid
 
@@ -61,6 +63,16 @@ class AssistantGroupMembersVM(
     fun setTurnTakingStrategy(strategy: TurnTakingStrategy) {
         val current = assistant.value ?: return
         updateAssistant(current.copy(turnTakingStrategy = strategy))
+    }
+
+    fun updateGroupReplyOptions(options: GroupReplyOptions) {
+        val current = assistant.value ?: return
+        updateAssistant(current.copy(groupReplyOptions = options))
+    }
+
+    fun updateGroupContextOptions(options: GroupContextOptions) {
+        val current = assistant.value ?: return
+        updateAssistant(current.copy(groupContextOptions = options))
     }
 
     fun updateMemberOrder(members: List<GroupMember>) {

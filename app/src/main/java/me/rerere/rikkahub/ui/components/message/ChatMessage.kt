@@ -79,6 +79,7 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.replaceRegexes
+import me.rerere.rikkahub.service.group.GroupRuntimeState
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
 import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
 import me.rerere.rikkahub.ui.components.richtext.ZoomableAsyncImage
@@ -105,6 +106,7 @@ fun ChatMessage(
     loading: Boolean = false,
     model: Model? = null,
     assistant: Assistant? = null,
+    runtimeState: GroupRuntimeState? = null,
     lastMessage: Boolean = false,
     onFork: () -> Unit,
     onRegenerate: (memberId: kotlin.uuid.Uuid?) -> Unit,
@@ -133,9 +135,22 @@ fun ChatMessage(
     val navController = LocalNavController.current
     val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
+    val hasGroupSpeakerPrefix = remember(message.parts, assistant) {
+        message.hasLeadingGroupSpeakerPrefix(assistant)
+    }
+    val isRealUserMessage = message.role == MessageRole.USER && message.memberId == null && !hasGroupSpeakerPrefix
+    val displayRole = if (isRealUserMessage) MessageRole.USER else MessageRole.ASSISTANT
+    val displayParts = remember(message.parts, assistant, message.memberId, settings.userNickname) {
+        message.parts.stripVisibleSpeakerPrefixes(
+            assistant = assistant,
+            memberId = message.memberId,
+            userName = settings.userNickname,
+            messageName = message.name,
+        )
+    }
     Column(
         modifier = modifier.fillMaxWidth(),
-        horizontalAlignment = if (message.role == MessageRole.USER) Alignment.End else Alignment.Start,
+        horizontalAlignment = if (isRealUserMessage) Alignment.End else Alignment.Start,
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         if (!message.parts.isEmptyUIMessage()) {
@@ -156,6 +171,7 @@ fun ChatMessage(
                     message = message,
                     avatar = settings.userAvatar,
                     nickname = settings.userNickname,
+                    isRealUserMessage = isRealUserMessage,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -163,14 +179,14 @@ fun ChatMessage(
         ProvideTextStyle(textStyle) {
             MessagePartsBlock(
                 assistant = assistant,
-                role = message.role,
-                parts = message.parts,
+                role = displayRole,
+                parts = displayParts,
                 annotations = message.annotations,
                 loading = loading,
                 model = model,
                 onToolApproval = onToolApproval,
                 onToolAnswer = onToolAnswer,
-                onUserMessageClick = if (message.role == MessageRole.USER) onEdit else null,
+                onUserMessageClick = if (isRealUserMessage) onEdit else null,
             )
 
             message.translation?.let { translation ->
@@ -207,6 +223,7 @@ fun ChatMessage(
                     onClearTranslation = onClearTranslation,
                     assistant = assistant,
                     settingsForGroup = fullSettings,
+                    runtimeState = runtimeState,
                 )
             }
         }
@@ -257,6 +274,67 @@ fun ChatMessage(
             }
         )
     }
+}
+
+private fun List<UIMessagePart>.stripVisibleSpeakerPrefixes(
+    assistant: Assistant?,
+    memberId: kotlin.uuid.Uuid?,
+    userName: String,
+    messageName: String?,
+): List<UIMessagePart> {
+    val labels = buildList {
+        add("user")
+        add("User")
+        userName.takeIf { it.isNotBlank() }?.let { add(it) }
+        messageName?.takeIf { it.isNotBlank() }?.let { add(it) }
+        if (assistant?.assistantType == me.rerere.rikkahub.data.model.AssistantType.GROUP) {
+            assistant.groupMembers.forEach { member ->
+                member.displayName.takeIf { it.isNotBlank() }?.let { add(it) }
+            }
+            memberId?.let { id ->
+                assistant.groupMembers.find { it.id == id }?.displayName
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { add(it) }
+            }
+        } else {
+            assistant?.name?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }
+    }.distinct()
+
+    return map { part ->
+        if (part is UIMessagePart.Text) {
+            part.copy(text = part.text.stripLeadingSpeakerLabel(labels))
+        } else {
+            part
+        }
+    }
+}
+
+private fun UIMessage.hasLeadingGroupSpeakerPrefix(assistant: Assistant?): Boolean {
+    if (assistant?.assistantType != me.rerere.rikkahub.data.model.AssistantType.GROUP) return false
+    val labels = assistant.groupMembers.mapNotNull { member ->
+        member.displayName.takeIf { it.isNotBlank() }
+    }
+    val text = parts.filterIsInstance<UIMessagePart.Text>().firstOrNull()?.text ?: return false
+    return labels.any { label -> text.hasLeadingSpeakerLabel(label) }
+}
+
+private fun String.stripLeadingSpeakerLabel(labels: List<String>): String {
+    var result = this
+    labels.forEach { label ->
+        val escaped = Regex.escape(label)
+        result = result.replace(
+            Regex("""^\s*[\[【]\s*$escaped\s*[\]】]\s*[:：]?\s*""", RegexOption.IGNORE_CASE),
+            ""
+        )
+    }
+    return result
+}
+
+private fun String.hasLeadingSpeakerLabel(label: String): Boolean {
+    val escaped = Regex.escape(label)
+    return Regex("""^\s*[\[【]\s*$escaped\s*[\]】]\s*[:：]?\s*""", RegexOption.IGNORE_CASE)
+        .containsMatchIn(this)
 }
 
 @OptIn(FlowPreview::class)

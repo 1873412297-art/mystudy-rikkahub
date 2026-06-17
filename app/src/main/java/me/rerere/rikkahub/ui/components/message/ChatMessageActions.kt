@@ -56,6 +56,7 @@ import me.rerere.hugeicons.stroke.VolumeHigh
 import me.rerere.hugeicons.stroke.WebDesign01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.MessageNode
+import me.rerere.rikkahub.service.group.GroupRuntimeState
 import me.rerere.rikkahub.ui.components.ui.RikkaConfirmDialog
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.context.LocalTTSState
@@ -76,6 +77,7 @@ fun ColumnScope.ChatMessageActionButtons(
     onClearTranslation: (UIMessage) -> Unit = {},
     assistant: me.rerere.rikkahub.data.model.Assistant? = null,
     settingsForGroup: me.rerere.rikkahub.data.datastore.Settings? = null,
+    runtimeState: GroupRuntimeState? = null,
 ) {
     val context = LocalContext.current
     val settings = LocalSettings.current
@@ -83,7 +85,9 @@ fun ColumnScope.ChatMessageActionButtons(
     var showTranslateDialog by remember { mutableStateOf(false) }
     var showRegenerateConfirm by remember { mutableStateOf(false) }
     var showRegenerateMemberPicker by remember { mutableStateOf(false) }
+    var showGroupContextDebug by remember { mutableStateOf(false) }
     val isGroupMode = assistant?.assistantType == me.rerere.rikkahub.data.model.AssistantType.GROUP
+    val isRealUserMessage = message.role == MessageRole.USER && message.memberId == null
 
     LaunchedEffect(isPendingDelete) {
         if (isPendingDelete) {
@@ -116,7 +120,8 @@ fun ColumnScope.ChatMessageActionButtons(
                 .clip(CircleShape)
                 .clickable {
                     when {
-                        message.role == MessageRole.USER -> showRegenerateConfirm = true
+                        isRealUserMessage -> showRegenerateConfirm = true
+                        isGroupMode && message.memberId != null -> onRegenerate(message.memberId)
                         isGroupMode && assistant != null -> showRegenerateMemberPicker = true
                         else -> onRegenerate(null)
                     }
@@ -126,7 +131,7 @@ fun ColumnScope.ChatMessageActionButtons(
             tint = actionIconColor
         )
 
-        if (message.role == MessageRole.ASSISTANT) {
+        if (!isRealUserMessage) {
             val tts = LocalTTSState.current
             val isSpeaking by tts.isSpeaking.collectAsState()
             val isAvailable by tts.isAvailable.collectAsState()
@@ -177,6 +182,19 @@ fun ColumnScope.ChatMessageActionButtons(
                     tint = actionIconColor
                 )
             }
+        }
+
+        if (runtimeState != null && isGroupMode) {
+            Text(
+                text = "上下文",
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable { showGroupContextDebug = true }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                color = actionIconColor,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+            )
         }
 
         Icon(
@@ -254,6 +272,13 @@ fun ColumnScope.ChatMessageActionButtons(
             onDismiss = { showRegenerateMemberPicker = false },
         )
     }
+
+    if (showGroupContextDebug && runtimeState != null) {
+        GroupContextDebugSheet(
+            runtimeState = runtimeState,
+            onDismissRequest = { showGroupContextDebug = false },
+        )
+    }
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -282,7 +307,7 @@ private fun RegenerateMemberPickerSheet(
                 val curMember = assistant.groupMembers.find { it.id == curId }
                 if (curMember != null) {
                     val src = settings?.assistants?.find { it.id == curMember.assistantId }
-                    val name = curMember.displayName.ifBlank { src?.name ?: "?" }
+                    val name = curMember.displayName.ifBlank { src?.name?.ifBlank { "默认助手" } ?: "默认助手" }
                     androidx.compose.material3.OutlinedCard(
                         onClick = { onPick(curId) },
                         modifier = Modifier.fillMaxWidth(),
@@ -302,16 +327,16 @@ private fun RegenerateMemberPickerSheet(
                     androidx.compose.material3.HorizontalDivider()
                 }
             }
-            if (assistant.groupMembers.any { it.id != currentMemberId }) {
+            if (assistant.groupMembers.any { it.enabled && it.id != currentMemberId }) {
                 Text(
                     "或选其他成员：",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            assistant.groupMembers.filter { it.id != currentMemberId }.forEach { member ->
+            assistant.groupMembers.filter { it.enabled && it.id != currentMemberId }.forEach { member ->
                 val src = settings?.assistants?.find { it.id == member.assistantId }
-                val name = member.displayName.ifBlank { src?.name ?: "?" }
+                val name = member.displayName.ifBlank { src?.name?.ifBlank { "默认助手" } ?: "默认助手" }
                 androidx.compose.material3.Card(
                     onClick = { onPick(member.id) },
                     modifier = Modifier.fillMaxWidth(),

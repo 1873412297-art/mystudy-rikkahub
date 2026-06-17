@@ -10,6 +10,7 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.util.InstantSerializer
 import me.rerere.rikkahub.data.datastore.DEFAULT_ASSISTANT_ID
+import me.rerere.rikkahub.service.group.GroupRuntimeState
 import java.time.Instant
 import kotlin.uuid.Uuid
 
@@ -32,6 +33,8 @@ data class Conversation(
     val workspaceCwd: String? = null,
     // 状态变量系统：会话级 JSON 状态对象，由 LLM 通过 status block 增量 patch
     val statusVariables: JsonObject = JsonObject(emptyMap()),
+    // 群组助手运行时状态：私有备注、关系矩阵、场景摘要等持久化玩法状态
+    val groupRuntimeState: GroupRuntimeState = GroupRuntimeState(),
     // 群组助手运行时状态：当前发言成员、本轮发言队列、队列内位置
     val activeGroupMemberId: Uuid? = null,
     val groupMemberQueue: List<Uuid> = emptyList(),

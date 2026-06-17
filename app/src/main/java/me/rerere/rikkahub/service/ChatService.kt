@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.core.Tool
@@ -70,6 +71,9 @@ import me.rerere.rikkahub.data.ai.transformers.TemplateTransformer
 import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
 import me.rerere.rikkahub.data.ai.transformers.TimeReminderTransformer
 import me.rerere.rikkahub.data.ai.transformers.WorkspaceReminderTransformer
+import me.rerere.rikkahub.data.ai.transformers.findBareJsonPatch
+import me.rerere.rikkahub.data.ai.transformers.visualTransforms
+import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.findProvider
@@ -92,6 +96,12 @@ import me.rerere.rikkahub.data.model.toMessageNode
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
+import me.rerere.rikkahub.service.group.GroupContextBuildInput
+import me.rerere.rikkahub.service.group.GroupContextBuilder
+import me.rerere.rikkahub.service.group.GroupRuntimeStateUpdater
+import me.rerere.rikkahub.service.group.GroupSpeakerScorer
+import me.rerere.rikkahub.service.group.GroupSpeakingIntent
+import me.rerere.rikkahub.service.group.applyGroupApiRewrite
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
 import me.rerere.rikkahub.utils.applyPlaceholders
@@ -108,9 +118,11 @@ private const val TAG = "ChatService"
 internal fun backgroundTextGenerationParams(
     model: Model,
     reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
+    maxTokens: Int? = null,
 ): TextGenerationParams = TextGenerationParams(
     model = model,
     reasoningLevel = reasoningLevel,
+    maxTokens = maxTokens?.takeIf { it > 0 },
     customHeaders = model.customHeaders,
     customBody = model.customBodies,
 )
@@ -145,6 +157,35 @@ private val outputTransformers by lazy {
         RegexOutputTransformer,
         StatusPlaceholderTransformer,
     )
+}
+
+internal fun renderPresetMessageMacros(
+    messages: List<UIMessage>,
+    settings: Settings,
+    assistant: Assistant,
+    model: Model,
+): List<UIMessage> {
+    val userName = settings.displaySetting.userNickname.ifBlank { "user" }
+    val charName = assistant.name.ifBlank { "assistant" }
+    return messages.map { message ->
+        message.copy(
+            parts = message.parts.map { part ->
+                if (part is UIMessagePart.Text) {
+                    part.copy(
+                        text = PlaceholderTransformer.expandVisualMacros(
+                            text = part.text,
+                            userName = userName,
+                            charName = charName,
+                            modelName = model.displayName,
+                            modelId = model.modelId,
+                        )
+                    )
+                } else {
+                    part
+                }
+            }
+        )
+    }
 }
 
 class ChatService(
@@ -317,22 +358,146 @@ class ChatService(
         getOrCreateSession(conversationId) // 确保 session 存在
         val conversation = conversationRepo.getConversationById(conversationId)
         if (conversation != null) {
-            updateConversation(conversationId, conversation)
             settingsStore.updateAssistant(conversation.assistantId)
+            statusVariableStore.init(conversationId, conversation.statusVariables)
+            val settings = settingsStore.settingsFlowRaw.first()
+            val assistant = settings.getAssistantById(conversation.assistantId)
+                ?: settings.getCurrentAssistant()
+            val renderedConversation = renderStoredStatusInstructions(
+                conversationId = conversationId,
+                conversation = conversation,
+                settings = settings,
+                assistant = assistant,
+            )
+            updateConversation(conversationId, renderedConversation)
         } else {
             // 新建对话, 并添加预设消息
             val currentSettings = settingsStore.settingsFlowRaw.first()
             val assistant = currentSettings.getCurrentAssistant()
+            statusVariableStore.init(conversationId, JsonObject(emptyMap()))
+            val presetMessages = renderPresetMessages(
+                conversationId = conversationId,
+                settings = currentSettings,
+                assistant = assistant,
+            )
             val newConversation = Conversation.ofId(
                 id = conversationId,
                 assistantId = assistant.id,
                 newConversation = true
-            ).updateCurrentMessages(assistant.presetMessages)
+            ).updateCurrentMessages(presetMessages)
+                .copy(statusVariables = statusVariableStore.getValue(conversationId))
             updateConversation(conversationId, newConversation)
         }
     }
 
     // ---- 发送消息 ----
+
+    private suspend fun renderStoredStatusInstructions(
+        conversationId: Uuid,
+        conversation: Conversation,
+        settings: me.rerere.rikkahub.data.datastore.Settings,
+        assistant: Assistant,
+    ): Conversation {
+        val messages = conversation.currentMessages
+        if (!messages.hasUnrenderedStatusInstructions()) return conversation
+
+        val renderedMessages = renderPresetMessages(
+            conversationId = conversationId,
+            settings = settings,
+            assistant = assistant,
+            messages = messages,
+        )
+        return conversation.updateCurrentMessages(renderedMessages)
+            .copy(statusVariables = statusVariableStore.getValue(conversationId))
+    }
+
+    private fun List<UIMessage>.hasUnrenderedStatusInstructions(): Boolean {
+        return any { message ->
+            message.parts.filterIsInstance<UIMessagePart.Text>().any { part ->
+                part.text.contains("UpdateVariable", ignoreCase = true) ||
+                    part.text.contains("StatusPlaceHolderImpl", ignoreCase = true) ||
+                    findBareJsonPatch(part.text) != null
+            }
+        }
+    }
+
+    private suspend fun renderPresetMessages(
+        conversationId: Uuid,
+        settings: me.rerere.rikkahub.data.datastore.Settings,
+        assistant: Assistant,
+        messages: List<UIMessage> = assistant.presetMessages,
+    ): List<UIMessage> {
+        val presetMessages = messages
+        if (presetMessages.isEmpty()) return presetMessages
+
+        val model = settings.findModelById(assistant.chatModelId ?: settings.chatModelId)
+            ?: return presetMessages
+
+        return renderPresetMessageMacros(
+            messages = presetMessages,
+            settings = settings,
+            assistant = assistant,
+            model = model,
+        ).visualTransforms(
+            transformers = outputTransformers,
+            context = context,
+            model = model,
+            assistant = assistant,
+            settings = settings,
+            conversationId = conversationId,
+        )
+    }
+
+    suspend fun applyInitialGreeting(conversationId: Uuid, greeting: String) {
+        if (greeting.isBlank()) return
+
+        initializeConversation(conversationId)
+
+        val settings = settingsStore.settingsFlowRaw.first()
+        val conversation = getConversationFlow(conversationId).value
+        val assistant = settings.getAssistantById(conversation.assistantId)
+            ?: settings.getCurrentAssistant()
+        val renderedGreeting = renderPresetMessages(
+            conversationId = conversationId,
+            settings = settings,
+            assistant = assistant,
+            messages = listOf(UIMessage.assistantHtml(greeting)),
+        )
+        if (renderedGreeting.isEmpty()) return
+
+        val hasUserMessages = conversation.currentMessages.any { it.role == MessageRole.USER }
+        val updatedConversation = if (hasUserMessages) {
+            conversation.copy(
+                messageNodes = conversation.messageNodes + renderedGreeting.map { it.toMessageNode() },
+                statusVariables = statusVariableStore.getValue(conversationId),
+            )
+        } else {
+            conversation.copy(
+                messageNodes = renderedGreeting.map { it.toMessageNode() },
+                statusVariables = statusVariableStore.getValue(conversationId),
+            )
+        }
+        saveConversation(conversationId, updatedConversation)
+    }
+
+    private suspend fun appendUserMessage(
+        conversationId: Uuid,
+        session: ConversationSession,
+        content: List<UIMessagePart>,
+    ) {
+        val currentConversation = session.state.value
+        val settings = settingsStore.settingsFlow.first()
+        val assistant = settings.getAssistantById(currentConversation.assistantId)
+            ?: settings.getCurrentAssistant()
+        val processedContent = preprocessUserInputParts(content, assistant)
+        val newConversation = currentConversation.copy(
+            messageNodes = currentConversation.messageNodes + UIMessage(
+                role = MessageRole.USER,
+                parts = processedContent,
+            ).toMessageNode(),
+        )
+        saveConversation(conversationId, newConversation)
+    }
 
     fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) {
         if (content.isEmptyInputMessage()) return
@@ -375,6 +540,42 @@ class ChatService(
         session.setJob(job)
     }
 
+    fun sendGroupMessage(conversationId: Uuid, content: List<UIMessagePart>, memberIds: List<Uuid>) {
+        if (memberIds.isEmpty()) {
+            addError(
+                error = IllegalStateException("Please select at least one group member"),
+                conversationId = conversationId,
+                title = "No group member selected",
+            )
+            return
+        }
+
+        val session = getOrCreateSession(conversationId)
+        val previousJob = session.getJob()
+        previousJob?.cancel()
+
+        val job = appScope.launch {
+            try {
+                runCatching { previousJob?.join() }
+                finishInterruptedPendingTools(conversationId)
+
+                if (!content.isEmptyInputMessage()) {
+                    appendUserMessage(conversationId, session, content)
+                }
+
+                memberIds.distinct().forEach { memberId ->
+                    handleMessageComplete(conversationId, memberId = memberId, allowAutoChain = false)
+                }
+
+                _generationDoneFlow.emit(conversationId)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                addError(e, conversationId, title = "Group message failed")
+            }
+        }
+        session.setJob(job)
+    }
+
     private fun preprocessUserInputParts(parts: List<UIMessagePart>, assistant: Assistant): List<UIMessagePart> {
         return parts.map { part ->
             when (part) {
@@ -403,7 +604,7 @@ class ChatService(
         val job = appScope.launch {
             try {
                 finishInterruptedPendingTools(conversationId)
-                handleMessageComplete(conversationId, memberId = memberId)
+                handleMessageComplete(conversationId, memberId = memberId, allowAutoChain = false)
                 _generationDoneFlow.emit(conversationId)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -436,12 +637,17 @@ class ChatService(
                         messageNodes = conversation.messageNodes.subList(0, indexAt + 1)
                     )
                     saveConversation(conversationId, newConversation)
-                    handleMessageComplete(conversationId, memberId = memberId)
+                    handleMessageComplete(conversationId, memberId = memberId, allowAutoChain = false)
                 } else {
                     if (regenerateAssistantMsg) {
                         val node = conversation.getMessageNodeByMessage(message)
                         val nodeIndex = conversation.messageNodes.indexOf(node)
-                        handleMessageComplete(conversationId, memberId = memberId, messageRange = 0..<nodeIndex)
+                        handleMessageComplete(
+                            conversationId,
+                            memberId = memberId,
+                            messageRange = 0..<nodeIndex,
+                            allowAutoChain = memberId == null,
+                        )
                     } else {
                         saveConversation(conversationId, conversation)
                     }
@@ -525,6 +731,7 @@ class ChatService(
         conversationId: Uuid,
         messageRange: ClosedRange<Int>? = null,
         memberId: Uuid? = null,
+        allowAutoChain: Boolean = true,
     ) {
         val settings = settingsStore.settingsFlow.first()
         val initialConversation = getConversationFlow(conversationId).value
@@ -587,6 +794,52 @@ class ChatService(
             // check invalid messages
             checkInvalidMessages(conversationId)
             val conversation = getConversationFlow(conversationId).value
+            val visibleMessages = conversation.currentMessages.let {
+                if (messageRange != null) {
+                    it.subList(messageRange.start, messageRange.endInclusive + 1)
+                } else {
+                    it
+                }
+            }.applyGroupContextFilter(groupAssistant, effectiveMemberId)
+                .applyEnhancementPrompt(assistant)
+            val localSpeakerScore = if (effectiveMemberId != null && groupAssistant.assistantType == AssistantType.GROUP) {
+                GroupSpeakerScorer().score(
+                    groupAssistant = groupAssistant,
+                    messages = conversation.currentMessages,
+                    runtimeState = conversation.groupRuntimeState,
+                    activeMemberId = conversation.activeGroupMemberId,
+                ).firstOrNull { it.memberId == effectiveMemberId }
+            } else {
+                null
+            }
+            val speakingIntent = effectiveMemberId?.let {
+                GroupSpeakingIntent(
+                    speakerId = it,
+                    intent = localSpeakerScore?.intent ?: "respond",
+                    reason = localSpeakerScore?.reason
+                        ?: "Manual or existing turn-taking selected this speaker.",
+                )
+            }
+            val layeredMessages = if (
+                effectiveMemberId != null &&
+                groupAssistant.assistantType == AssistantType.GROUP &&
+                groupAssistant.groupContextOptions.enableLayeredContext
+            ) {
+                GroupContextBuilder().build(
+                    GroupContextBuildInput(
+                        visibleMessages = visibleMessages,
+                        groupAssistant = groupAssistant,
+                        effectiveMemberId = effectiveMemberId,
+                        runtimeState = conversation.groupRuntimeState,
+                        contextOptions = groupAssistant.groupContextOptions,
+                        speakingIntent = speakingIntent,
+                    )
+                ).messages
+            } else {
+                visibleMessages
+            }
+            val originalMessageIds = layeredMessages.map { it.id }.toSet()
+            val messagesForGeneration = layeredMessages.applyGroupApiRewrite(groupAssistant, effectiveMemberId)
 
             // start generating
             val session = getOrCreateSession(conversationId)
@@ -594,15 +847,7 @@ class ChatService(
                 settings = settings,
                 model = model,
                 processingStatus = session.processingStatus,
-                messages = conversation.currentMessages.let {
-                    if (messageRange != null) {
-                        it.subList(messageRange.start, messageRange.endInclusive + 1)
-                    } else {
-                        it
-                    }
-                }.applyGroupContextFilter(groupAssistant, effectiveMemberId)
-                  .applyEnhancementPrompt(assistant)
-                  .applyGroupApiRewrite(groupAssistant, effectiveMemberId),
+                messages = messagesForGeneration,
                 assistant = assistant,
                 conversationSystemPrompt = conversation.customSystemPrompt,
                 conversationModeInjectionIds = conversation.modeInjectionIds,
@@ -673,7 +918,9 @@ class ChatService(
                         val stampedMessages = if (effectiveMemberId != null) {
                             val member = groupAssistant.groupMembers.find { it.id == effectiveMemberId }
                             val memberName = member?.displayName?.takeIf { it.isNotBlank() }
-                            chunk.messages.map { msg ->
+                            chunk.messages.filter { msg ->
+                                msg.id !in originalMessageIds && !msg.parts.isEmptyInputMessage()
+                            }.map { msg ->
                                 if (msg.memberId == null && memberName != null)
                                     msg.copy(memberId = effectiveMemberId, name = memberName)
                                 else if (msg.memberId == null)
@@ -702,15 +949,49 @@ class ChatService(
             Logging.log(TAG, it.stackTraceToString())
         }.onSuccess {
             val finalConversation = getConversationFlow(conversationId).value
-            saveConversation(conversationId, finalConversation)
+            val conversationAfterRuntimeUpdate = if (
+                groupAssistant.assistantType == AssistantType.GROUP &&
+                effectiveMemberId != null
+            ) {
+                finalConversation.copy(
+                    groupRuntimeState = GroupRuntimeStateUpdater().updateAfterReply(
+                        previous = finalConversation.groupRuntimeState,
+                        groupAssistant = groupAssistant,
+                        messages = finalConversation.currentMessages,
+                        speakerId = effectiveMemberId,
+                    )
+                )
+            } else {
+                finalConversation
+            }
+            if (conversationAfterRuntimeUpdate !== finalConversation) {
+                updateConversation(conversationId, conversationAfterRuntimeUpdate)
+            }
+            saveConversation(conversationId, conversationAfterRuntimeUpdate)
 
             // Only generate title/suggestions for main generation, not group member replies
             if (effectiveMemberId == null) {
                 launchWithConversationReference(conversationId) {
-                    generateTitle(conversationId, finalConversation)
+                    generateTitle(conversationId, conversationAfterRuntimeUpdate)
                 }
                 launchWithConversationReference(conversationId) {
-                    generateSuggestion(conversationId, finalConversation)
+                    generateSuggestion(conversationId, conversationAfterRuntimeUpdate)
+                }
+            } else if (
+                allowAutoChain &&
+                groupAssistant.assistantType == AssistantType.GROUP &&
+                groupAssistant.turnTakingStrategy != TurnTakingStrategy.MANUAL
+            ) {
+                val maxReplies = groupAssistant.groupReplyOptions.maxAutoRepliesPerUserTurn.coerceAtLeast(1)
+                val alreadySent = countGroupRepliesSinceLastUserMessage(
+                    conversationAfterRuntimeUpdate,
+                    groupAssistant,
+                )
+                if (alreadySent < maxReplies) {
+                    handleMessageComplete(
+                        conversationId = conversationId,
+                        allowAutoChain = true,
+                    )
                 }
             }
         }
@@ -924,6 +1205,7 @@ class ChatService(
             ?: throw IllegalStateException("No model available for compression")
         val provider = model.findProvider(settings.providers)
             ?: throw IllegalStateException("Provider not found")
+        val effectiveTargetTokens = targetTokens.takeIf { it > 0 }
 
         val providerHandler = providerManager.getProviderByType(provider)
 
@@ -957,7 +1239,7 @@ class ChatService(
             val contentToCompress = messages.joinToString("\n\n") { it.summaryAsText(maxLength = 2000) }
             val prompt = settings.compressPrompt.applyPlaceholders(
                 "content" to contentToCompress,
-                "target_tokens" to targetTokens.toString(),
+                "target_tokens" to (effectiveTargetTokens?.toString() ?: "the model maximum"),
                 "additional_context" to if (additionalPrompt.isNotBlank()) {
                     "Additional instructions from user: $additionalPrompt"
                 } else "",
@@ -1427,6 +1709,34 @@ class ChatService(
         return queue[nextIndex]
     }
 
+    private fun countGroupRepliesSinceLastUserMessage(
+        conversation: Conversation,
+        groupAssistant: Assistant,
+    ): Int {
+        val lastUserIndex = conversation.messageNodes.indexOfLast { node ->
+            node.currentMessage.role == MessageRole.USER
+        }
+        if (lastUserIndex < 0) return 0
+        return conversation.messageNodes
+            .drop(lastUserIndex + 1)
+            .count { node ->
+                val role = node.currentMessage.role
+                val memberId = node.currentMessage.memberId
+                role == MessageRole.ASSISTANT &&
+                    memberId != null &&
+                    groupAssistant.groupMembers.any { it.id == memberId && it.enabled }
+            }
+    }
+
+    private fun getNextDifferentSpeaker(
+        queue: List<Uuid>,
+        currentSpeakerId: Uuid?,
+    ): Uuid? {
+        if (queue.isEmpty()) return null
+        if (currentSpeakerId == null) return queue.firstOrNull()
+        return queue.firstOrNull { it != currentSpeakerId } ?: queue.firstOrNull()
+    }
+
     /** 解析下一个发言者：依据助手的 turnTakingStrategy。返回 null 表示无可用成员。 */
     private suspend fun resolveNextSpeaker(
         conversation: Conversation,
@@ -1437,8 +1747,23 @@ class ChatService(
             TurnTakingStrategy.MANUAL -> return conversation.activeGroupMemberId
                 ?: groupAssistant.groupMembers.firstOrNull { it.enabled }?.id
             TurnTakingStrategy.AUTO_ROUND_ROBIN -> {
-                val nextId = getNextSpeakerRoundRobin(conversation)
+                val preferredId = getNextSpeakerRoundRobin(conversation)
                     ?: groupAssistant.groupMembers.firstOrNull { it.enabled }?.id
+                val nextId = if (!groupAssistant.groupReplyOptions.allowConsecutiveSameSpeaker) {
+                    val activeId = conversation.activeGroupMemberId
+                    if (preferredId != null && preferredId == activeId) {
+                        getNextDifferentSpeaker(
+                            conversation.groupMemberQueue.ifEmpty {
+                                groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
+                            },
+                            activeId,
+                        ) ?: preferredId
+                    } else {
+                        preferredId
+                    }
+                } else {
+                    preferredId
+                }
                 if (nextId != null) {
                     val queue = conversation.groupMemberQueue.ifEmpty {
                         groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
@@ -1453,7 +1778,17 @@ class ChatService(
                 return nextId
             }
             TurnTakingStrategy.AUTO_MODERATOR -> {
-                return resolveNextSpeakerViaModerator(conversation, groupAssistant, settings)
+                val resolved = resolveNextSpeakerViaModerator(conversation, groupAssistant, settings)
+                if (groupAssistant.groupReplyOptions.allowConsecutiveSameSpeaker) return resolved
+                val activeId = conversation.activeGroupMemberId
+                return if (resolved != null && resolved == activeId) {
+                    val queue = conversation.groupMemberQueue.ifEmpty {
+                        groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
+                    }
+                    getNextDifferentSpeaker(queue, activeId)
+                } else {
+                    resolved
+                }
             }
         }
     }
@@ -1467,6 +1802,13 @@ class ChatService(
         val enabled = groupAssistant.groupMembers.filter { it.enabled }
         if (enabled.isEmpty()) return null
         if (enabled.size == 1) return enabled.first().id
+        val localScores = GroupSpeakerScorer().score(
+            groupAssistant = groupAssistant,
+            messages = conversation.currentMessages,
+            runtimeState = conversation.groupRuntimeState,
+            activeMemberId = conversation.activeGroupMemberId,
+        )
+        val localFallback = localScores.firstOrNull()?.memberId ?: getNextSpeakerRoundRobin(conversation)
 
         val descriptions = enabled.joinToString("\n") { m ->
             val source = settings.getAssistantById(m.assistantId)
@@ -1498,9 +1840,9 @@ class ChatService(
         return try {
             val moderatorModel = settings.findModelById(
                 groupAssistant.chatModelId ?: settings.chatModelId
-            ) ?: return getNextSpeakerRoundRobin(conversation)
+            ) ?: return localFallback
             val moderatorProvider = moderatorModel.findProvider(settings.providers)
-                ?: return getNextSpeakerRoundRobin(conversation)
+                ?: return localFallback
             val providerImpl = providerManager.getProviderByType(moderatorProvider)
             val result = providerImpl.generateText(
                 providerSetting = moderatorProvider,
@@ -1512,10 +1854,10 @@ class ChatService(
                 ?.joinToString("") { it.text }?.trim().orEmpty()
             (enabled.find { it.id.toString() == responseText }
                 ?: enabled.firstOrNull { responseText.contains(it.id.toString()) })?.id
-                ?: getNextSpeakerRoundRobin(conversation)
+                ?: localFallback
         } catch (e: Exception) {
             e.printStackTrace()
-            getNextSpeakerRoundRobin(conversation)
+            localFallback
         }
     }
 }
@@ -1587,43 +1929,3 @@ private fun List<UIMessage>.applyGroupContextFilter(
     return result
 }
 
-/**
- * 群组对话 API 序列化重写：
- *  - 其它成员的 ASSISTANT 消息 → USER + speaker 前缀（避免连续 ASSISTANT 触发 Gemini 报错）
- *  - 当前成员的消息 → 保留 ASSISTANT 并塞 message.name（OpenAI 等支持）
- *  - 真实用户消息 → 加 [User] 前缀
- *  - 序列若以 ASSISTANT 结尾 → 追加一条空 USER 让 chat completion API 接受
- */
-private fun List<UIMessage>.applyGroupApiRewrite(
-    groupAssistant: Assistant,
-    effectiveMemberId: Uuid?,
-): List<UIMessage> {
-    if (groupAssistant.assistantType != AssistantType.GROUP || effectiveMemberId == null) return this
-    val rewritten = map { message ->
-        when {
-            message.role == MessageRole.ASSISTANT
-                    && message.memberId != null
-                    && message.memberId != effectiveMemberId -> {
-                val member = groupAssistant.groupMembers.find { it.id == message.memberId }
-                val prefix = member?.displayName?.takeIf { it.isNotBlank() }?.let { "[$it] " } ?: ""
-                message.copy(
-                    role = MessageRole.USER,
-                    parts = listOf(UIMessagePart.Text(prefix + message.toText())),
-                    name = null,
-                )
-            }
-            message.memberId != null -> {
-                val member = groupAssistant.groupMembers.find { it.id == message.memberId }
-                val memberName = member?.displayName?.takeIf { it.isNotBlank() }
-                if (memberName != null && message.name != memberName) message.copy(name = memberName) else message
-            }
-            message.role == MessageRole.USER && message.memberId == null -> {
-                message.copy(parts = listOf(UIMessagePart.Text("[User] " + message.toText())))
-            }
-            else -> message
-        }
-    }
-    return if (rewritten.isNotEmpty() && rewritten.last().role == MessageRole.ASSISTANT) {
-        rewritten + UIMessage.user("")
-    } else rewritten
-}

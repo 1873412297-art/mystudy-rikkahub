@@ -91,6 +91,7 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.getAssistantById
+import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.service.ChatError
@@ -333,6 +334,11 @@ private fun ChatListNormal(
                             node = node,
                             model = node.currentMessage.modelId?.let(modelById::get),
                             assistant = assistant,
+                            runtimeState = if (assistant?.assistantType == AssistantType.GROUP) {
+                                conversation.groupRuntimeState
+                            } else {
+                                null
+                            },
                             loading = loading && index == lastMessageIndex,
                             onRegenerate = { _ ->
                                 onRegenerate(node.currentMessage)
@@ -664,7 +670,7 @@ private fun ChatListPreview(
                 key = { index, item -> item.second.id },
             ) { _, (originalIndex, node) ->
                 val message = node.currentMessage
-                val isUser = message.role == me.rerere.ai.core.MessageRole.USER
+                val isUser = message.role == me.rerere.ai.core.MessageRole.USER && message.memberId == null
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()

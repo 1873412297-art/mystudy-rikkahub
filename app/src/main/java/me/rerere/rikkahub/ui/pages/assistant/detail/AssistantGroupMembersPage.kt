@@ -146,6 +146,116 @@ fun AssistantGroupMembersPage(id: String) {
                 }
             }
 
+            if (currentAssistant.turnTakingStrategy != TurnTakingStrategy.MANUAL) {
+                item(key = "auto_reply_options") {
+                    val options = currentAssistant.groupReplyOptions
+                    CardGroup {
+                        item(
+                            headlineContent = { Text("避免同一成员连续发言") },
+                            supportingContent = {
+                                Text("自动模式下优先换人回复，除非只有一个可用成员")
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = !options.allowConsecutiveSameSpeaker,
+                                    onCheckedChange = { checked ->
+                                        vm.updateGroupReplyOptions(
+                                            options.copy(allowConsecutiveSameSpeaker = !checked)
+                                        )
+                                    },
+                                )
+                            },
+                        )
+                        item(
+                            headlineContent = { Text("每轮自动回复上限") },
+                            supportingContent = {
+                                Text("${options.maxAutoRepliesPerUserTurn} 条")
+                            },
+                            trailingContent = {
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    TextButton(onClick = {
+                                        vm.updateGroupReplyOptions(
+                                            options.copy(
+                                                maxAutoRepliesPerUserTurn = (options.maxAutoRepliesPerUserTurn - 1).coerceAtLeast(1)
+                                            )
+                                        )
+                                    }) { Text("−") }
+                                    TextButton(onClick = {
+                                        vm.updateGroupReplyOptions(
+                                            options.copy(
+                                                maxAutoRepliesPerUserTurn = options.maxAutoRepliesPerUserTurn + 1
+                                            )
+                                        )
+                                    }) { Text("+") }
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+
+            item(key = "group_context_options") {
+                val contextOptions = currentAssistant.groupContextOptions
+                CardGroup {
+                    item(
+                        headlineContent = { Text("分层上下文") },
+                        supportingContent = { Text("为当前发言角色注入私有视角、场景和关系备注") },
+                        trailingContent = {
+                            Switch(
+                                checked = contextOptions.enableLayeredContext,
+                                onCheckedChange = {
+                                    vm.updateGroupContextOptions(
+                                        contextOptions.copy(enableLayeredContext = it)
+                                    )
+                                },
+                            )
+                        },
+                    )
+                    item(
+                        headlineContent = { Text("私有视角") },
+                        supportingContent = { Text("允许角色看到仅自己知道的隐藏备注") },
+                        trailingContent = {
+                            Switch(
+                                checked = contextOptions.enablePrivateViewpoint,
+                                onCheckedChange = {
+                                    vm.updateGroupContextOptions(
+                                        contextOptions.copy(enablePrivateViewpoint = it)
+                                    )
+                                },
+                            )
+                        },
+                    )
+                    item(
+                        headlineContent = { Text("关系备注") },
+                        supportingContent = { Text("把当前角色对他人的关系状态写入上下文") },
+                        trailingContent = {
+                            Switch(
+                                checked = contextOptions.enableRelationshipNotes,
+                                onCheckedChange = {
+                                    vm.updateGroupContextOptions(
+                                        contextOptions.copy(enableRelationshipNotes = it)
+                                    )
+                                },
+                            )
+                        },
+                    )
+                    item(
+                        headlineContent = { Text("场景状态") },
+                        supportingContent = { Text("注入场景摘要、紧张度和活跃秘密") },
+                        trailingContent = {
+                            Switch(
+                                checked = contextOptions.enableSceneState,
+                                onCheckedChange = {
+                                    vm.updateGroupContextOptions(
+                                        contextOptions.copy(enableSceneState = it)
+                                    )
+                                },
+                            )
+                        },
+                    )
+                }
+            }
+
             // Members section
             item(key = "members_header") {
                 Row(
@@ -301,7 +411,10 @@ fun AssistantGroupMembersPage(id: String) {
                             AutoAIIcon(name = candidate.avatar.toString())
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(candidate.name, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    candidate.name.ifBlank { "默认助手" },
+                                    style = MaterialTheme.typography.titleSmall,
+                                )
                                 if (candidate.systemPrompt.isNotBlank()) {
                                     Text(
                                         text = candidate.systemPrompt.take(80),

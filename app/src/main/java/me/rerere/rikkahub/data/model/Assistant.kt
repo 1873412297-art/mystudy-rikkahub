@@ -54,6 +54,8 @@ data class Assistant(
     val assistantType: AssistantType = AssistantType.SOLO,
     val groupMembers: List<GroupMember> = emptyList(),
     val turnTakingStrategy: TurnTakingStrategy = TurnTakingStrategy.MANUAL,
+    val groupReplyOptions: GroupReplyOptions = GroupReplyOptions(),
+    val groupContextOptions: GroupContextOptions = GroupContextOptions(),
     val groupMemberCombos: List<GroupMemberCombo> = emptyList(),
 )
 
@@ -317,6 +319,23 @@ data class GroupMemberCombo(
     val id: Uuid = Uuid.random(),
     val name: String = "",
     val memberIds: List<Uuid> = emptyList(),
+)
+
+@Serializable
+data class GroupReplyOptions(
+    val allowConsecutiveSameSpeaker: Boolean = false,
+    val maxAutoRepliesPerUserTurn: Int = 1,
+)
+
+@Serializable
+data class GroupContextOptions(
+    val enableLayeredContext: Boolean = true,
+    val enablePrivateViewpoint: Boolean = true,
+    val enableRelationshipNotes: Boolean = true,
+    val enableSceneState: Boolean = true,
+    val enableMotivationScoring: Boolean = true,
+    val maxPrivateNoteChars: Int = 800,
+    val maxSceneSummaryChars: Int = 800,
 )
 
 // endregion

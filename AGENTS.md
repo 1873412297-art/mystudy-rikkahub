@@ -92,3 +92,26 @@
 - If the user does not explicitly request localization, prioritize implementing functionality without considering
   localization. (e.g `Text("Hello world")`)
 - For `locale-tui` operations, use the `locale-tui-localization` skill.
+
+## Current Status
+
+Primary source of truth:
+
+- `docs/superpowers/plans/2026-06-17-group-context-gameplay-plan.md`
+- Keep `docs/superpowers/plans/2026-06-16-tavern-helper-st-rendering-runtime.md` intact as the prior Tavern Helper baseline.
+
+Completed on 2026-06-17:
+
+1. Group message transport rewrite is extracted and covered by tests.
+2. Persistent `groupRuntimeState` is added to `Conversation` with serialization coverage.
+3. Layered group context builder, speaker scorer, runtime state updater, group context options, and runtime debug sheet are implemented.
+4. Relevant JVM tests and `assembleDebug` passed during this implementation pass.
+5. Debug APK was installed on `emulator-5554` and the group chat UI was manually opened.
+
+Still unfinished / pending:
+
+1. Task 8 manual smoke remains partially blocked by unreliable `adb` interaction with the Compose chat input/send UI on the running emulator.
+2. Specifically, `adb shell input text` corrupts non-ASCII or spaced prompts, and coordinate taps on the visible send affordance do not reliably dispatch the in-app send action.
+3. Manual, round-robin, moderator, and runtime-state end-to-end verification should continue from the current plan document's `Manual Test Results Status` block rather than restarting from scratch.
+
+Keep the existing Tavern Helper rendering/runtime changes and the new group-context changes intact. Do not revert unrelated user edits. When continuing this task, prefer small focused changes with tests and update the plan checkboxes/status block as work progresses.
