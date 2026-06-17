@@ -41,6 +41,8 @@ import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FavoriteRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.service.group.sanitizeManualSelection
+import me.rerere.rikkahub.service.group.toggleManualSelection
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.utils.UiState
@@ -63,6 +65,7 @@ class ChatVM(
 ) : ViewModel() {
     private val _conversationId: Uuid = Uuid.parse(id)
     val conversation: StateFlow<Conversation> = chatService.getConversationFlow(_conversationId)
+    private val initializationJob: Job
     var chatListInitialized by mutableStateOf(false) // 聊天列表是否已经滚动到底部
 
     // 聊天输入状态 - 保存在 ViewModel 中避免 TransactionTooLargeException
@@ -87,7 +90,7 @@ class ChatVM(
         chatService.addConversationReference(_conversationId)
 
         // 初始化对话
-        viewModelScope.launch {
+        initializationJob = viewModelScope.launch {
             chatService.initializeConversation(_conversationId)
         }
 
@@ -127,13 +130,17 @@ class ChatVM(
     val selectedGroupMemberIds: StateFlow<List<Uuid>> = _selectedGroupMemberIds.asStateFlow()
 
     fun toggleGroupMember(memberId: Uuid) {
-        _selectedGroupMemberIds.update { ids ->
-            if (memberId in ids) ids - memberId else ids + memberId
-        }
+        _selectedGroupMemberIds.update { ids -> toggleManualSelection(ids, memberId) }
     }
 
     fun setGroupMemberSelection(ids: List<Uuid>) {
-        _selectedGroupMemberIds.value = ids
+        _selectedGroupMemberIds.value = ids.distinct()
+    }
+
+    fun sanitizeGroupMemberSelection(availableIds: List<Uuid>) {
+        _selectedGroupMemberIds.update { ids ->
+            sanitizeManualSelection(ids, availableIds)
+        }
     }
 
     /** 触发群组指定成员回复 —— 仅手动模式下有效。 */
@@ -159,15 +166,23 @@ class ChatVM(
      */
     fun handleGroupSend(memberIds: List<Uuid> = _selectedGroupMemberIds.value, content: List<UIMessagePart>) {
         viewModelScope.launch {
-            val isEmpty = content.isEmpty() ||
-                content.all { it is UIMessagePart.Text && it.text.isBlank() }
-            if (!isEmpty) {
-                chatService.sendMessage(_conversationId, content, answer = false)
+            if (memberIds.isEmpty()) {
+                /*
+                chatService.addError(
+                    error = IllegalStateException("请先选择至少一个群组成员"),
+                    conversationId = _conversationId,
+                    title = "未选择群组成员",
+                )
+                */
+                chatService.addError(
+                    error = IllegalStateException("Please select at least one group member"),
+                    conversationId = _conversationId,
+                    title = "No group member selected",
+                )
+                return@launch
             }
-            for (memberId in memberIds) {
-                ensureActive()
-                chatService.triggerMemberReply(_conversationId, memberId)
-            }
+            ensureActive()
+            chatService.sendGroupMessage(_conversationId, content, memberIds)
         }
     }
 
@@ -230,6 +245,14 @@ class ChatVM(
         analytics.logEvent("ai_send_message", null)
 
         chatService.sendMessage(_conversationId, content, answer)
+    }
+
+    fun applyInitialGreeting(greeting: String) {
+        if (greeting.isBlank()) return
+        viewModelScope.launch {
+            initializationJob.join()
+            chatService.applyInitialGreeting(_conversationId, greeting)
+        }
     }
 
     fun handleMessageEdit(parts: List<UIMessagePart>, messageId: Uuid) {

@@ -7,6 +7,7 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.data.model.GroupMember
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.uuid.Uuid
@@ -81,5 +82,24 @@ class GroupContextBuilderTest {
         assertTrue(system.contains("Relationship notes"))
         assertTrue(system.contains("toward 乙"))
         assertTrue(system.contains("甲觉得乙敏锐但危险。"))
+    }
+
+    @Test
+    fun `builder injects only recent scene summary lines`() {
+        val oldLine = "旧事件：这行不应继续进入上下文。"
+        val summary = (listOf(oldLine) + (1..6).map { "事件$it：新的场景推进。" }).joinToString("\n")
+        val input = GroupContextBuildInput(
+            visibleMessages = listOf(UIMessage.user("继续。")),
+            groupAssistant = group,
+            effectiveMemberId = speakerA,
+            runtimeState = GroupRuntimeState(
+                scene = GroupSceneState(summary = summary, tension = 2),
+            ),
+        )
+
+        val system = GroupContextBuilder().build(input).messages.first().toText()
+
+        assertFalse(system.contains(oldLine))
+        assertTrue(system.contains("事件6：新的场景推进。"))
     }
 }

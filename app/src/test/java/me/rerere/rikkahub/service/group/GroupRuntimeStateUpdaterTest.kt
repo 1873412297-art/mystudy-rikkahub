@@ -59,4 +59,36 @@ class GroupRuntimeStateUpdaterTest {
 
         assertEquals(1, updated.scene.tension)
     }
+
+    @Test
+    fun `does not append duplicate scene summary lines for repeated replies`() {
+        val reply = "小友可是要妾身一人回复吗？妾身在此，自当遵命。"
+        val first = GroupRuntimeStateUpdater().updateAfterReply(
+            previous = GroupRuntimeState(),
+            groupAssistant = group,
+            messages = listOf(
+                UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    memberId = memberA,
+                    parts = listOf(UIMessagePart.Text(reply)),
+                ),
+            ),
+            speakerId = memberA,
+        )
+
+        val second = GroupRuntimeStateUpdater().updateAfterReply(
+            previous = first,
+            groupAssistant = group,
+            messages = listOf(
+                UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    memberId = memberA,
+                    parts = listOf(UIMessagePart.Text(reply)),
+                ),
+            ),
+            speakerId = memberA,
+        )
+
+        assertEquals(first.scene.summary, second.scene.summary)
+    }
 }
