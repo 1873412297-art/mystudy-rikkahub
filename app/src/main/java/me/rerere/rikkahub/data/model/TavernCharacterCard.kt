@@ -230,30 +230,35 @@ data class TavernCharacterCard(
     /**
      * 获取用于 AI 提示的系统提示词（综合 system_prompt + description + personality + scenario）
      */
-    fun buildSystemPrompt(): String {
+    fun buildSystemPrompt(userName: String = "User", charName: String = name): String {
         return buildString {
             if (systemPrompt.isNotBlank()) {
-                appendLine(systemPrompt)
+                appendLine(systemPrompt.normalizeTavernCardText(userName, charName))
                 appendLine()
             }
             if (description.isNotBlank()) {
                 appendLine("## Description")
-                appendLine(description)
+                appendLine(description.normalizeTavernCardText(userName, charName))
                 appendLine()
             }
             if (personality.isNotBlank()) {
                 appendLine("## Personality")
-                appendLine(personality)
+                appendLine(personality.normalizeTavernCardText(userName, charName))
                 appendLine()
             }
             if (scenario.isNotBlank()) {
                 appendLine("## Scenario")
-                appendLine(scenario)
+                appendLine(scenario.normalizeTavernCardText(userName, charName))
+                appendLine()
+            }
+            if (mesExample.isNotBlank()) {
+                appendLine("## Example Dialogue")
+                appendLine(mesExample.normalizeTavernCardText(userName, charName))
                 appendLine()
             }
             if (postHistoryInstructions.isNotBlank()) {
                 appendLine("## Post-history Instructions")
-                appendLine(postHistoryInstructions)
+                appendLine(postHistoryInstructions.normalizeTavernCardText(userName, charName))
             }
         }.trim()
     }
@@ -262,16 +267,43 @@ data class TavernCharacterCard(
      * 将 {{user}} 和 {{char}} 宏替换为实际值
      */
     fun replaceMacros(userName: String = "User", charName: String = name): String {
-        return description
-            .replace("{{user}}", userName, ignoreCase = true)
-            .replace("{{char}}", charName, ignoreCase = true)
+        return description.normalizeTavernCardText(userName, charName)
     }
+}
+
+fun String.normalizeTavernCardText(userName: String = "User", charName: String): String {
+    if (isBlank()) return this
+
+    var result = this
+    result = Regex("\\{\\{//.*?\\}\\}", RegexOption.DOT_MATCHES_ALL).replace(result, "")
+    result = result
+        .replace("{{user}}", userName, ignoreCase = true)
+        .replace("{{char}}", charName, ignoreCase = true)
+        .replace("{user}", userName, ignoreCase = true)
+        .replace("{char}", charName, ignoreCase = true)
+        .replace("{{newline}}", "\n", ignoreCase = true)
+        .replace("{{noop}}", "", ignoreCase = true)
+        .replace("{{trim}}", "", ignoreCase = true)
+
+    return result
+        .lines()
+        .joinToString("\n") { it.trimEnd() }
+        .trim()
 }
 
 /**
  * 从 [Assistant.tavernCardJson] 解析所有可用开场白（first_mes + alternate_greetings）。
  * 没有角色卡或解析失败时回退到 presetMessages 中的 ASSISTANT 文本。
  */
+fun Assistant.normalizedSystemPromptForGeneration(userName: String = "User"): String {
+    val charName = name.ifBlank { "assistant" }
+    return if (tavernCardJson != null) {
+        systemPrompt.normalizeTavernCardText(userName = userName, charName = charName)
+    } else {
+        systemPrompt
+    }
+}
+
 fun Assistant.parseTavernGreetings(): List<String> {
     val json = tavernCardJson ?: return fallbackGreetings()
     return try {
