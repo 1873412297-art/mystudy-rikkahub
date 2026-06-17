@@ -228,6 +228,11 @@ fun ChatMessage(
             }
         }
 
+        EditedFilesList(
+            parts = message.parts,
+            assistant = assistant,
+        )
+
         ProvideTextStyle(textStyle) {
             ChatMessageNerdLine(message = message)
         }
@@ -433,7 +438,6 @@ private fun MessagePartsBlock(
             is MessagePartBlock.ContentBlock -> key(block.index) {
                 when (val part = block.part) {
                     is UIMessagePart.Text -> {
-                        // Tavern HTML 渲染模式：直接走 sandboxed WebView（角色卡 first_mes 等）
                         if (part.renderMode == UIMessagePart.RenderMode.HTML) {
                             MarkdownWebView(
                                 content = part.text,
@@ -441,54 +445,64 @@ private fun MessagePartsBlock(
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp),
                             )
-                        } else SelectionContainer {
-                            if (role == MessageRole.USER) {
-                                Surface(
-                                    modifier = Modifier.animateContentSize(),
-                                    shape = RoundedCornerShape(16.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = settings.displaySetting.bubbleOpacity),
-                                    onClick = { onUserMessageClick?.invoke() },
-                                ) {
-                                    Column(modifier = Modifier.padding(8.dp)) {
-                                        MarkdownBlock(
-                                            content = part.text.replaceRegexes(
-                                                assistant = assistant,
-                                                scope = AssistantAffectScope.USER,
-                                                visual = true,
-                                            ),
-                                            onClickCitation = handleClickCitation
-                                        )
-                                    }
-                                }
-                            } else {
-                                if (settings.displaySetting.showAssistantBubble) {
+                        } else {
+                            val textContent = @Composable {
+                                if (role == MessageRole.USER) {
                                     Surface(
                                         modifier = Modifier.animateContentSize(),
                                         shape = RoundedCornerShape(16.dp),
-                                        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = settings.displaySetting.bubbleOpacity),
+                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = settings.displaySetting.bubbleOpacity),
+                                        onClick = { onUserMessageClick?.invoke() },
                                     ) {
                                         Column(modifier = Modifier.padding(8.dp)) {
                                             MarkdownBlock(
                                                 content = part.text.replaceRegexes(
                                                     assistant = assistant,
-                                                    scope = AssistantAffectScope.ASSISTANT,
+                                                    scope = AssistantAffectScope.USER,
                                                     visual = true,
                                                 ),
-                                                onClickCitation = handleClickCitation,
+                                                onClickCitation = handleClickCitation
                                             )
                                         }
                                     }
                                 } else {
-                                    MarkdownBlock(
-                                        content = part.text.replaceRegexes(
-                                            assistant = assistant,
-                                            scope = AssistantAffectScope.ASSISTANT,
-                                            visual = true,
-                                        ),
-                                        onClickCitation = handleClickCitation,
-                                        modifier = Modifier
-                                            .animateContentSize()
-                                    )
+                                    if (settings.displaySetting.showAssistantBubble) {
+                                        Surface(
+                                            modifier = Modifier.animateContentSize(),
+                                            shape = RoundedCornerShape(16.dp),
+                                            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = settings.displaySetting.bubbleOpacity),
+                                        ) {
+                                            Column(modifier = Modifier.padding(8.dp)) {
+                                                MarkdownBlock(
+                                                    content = part.text.replaceRegexes(
+                                                        assistant = assistant,
+                                                        scope = AssistantAffectScope.ASSISTANT,
+                                                        visual = true,
+                                                    ),
+                                                    onClickCitation = handleClickCitation,
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        MarkdownBlock(
+                                            content = part.text.replaceRegexes(
+                                                assistant = assistant,
+                                                scope = AssistantAffectScope.ASSISTANT,
+                                                visual = true,
+                                            ),
+                                            onClickCitation = handleClickCitation,
+                                            modifier = Modifier
+                                                .animateContentSize()
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (loading) {
+                                textContent()
+                            } else {
+                                SelectionContainer {
+                                    textContent()
                                 }
                             }
                         }

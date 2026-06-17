@@ -26,10 +26,11 @@ fun ChatMessageUserAvatar(
     message: UIMessage,
     avatar: Avatar,
     nickname: String,
+    isRealUserMessage: Boolean = message.role == MessageRole.USER && message.memberId == null,
     modifier: Modifier = Modifier,
 ) {
     val settings = LocalSettings.current
-    if (message.role == MessageRole.USER && !message.parts.isEmptyUIMessage() && settings.displaySetting.showUserAvatar) {
+    if (isRealUserMessage && !message.parts.isEmptyUIMessage() && settings.displaySetting.showUserAvatar) {
         Row(
             modifier = modifier,
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),

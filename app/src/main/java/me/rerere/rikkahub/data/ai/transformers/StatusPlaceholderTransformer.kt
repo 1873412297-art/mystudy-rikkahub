@@ -30,7 +30,7 @@ private val UPDATE_VARIABLE_REGEX = Regex(
  * Handles `{` `}` inside JSON string values (e.g. `{{user}}`).
  * Returns the range of the first valid JSON Patch array found, or null.
  */
-private fun findBareJsonPatch(text: String): IntRange? {
+internal fun findBareJsonPatch(text: String): IntRange? {
     var i = 0
     while (i < text.length) {
         // Look for "[{" sequence
