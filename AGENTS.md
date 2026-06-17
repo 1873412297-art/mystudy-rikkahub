@@ -115,3 +115,64 @@ Still unfinished / pending:
 3. Manual, round-robin, moderator, and runtime-state end-to-end verification should continue from the current plan document's `Manual Test Results Status` block rather than restarting from scratch.
 
 Keep the existing Tavern Helper rendering/runtime changes and the new group-context changes intact. Do not revert unrelated user edits. When continuing this task, prefer small focused changes with tests and update the plan checkboxes/status block as work progresses.
+
+## Upstream Sync Status (2026-06-17)
+
+Upstream sync work was completed in a separate git worktree to avoid disturbing the dirty `private-main` workspace:
+
+- Sync worktree: `C:\Users\18734\Desktop\HTML\rikkahub-source-sync`
+- Sync branch: `codex/sync-upstream-2026-06-17`
+- Latest pushed sync commit: `98d9a339` (`fix: support windows web-ui build in synced branch`)
+
+What is already done on the sync branch:
+
+1. Merged `upstream/master` into the fork baseline.
+2. Resolved merge conflicts around chat UI/message rendering and localized strings.
+3. Fixed sync regressions required for local compilation:
+   - `StatusPlaceholderTransformer.findBareJsonPatch` visibility
+   - `ChatMessageAvatar` optional `isRealUserMessage` parameter
+4. Fixed `web/build.gradle.kts` so `:web:buildWebUi` works on Windows (`pnpm.cmd`) while preserving the existing Unix path (`zsh`).
+5. Verified on the sync branch:
+   - `./gradlew :app:compileDebugKotlin -x :web:buildWebUi`
+   - `./gradlew :web:buildWebUi`
+   - `./gradlew :app:assembleDebug`
+
+Current dirty workspace policy:
+
+- Treat `C:\Users\18734\Desktop\HTML\rikkahub-source` as the active feature workspace.
+- Do not hard reset, clean, or overwrite it.
+- Do not merge the sync branch directly into a dirty tree.
+
+Recommended reintegration workflow for the dirty workspace:
+
+1. In the dirty `private-main` workspace, create a safety snapshot before any integration step.
+2. Prefer committing the current local work-in-progress onto a temporary branch rather than relying only on stash.
+3. Update or create a clean integration branch from `origin/codex/sync-upstream-2026-06-17`.
+4. Replay the local feature commits onto that clean branch with `cherry-pick` or a controlled merge.
+5. Resolve conflicts in the known hot files first:
+   - `app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt`
+   - `app/src/main/java/me/rerere/rikkahub/ui/components/message/ChatMessage.kt`
+   - `app/src/main/java/me/rerere/rikkahub/ui/components/message/ChatMessageAvatar.kt`
+   - `app/src/main/java/me/rerere/rikkahub/data/ai/transformers/StatusPlaceholderTransformer.kt`
+   - `app/src/main/java/me/rerere/rikkahub/service/group/*`
+   - `app/src/main/java/me/rerere/rikkahub/ui/components/richtext/*`
+   - `app/src/main/res/values*/strings.xml`
+6. Re-run focused verification after replay:
+   - group chat/manual modes
+   - Tavern Helper/ST rendering
+   - `./gradlew :app:assembleDebug`
+7. Only after the replayed branch is green should it replace or merge back into `private-main`.
+
+If a later session continues the sync/reintegration work, start from this status block instead of re-merging upstream from scratch.
+
+## Organized Reintegration Status (2026-06-17)
+
+- Organized worktree: `C:\Users\18734\Desktop\HTML\rikkahub-source-organized`
+- Organized branch: `codex/reintegrate-private-main-organized-2026-06-17`
+- Purpose: replay the dirty `private-main` feature set onto the synced upstream base with smaller logical commits instead of one large integration commit.
+
+Current expectation for follow-up work:
+
+1. Continue from the organized branch unless there is a specific need to compare against the original dirty workspace.
+2. Use the organized branch for review, future conflict resolution, and any PR preparation.
+3. Keep the original dirty workspace untouched until the organized branch is accepted as the new working baseline.
