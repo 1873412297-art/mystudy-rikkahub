@@ -305,7 +305,7 @@ Run:
 
 Expected result: all tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/service/group/GroupMessageTransportRewrite.kt app/src/test/java/me/rerere/rikkahub/service/group/GroupMessageTransportRewriteTest.kt app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
@@ -479,7 +479,7 @@ Run:
 
 Expected result: build succeeds. Existing conversations deserialize with default `GroupRuntimeState()` because the property has a default value.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/service/group/GroupContextModels.kt app/src/main/java/me/rerere/rikkahub/data/model/Conversation.kt app/src/test/java/me/rerere/rikkahub/service/group/GroupRuntimeStateTest.kt
@@ -723,7 +723,7 @@ Run:
 
 Expected result: build succeeds.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/service/group/GroupContextBuilder.kt app/src/test/java/me/rerere/rikkahub/service/group/GroupContextBuilderTest.kt app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
@@ -959,7 +959,7 @@ Run:
 
 Expected result: build succeeds.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/service/group/GroupSpeakerScorer.kt app/src/test/java/me/rerere/rikkahub/service/group/GroupSpeakerScorerTest.kt app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
@@ -1155,7 +1155,7 @@ Run:
 
 Expected result: build succeeds.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/service/group/GroupRuntimeStateUpdater.kt app/src/test/java/me/rerere/rikkahub/service/group/GroupRuntimeStateUpdaterTest.kt app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
@@ -1304,7 +1304,7 @@ Run:
 
 Expected result: build succeeds.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantGroupMembersPage.kt app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantGroupMembersVM.kt app/src/main/java/me/rerere/rikkahub/service/group/GroupContextModels.kt app/src/main/java/me/rerere/rikkahub/service/group/GroupContextBuilder.kt app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
@@ -1509,7 +1509,7 @@ Run:
 
 Expected result: build succeeds; group chats can open the runtime debug sheet from the message action row.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/ui/components/message/GroupContextDebugSheet.kt app/src/main/java/me/rerere/rikkahub/ui/components/message/ChatMessageActions.kt app/src/main/java/me/rerere/rikkahub/ui/components/message/ChatMessage.kt app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatList.kt
@@ -1611,7 +1611,7 @@ After executing the matrix, append a dated result block under `Manual Test Resul
 - Blockers: none, or concrete blocker with command output summary
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add docs/superpowers/plans/2026-06-17-group-context-gameplay-plan.md
@@ -1659,6 +1659,7 @@ git commit -m "docs: record group context gameplay manual test results"
 - Runtime state: partial, `emulator-5554`, persistence models, builder, scorer, updater, and UI debug entry are implemented and covered by unit tests; end-to-end multi-turn manual verification is still pending because message send could not be driven reliably from `adb`.
 - Emulator: `emulator-5554`, Android 15, package `me.rerere.rikkahub.debug`, activity `me.rerere.rikkahub.RouteActivity`
 - APK: `C:\Users\18734\Desktop\HTML\rikkahub-source\app\build\outputs\apk\debug\app-x86_64-debug.apk`
+- Implementation commit: `33d763d0` (`feat: add group context gameplay runtime`)
 - Blockers:
   - `adb shell input text` corrupts non-ASCII / spaced prompts on this emulator-Gboard setup.
   - `adb` coordinate taps on the Compose send affordance leave the draft text in place, so the send event is not firing reliably during automated smoke.
