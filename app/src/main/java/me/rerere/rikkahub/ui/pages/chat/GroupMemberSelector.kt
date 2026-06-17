@@ -15,6 +15,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -30,14 +31,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.composables.icons.lucide.Lucide
 import com.composables.icons.lucide.X
+import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.ArrowLeft01
+import me.rerere.hugeicons.stroke.ArrowRight01
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.GroupMember
 import me.rerere.rikkahub.data.model.GroupMemberCombo
+import me.rerere.rikkahub.service.group.moveManualSelection
 import kotlin.uuid.Uuid
 
 /**
- * 常用组合快捷选择条 —— 显示在 GroupMemberSelector 上方。
- * 点 chip 应用组合，长按弹「重命名/删除」菜单，末尾 "+ 保存当前" chip 把当前已选 ≥2 个成员存为组合。
+ * 常用组合快捷选择条，显示在 GroupMemberSelector 上方。
+ * 点击 chip 应用组合，长按弹出重命名/删除菜单，末尾 "+ 保存当前" chip 把当前已选成员存为组合。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -111,6 +116,7 @@ fun GroupMemberComboBar(
                 }
             }
         }
+
         if (canSave) {
             item {
                 Surface(
@@ -188,9 +194,11 @@ fun GroupMemberComboBar(
 
 /**
  * 群组手动模式下的成员选择条。
- *  - 点击 chip：toggle 选中（顺序就是发言顺序）
- *  - 长按已选中 chip：把它移到末尾，循环左移
- *  - 末尾的 X：清空选择
+ *
+ * - 点击 chip：toggle 选中
+ * - 长按已选 chip：移动到末尾
+ * - 已选 chip 右侧按钮：显式前移 / 后移
+ * - 末尾 X：清空选择
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -208,51 +216,89 @@ fun GroupMemberSelector(
     ) {
         items(items = members, key = { it.id.toString() }) { member ->
             val source = settings.assistants.find { it.id == member.assistantId }
-            val name = member.displayName.ifBlank { source?.name ?: "?" }
+            val name = member.displayName.ifBlank { source?.name?.ifBlank { "默认助手" } ?: "默认助手" }
             val isSelected = member.id in selectedMemberIds
             val orderIndex = if (isSelected) selectedMemberIds.indexOf(member.id) else -1
+
             Surface(
                 shape = RoundedCornerShape(50),
                 color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
                 else MaterialTheme.colorScheme.surfaceContainerHigh,
                 border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
             ) {
-                Row(
-                    modifier = Modifier
-                        .combinedClickable(
-                            onClick = { onToggle(member.id) },
-                            onLongClick = if (isSelected) {
-                                {
-                                    val cur = selectedMemberIds.toMutableList()
-                                    val idx = cur.indexOf(member.id)
-                                    if (idx >= 0) {
-                                        cur.removeAt(idx)
-                                        cur.add(member.id)
-                                        onSelectionChange(cur)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier
+                            .combinedClickable(
+                                onClick = { onToggle(member.id) },
+                                onLongClick = if (isSelected) {
+                                    {
+                                        val cur = selectedMemberIds.toMutableList()
+                                        val idx = cur.indexOf(member.id)
+                                        if (idx >= 0) {
+                                            cur.removeAt(idx)
+                                            cur.add(member.id)
+                                            onSelectionChange(cur)
+                                        }
                                     }
-                                }
-                            } else null,
+                                } else null,
+                            )
+                            .padding(
+                                start = 12.dp,
+                                top = 6.dp,
+                                bottom = 6.dp,
+                                end = if (isSelected) 4.dp else 12.dp,
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = if (isSelected) "${orderIndex + 1}" else name.take(1),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(
-                        text = if (isSelected) "${orderIndex + 1}" else name.take(1),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (isSelected) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = name,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                        color = if (isSelected) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurface,
-                    )
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+
+                    if (isSelected) {
+                        IconButton(
+                            onClick = {
+                                val next = moveManualSelection(selectedMemberIds, orderIndex, orderIndex - 1)
+                                if (next != selectedMemberIds) onSelectionChange(next)
+                            },
+                            modifier = Modifier.size(28.dp),
+                        ) {
+                            Icon(
+                                imageVector = HugeIcons.ArrowLeft01,
+                                contentDescription = "Move selected member left",
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                val next = moveManualSelection(selectedMemberIds, orderIndex, orderIndex + 1)
+                                if (next != selectedMemberIds) onSelectionChange(next)
+                            },
+                            modifier = Modifier.size(28.dp),
+                        ) {
+                            Icon(
+                                imageVector = HugeIcons.ArrowRight01,
+                                contentDescription = "Move selected member right",
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
                 }
             }
         }
+
         if (selectedMemberIds.isNotEmpty()) {
             item {
                 Surface(
@@ -266,7 +312,7 @@ fun GroupMemberSelector(
                     ) {
                         Icon(
                             imageVector = Lucide.X,
-                            contentDescription = "清空选择",
+                            contentDescription = "Clear selection",
                             modifier = Modifier.size(14.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

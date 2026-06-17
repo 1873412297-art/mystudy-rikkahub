@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.hooks
 
 import android.net.Uri
 import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.ui.text.TextRange
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +33,17 @@ class ChatInputState {
 
     fun appendText(content: String) {
         textContent.setTextAndPlaceCursorAtEnd(textContent.text.toString() + content)
+    }
+
+    fun insertTextAtCursor(content: String) {
+        val selection = textContent.selection
+        val textLength = textContent.text.length
+        val start = selection.min.coerceIn(0, textLength)
+        val end = selection.max.coerceIn(0, textLength)
+        textContent.edit {
+            replace(start, end, content)
+            this.selection = TextRange(start + content.length)
+        }
     }
 
     fun setContents(contents: List<UIMessagePart>) {
