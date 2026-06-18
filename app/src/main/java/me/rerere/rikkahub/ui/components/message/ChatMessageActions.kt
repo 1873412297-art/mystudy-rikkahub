@@ -275,6 +275,7 @@ fun ColumnScope.ChatMessageActionButtons(
 
     if (showGroupContextDebug && runtimeState != null) {
         GroupContextDebugSheet(
+            assistant = assistant,
             runtimeState = runtimeState,
             onDismissRequest = { showGroupContextDebug = false },
         )

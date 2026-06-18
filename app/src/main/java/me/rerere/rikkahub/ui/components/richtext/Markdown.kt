@@ -93,11 +93,16 @@ import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Download04
 import me.rerere.hugeicons.stroke.Tick01
 import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.ai.transformers.findBareJsonPatch
 import me.rerere.rikkahub.ui.components.table.DataTable
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.modifier.onClick
 import me.rerere.rikkahub.ui.theme.JetbrainsMono
 import me.rerere.rikkahub.utils.toDp
+import me.rerere.rikkahub.ui.components.richtext.st.StableDomMessage
+import me.rerere.rikkahub.ui.components.richtext.st.StableDomRole
+import me.rerere.rikkahub.ui.components.richtext.st.StableDomSegment
+import me.rerere.rikkahub.ui.components.richtext.st.buildStableMessageHtml
 import org.intellij.markdown.IElementType
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.MarkdownTokenTypes
@@ -121,9 +126,17 @@ private val parser by lazy {
 
 private val INLINE_LATEX_REGEX = Regex("\\\\\\((.+?)\\\\\\)")
 private val BLOCK_LATEX_REGEX = Regex("\\\\\\[(.+?)\\\\\\]", RegexOption.DOT_MATCHES_ALL)
+private const val ENABLE_STABLE_DOM_RENDERER = true
 
-/** SillyTavern 角色卡的 <status!>...</status!> 状态栏标签。带或不带 ! 都识别。 */
-private val STATUS_BLOCK_REGEX = Regex("<status!?>[\\s\\S]*?</status!?>", RegexOption.IGNORE_CASE)
+/** SillyTavern/status-prompt status blocks. Missing closing tags are tolerated to keep text visible. */
+private val STATUS_BLOCK_REGEX = Regex(
+    "<(?:status!?|status_block)>[\\s\\S]*?(?:</(?:status!?|status_block)>|$)",
+    RegexOption.IGNORE_CASE
+)
+
+/** Standalone JSON Patch arrays. Used to route status-update payloads into the WebView renderer. */
+private val JSON_PATCH_TRIGGER_REGEX = Regex("""\[\s*\{[\s\S]*?"op"[\s\S]*?"path"[\s\S]*?\}\s*\]""")
+
 val THINKING_REGEX = Regex("<think>([\\s\\S]*?)(?:</think>|$)", RegexOption.DOT_MATCHES_ALL)
 private val CODE_BLOCK_REGEX = Regex("```[\\s\\S]*?```|`[^`\n]*`", RegexOption.DOT_MATCHES_ALL)
 private val BREAK_LINE_REGEX = Regex("(?i)<br\\s*/?>")
@@ -227,9 +240,18 @@ private fun ASTNode.containsHtml(): Boolean {
 }
 
 private fun parseMarkdown(content: String): MarkdownParseResult {
-    val preprocessed = preProcess(content)
+    val normalized = normalizeRichTextContent(content)
+    val preprocessed = preProcess(normalized)
     val astTree = parser.buildMarkdownTreeFromString(preprocessed)
     return MarkdownParseResult(preprocessed, astTree, astTree.containsHtml())
+}
+
+internal fun containsStatusBlockTag(content: String): Boolean {
+    return STATUS_BLOCK_REGEX.containsMatchIn(content)
+}
+
+internal fun containsJsonPatchBlockTag(content: String): Boolean {
+    return findBareJsonPatch(content) != null || JSON_PATCH_TRIGGER_REGEX.containsMatchIn(content)
 }
 
 @Composable
@@ -239,7 +261,50 @@ fun MarkdownBlock(
     style: TextStyle = LocalTextStyle.current,
     onClickCitation: (String) -> Unit = {}
 ) {
-    var (data, setData) = remember { mutableStateOf(parseMarkdown(content)) }
+    val normalizedContent = remember(content) { normalizeRichTextContent(content) }
+    val segments = remember(normalizedContent) { parseRichTextSegments(normalizedContent) }
+    if (segments.size > 1 || segments.firstOrNull()?.kind != RichTextSegment.Kind.MARKDOWN) {
+        val rendererMode = remember(normalizedContent) { chooseRendererMode(normalizedContent) }
+        if (ENABLE_STABLE_DOM_RENDERER && rendererMode == RichTextRendererMode.STABLE_DOM) {
+            MarkdownWebView(
+                content = buildStableMessageHtml(
+                    StableDomMessage(
+                        id = normalizedContent.hashCode().toString(),
+                        role = StableDomRole.ASSISTANT,
+                        segments = segments.mapIndexed { index, segment ->
+                            StableDomSegment(
+                                id = "segment-$index",
+                                kind = segment.kind,
+                                raw = segment.raw,
+                            )
+                        },
+                        streaming = false,
+                    )
+                ),
+                modifier = modifier,
+                isRawHtml = true,
+            )
+            return
+        }
+        Column(modifier = modifier) {
+            segments.fastForEach { segment ->
+                when (segment.kind) {
+                    RichTextSegment.Kind.MARKDOWN,
+                    RichTextSegment.Kind.JSON_PATCH_DIAGNOSTIC -> MarkdownBlock(
+                        content = segment.raw,
+                        style = style,
+                        onClickCitation = onClickCitation,
+                    )
+                    RichTextSegment.Kind.STATUS_BLOCK,
+                    RichTextSegment.Kind.JSON_PATCH -> MarkdownWebView(content = segment.raw)
+                    RichTextSegment.Kind.HTML_DOCUMENT -> MarkdownWebView(content = segment.raw, isRawHtml = true)
+                }
+            }
+        }
+        return
+    }
+
+    var (data, setData) = remember(normalizedContent) { mutableStateOf(parseMarkdown(normalizedContent)) }
 
     // 监听内容变化，重新解析AST树
     // 这里在后台线程解析AST树, 防止频繁更新的时候掉帧
@@ -253,13 +318,18 @@ fun MarkdownBlock(
             .collect { setData(it) }
     }
 
-    val hasStatusBlock = STATUS_BLOCK_REGEX.containsMatchIn(content)
+    val intent = analyzeRichTextContent(content)
+    val hasStatusBlock = intent.hasStatusBlock || intent.hasJsonPatch || intent.isRawHtmlDocument
 
     if (hasStatusBlock) {
-        MarkdownWebView(content = content, modifier = modifier)
+        MarkdownWebView(
+            content = normalizedContent,
+            modifier = modifier,
+            isRawHtml = intent.isRawHtmlDocument,
+        )
     } else if (data.hasHtml) {
         MarkdownNew(
-            content = content,
+            content = normalizedContent,
             modifier = modifier,
             style = style,
             onClickCitation = onClickCitation,

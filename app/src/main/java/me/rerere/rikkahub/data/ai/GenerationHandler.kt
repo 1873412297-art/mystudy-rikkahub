@@ -45,6 +45,7 @@ import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantMemory
+import me.rerere.rikkahub.data.model.normalizedSystemPromptForGeneration
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.utils.applyPlaceholders
@@ -375,7 +376,9 @@ class GenerationHandler(
                     if (assistant.allowConversationSystemPrompt && !conversationSystemPrompt.isNullOrBlank()) {
                         conversationSystemPrompt
                     } else {
-                        assistant.systemPrompt
+                        assistant.normalizedSystemPromptForGeneration(
+                            userName = settings.displaySetting.userNickname.ifBlank { "user" },
+                        )
                     }
                 if (effectiveSystemPrompt.isNotBlank()) {
                     append(effectiveSystemPrompt)
@@ -417,7 +420,10 @@ class GenerationHandler(
             model = model,
             temperature = assistant.temperature,
             topP = assistant.topP,
-            maxTokens = assistant.maxTokens,
+            // Normal chat should not send a hard max_tokens cap. Some OpenAI-compatible
+            // providers validate the whole request against this value, turning an output
+            // limit like 2000 into "Token count ... exceeds limit 2000".
+            maxTokens = null,
             tools = tools,
             reasoningLevel = assistant.reasoningLevel,
             customHeaders = buildList {

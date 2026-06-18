@@ -16,9 +16,10 @@ import me.rerere.rikkahub.utils.toCssHex
  */
 fun buildMarkdownPreviewHtml(context: Context, markdown: String, colorScheme: ColorScheme): String {
     val htmlTemplate = context.assets.open("html/mark.html").bufferedReader().use { it.readText() }
+    val normalizedMarkdown = normalizeRichTextContent(markdown)
 
     return htmlTemplate
-        .replace("{{MARKDOWN_BASE64}}", markdown.base64Encode())
+        .replace("{{MARKDOWN_BASE64}}", normalizedMarkdown.base64Encode())
         .replace("{{BACKGROUND_COLOR}}", colorScheme.background.toCssHex())
         .replace("{{ON_BACKGROUND_COLOR}}", colorScheme.onBackground.toCssHex())
         .replace("{{SURFACE_COLOR}}", colorScheme.surface.toCssHex())

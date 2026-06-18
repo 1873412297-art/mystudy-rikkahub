@@ -17,6 +17,10 @@ data class GroupRuntimeState(
     @Serializable(with = GroupRelationshipMapSerializer::class)
     val relationships: Map<GroupRelationshipKey, GroupRelationshipState> = emptyMap(),
     val scene: GroupSceneState = GroupSceneState(),
+    val eventState: GroupEventState = GroupEventState(),
+    val activeAddressedMemberId: Uuid? = null,
+    val activeAddressedTurnId: Uuid? = null,
+    val lastResolverDebug: GroupResolverDebugState? = null,
 )
 
 @Serializable
@@ -65,10 +69,72 @@ data class GroupSceneState(
 )
 
 @Serializable
+data class GroupEventState(
+    val recentEvents: List<GroupEventRecord> = emptyList(),
+    val activeFocus: GroupEventFocus? = null,
+)
+
+@Serializable
+data class GroupEventRecord(
+    val sourceMessageId: Uuid,
+    val speakerId: Uuid? = null,
+    val characters: List<Uuid> = emptyList(),
+    val locations: List<String> = emptyList(),
+    val items: List<String> = emptyList(),
+    val events: List<String> = emptyList(),
+    val secrets: List<String> = emptyList(),
+    val emotions: List<String> = emptyList(),
+    val conflicts: List<String> = emptyList(),
+    val importance: Int = 0,
+)
+
+@Serializable
+data class GroupEventFocus(
+    val characterIds: List<Uuid> = emptyList(),
+    val locations: List<String> = emptyList(),
+    val items: List<String> = emptyList(),
+    val events: List<String> = emptyList(),
+    val secrets: List<String> = emptyList(),
+    val emotions: List<String> = emptyList(),
+    val conflicts: List<String> = emptyList(),
+)
+
+@Serializable
 data class GroupSpeakingIntent(
     val speakerId: Uuid,
     val intent: String,
     val reason: String,
+)
+
+enum class GroupContextLayer {
+    CORE,
+    STRONGLY_RELATED,
+    WEAKLY_RELATED,
+    ISOLATED,
+}
+
+data class GroupContextScoreBreakdown(
+    val eventRelevance: Int = 0,
+    val recentInteraction: Int = 0,
+    val relationshipWeight: Int = 0,
+    val total: Int = 0,
+)
+
+@Serializable
+data class GroupResolverDebugState(
+    val speakerId: Uuid,
+    val layer: String,
+    val eventRelevance: Int = 0,
+    val recentInteraction: Int = 0,
+    val relationshipWeight: Int = 0,
+    val total: Int = 0,
+    val focusCharacters: List<Uuid> = emptyList(),
+    val focusLocations: List<String> = emptyList(),
+    val focusItems: List<String> = emptyList(),
+    val focusEvents: List<String> = emptyList(),
+    val focusSecrets: List<String> = emptyList(),
+    val focusEmotions: List<String> = emptyList(),
+    val focusConflicts: List<String> = emptyList(),
 )
 
 data class GroupContextBuildInput(

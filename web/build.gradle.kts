@@ -13,7 +13,10 @@ val buildWebUi = tasks.register<Exec>("buildWebUi") {
     val hasZsh = runCatching {
         ProcessBuilder("which", "zsh").start().waitFor() == 0
     }.getOrDefault(false)
-    if (hasZsh) {
+    val isWindows = System.getProperty("os.name").contains("Windows", ignoreCase = true)
+    if (isWindows) {
+        commandLine("cmd", "/c", "pnpm", "run", "build")
+    } else if (hasZsh) {
         commandLine("zsh", "-ic", "pnpm run build")
     } else {
         commandLine("pnpm", "run", "build")

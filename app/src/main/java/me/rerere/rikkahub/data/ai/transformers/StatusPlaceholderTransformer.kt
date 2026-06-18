@@ -30,7 +30,7 @@ private val UPDATE_VARIABLE_REGEX = Regex(
  * Handles `{` `}` inside JSON string values (e.g. `{{user}}`).
  * Returns the range of the first valid JSON Patch array found, or null.
  */
-private fun findBareJsonPatch(text: String): IntRange? {
+internal fun findBareJsonPatch(text: String): IntRange? {
     var i = 0
     while (i < text.length) {
         // Look for "[{" sequence
@@ -177,7 +177,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                     val candidates = listOfNotNull(
                         updateMatch?.let { TagMatch("update", it.range.first, it.range.last + 1) },
                         exprMatch?.let { TagMatch("expr", it.range.first, it.range.last + 1) },
-                        barePatchRange?.let { TagMatch("barePatch", it.first, it.last) },
+                        barePatchRange?.let { TagMatch("barePatch", it.first, it.last + 1) },
                     )
                     val first = candidates.minByOrNull { it.start }
 

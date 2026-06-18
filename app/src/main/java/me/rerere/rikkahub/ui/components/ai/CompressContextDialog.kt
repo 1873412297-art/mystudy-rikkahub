@@ -33,12 +33,20 @@ import me.rerere.rikkahub.ui.components.ui.RabbitLoadingIndicator
 @Composable
 fun CompressContextDialog(
     onDismiss: () -> Unit,
+    maxTokens: Int? = null,
     onConfirm: (additionalPrompt: String, targetTokens: Int, keepRecentMessages: Int) -> Job
 ) {
     var additionalPrompt by remember { mutableStateOf("") }
-    var selectedTokens by remember { mutableIntStateOf(2000) }
+    val configuredMaxTokens = maxTokens?.takeIf { it > 0 }
+    var selectedTokens by remember { mutableIntStateOf(0) }
     var keepRecentMessages by remember { mutableIntStateOf(32) }
-    val tokenOptions = listOf(500, 1000, 2000, 4000)
+    val tokenOptions = remember(configuredMaxTokens) {
+        buildList {
+            add(0)
+            configuredMaxTokens?.let { add(it) }
+            addAll(listOf(500, 1000, 4000, 8000, 16000))
+        }.distinct()
+    }
     val keepRecentOptions = listOf(0, 16, 32, 64)
     var currentJob by remember { mutableStateOf<Job?>(null) }
     val isLoading = currentJob?.isActive == true
@@ -98,7 +106,7 @@ fun CompressContextDialog(
                                     count = tokenOptions.size
                                 )
                             ) {
-                                Text("$tokens")
+                                Text(if (tokens > 0) "$tokens" else "最大")
                             }
                         }
                     }

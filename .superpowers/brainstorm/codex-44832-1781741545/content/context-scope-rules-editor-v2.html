@@ -1,0 +1,95 @@
+<h2>角色视角：控制台式规则编辑器</h2>
+<p class="subtitle">你已经选了 B。下面只比较一个关键布局决策：基础模式放左侧，还是放顶部。后面的规则区和预览区都会保留。</p>
+
+<div class="options">
+  <div class="option" data-choice="left-rail" onclick="toggleSelect(this)">
+    <div class="letter">L</div>
+    <div class="content">
+      <h3>左侧模式栏</h3>
+      <p>更像控制台，扩展性最好，适合后续继续加玩法规则。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="top-tabs" onclick="toggleSelect(this)">
+    <div class="letter">T</div>
+    <div class="content">
+      <h3>顶部模式栏</h3>
+      <p>更像普通设置页，移动端更熟悉，但后续扩展会更拥挤。</p>
+    </div>
+  </div>
+</div>
+
+<div class="split section">
+  <div class="mockup">
+    <div class="mockup-header">L. 左侧模式栏</div>
+    <div class="mockup-body">
+      <div class="mock-nav">角色视角</div>
+      <div style="display:flex; gap:14px; margin-top:12px;">
+        <div class="mock-sidebar" style="min-width:160px;">
+          基础模式
+          <ul>
+            <li><strong>全部可见</strong></li>
+            <li>仅自己相关</li>
+            <li>仅定向 / 被点名</li>
+            <li>指定成员白名单</li>
+          </ul>
+          <div style="margin-top:10px;">预设模板</div>
+          <ul>
+            <li>观察者</li>
+            <li>核心成员</li>
+            <li>隐秘角色</li>
+          </ul>
+        </div>
+        <div class="mock-content">
+          <div class="label">规则区</div>
+          <ul>
+            <li>可见成员：绛雪、竹夭</li>
+            <li>排除成员：孟秋娘</li>
+            <li>触发器：被 @ / 关键词“佛母”</li>
+            <li>最近消息：20 条</li>
+          </ul>
+          <div class="placeholder" style="margin-top:12px;">实时预览：当前这条消息对“慈脂佛母”可见，因为包含 @ 和关键词。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">T. 顶部模式栏</div>
+    <div class="mockup-body">
+      <div class="mock-nav">角色视角 | 全部可见 | 仅自己相关 | 定向 | 白名单</div>
+      <div class="mock-content" style="margin-top:12px;">
+        <div class="label">规则区</div>
+        <ul>
+          <li>可见成员：绛雪、竹夭</li>
+          <li>排除成员：孟秋娘</li>
+          <li>触发器：被 @ / 关键词“佛母”</li>
+          <li>最近消息：20 条</li>
+        </ul>
+        <div class="placeholder" style="margin-top:12px;">实时预览：当前这条消息对“慈脂佛母”可见，因为包含 @ 和关键词。</div>
+        <div class="placeholder" style="margin-top:12px;">当模式和高级玩法继续增多时，顶部会更容易拥挤。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我的建议</h3>
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>推荐 L 的原因</h4>
+      <ul>
+        <li>更像“规则台”，不是普通设置项</li>
+        <li>以后能加模板、阵营、偷窥、主持人规则</li>
+        <li>实时预览区更稳定，不容易被挤碎</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>T 的优点</h4>
+      <ul>
+        <li>更像常规移动端设置</li>
+        <li>上手成本稍低</li>
+        <li>短期实现会更省事</li>
+      </ul>
+    </div>
+  </div>
+</div>

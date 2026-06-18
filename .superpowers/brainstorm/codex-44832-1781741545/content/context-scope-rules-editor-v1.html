@@ -1,0 +1,127 @@
+<h2>群组上下文模块：规则编辑器版</h2>
+<p class="subtitle">目标：把“上下文接收范围”从一组难理解的配置项，改成角色视角规则系统。下面是两个更适合群像玩法的布局方向。</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>向导式规则编辑器</h3>
+      <p>先选基础视角，再逐步加规则，适合多数用户，学习成本最低。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>控制台式规则编辑器</h3>
+      <p>模式、触发器、排除项、预览同时可见，适合你这种会继续做群像玩法的人。</p>
+    </div>
+  </div>
+</div>
+
+<div class="split section">
+  <div class="mockup">
+    <div class="mockup-header">A. 向导式规则编辑器</div>
+    <div class="mockup-body">
+      <div class="label">Step 1</div>
+      <div class="cards">
+        <div class="card">
+          <div class="card-body">
+            <h3>公开视角</h3>
+            <p>看到所有群聊消息</p>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <h3>私域视角</h3>
+            <p>仅自己相关 / 仅定向 / 仅被点名</p>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <h3>白名单视角</h3>
+            <p>只看指定角色发言</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="label" style="margin-top:16px;">Step 2</div>
+      <div class="mock-content">
+        附加规则
+        <ul>
+          <li>排除成员</li>
+          <li>被 @ 时强制接收</li>
+          <li>关键词触发</li>
+          <li>仅保留最近 N 条</li>
+        </ul>
+      </div>
+
+      <div class="label" style="margin-top:16px;">Step 3</div>
+      <div class="mock-content">
+        结果预览
+        <ul>
+          <li>当前可见：绛雪、竹夭、你</li>
+          <li>隐藏：孟秋娘</li>
+          <li>特例：被 @绛雪 时放行</li>
+          <li>窗口：最近 20 条</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">B. 控制台式规则编辑器</div>
+    <div class="mockup-body">
+      <div class="mock-nav">角色视角 | 触发器 | 屏蔽 | 预览</div>
+      <div style="display:flex; gap:12px; margin-top:12px;">
+        <div class="mock-sidebar" style="min-width:150px;">
+          基础模式
+          <ul>
+            <li>全部可见</li>
+            <li>仅自己相关</li>
+            <li>仅定向消息</li>
+            <li>指定成员</li>
+          </ul>
+        </div>
+        <div class="mock-content">
+          当前规则
+          <ul>
+            <li>可见成员：绛雪 / 竹夭</li>
+            <li>排除成员：孟秋娘</li>
+            <li>触发条件：被 @、关键词“佛母”</li>
+            <li>历史上限：20 条</li>
+          </ul>
+          <div class="placeholder" style="margin-top:10px;">
+            实时判断：这条消息对“慈脂佛母”可见，因为包含 @ 和关键词。
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我建议的命名调整</h3>
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>推荐</h4>
+      <ul>
+        <li>角色视角</li>
+        <li>消息可见规则</li>
+        <li>该角色如何理解群聊</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>不推荐继续沿用</h4>
+      <ul>
+        <li>上下文接收范围</li>
+        <li>上下文过滤</li>
+        <li>仅技术导向的术语</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>为什么我更偏向 B</h3>
+  <p>你后面明显还要继续做：点名、偷听、秘密频道、主持人点名、角色私有记忆、阵营玩法。这些都不是“简单过滤器”，而是“视角规则系统”。B 更容易承载后续成长，也更符合这个项目现在的演化方向。</p>
+</div>

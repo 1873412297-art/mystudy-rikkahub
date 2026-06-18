@@ -1,0 +1,135 @@
+<h2>群组成员配置页：角色视角最终布局</h2>
+<p class="subtitle">这一版只回答一个问题：完整的“角色视角”编辑器放进群组成员配置页后，应该长什么样。重点不是聊天页，而是成员详情页内部的信息架构。</p>
+
+<div class="mockup section">
+  <div class="mockup-header">成员详情页 · 最终建议布局</div>
+  <div class="mockup-body">
+    <div class="mock-nav">群组成员设置 / 慈脂佛母</div>
+
+    <div style="display:flex; gap:16px; margin-top:14px;">
+      <div class="mock-sidebar" style="min-width:170px;">
+        <strong>成员基础</strong>
+        <ul>
+          <li>显示名称</li>
+          <li>头像</li>
+          <li>模型覆写</li>
+          <li>系统提示词覆写</li>
+        </ul>
+        <strong style="display:block; margin-top:14px;">角色视角</strong>
+        <ul>
+          <li><strong>基础模式</strong></li>
+          <li>触发器</li>
+          <li>排除项</li>
+          <li>消息窗口</li>
+          <li>实时预览</li>
+        </ul>
+      </div>
+
+      <div class="mock-content">
+        <div class="label">顶部摘要卡</div>
+        <div class="placeholder">
+          当前视角：指定成员白名单
+          <br />
+          可见：绛雪、竹夭
+          <br />
+          触发：被 @ 时强制接收
+          <br />
+          排除：孟秋娘
+          <br />
+          最近：20 条
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:14px;">
+          <div class="card">
+            <div class="card-body">
+              <h3>基础模式</h3>
+              <p>全部可见 / 仅自己相关 / 仅定向 / 指定成员白名单</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <h3>玩法模板</h3>
+              <p>观察者 / 核心成员 / 隐秘角色 / 主持人视角</p>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:14px;" class="cards">
+          <div class="card">
+            <div class="card-body">
+              <h3>触发器</h3>
+              <p>被 @ / 关键词 / 主持人点名 / 定向消息</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <h3>排除项</h3>
+              <p>忽略某些成员、忽略某类消息、关系外成员降权</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <h3>消息窗口</h3>
+              <p>最近 N 条、摘要替代、场景状态注入、私有备注注入</p>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:14px;" class="placeholder">
+          实时预览
+          <br />
+          示例消息：「@慈脂佛母 今夜佛堂中可有异动？」
+          <br />
+          判断：可见
+          <br />
+          原因：命中 @ 触发器，且未命中排除规则
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>这个版本的关键取舍</h3>
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>我建议保留</h4>
+      <ul>
+        <li>成员基础信息和角色视角放在同一页</li>
+        <li>左侧是“编辑导航”，右侧是“规则工作区”</li>
+        <li>顶部先给摘要，不让用户埋头配规则却不知道结果</li>
+        <li>玩法模板单独成块，方便后面快速套用</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>我建议避免</h4>
+      <ul>
+        <li>继续用一个 BottomSheet 塞完所有配置</li>
+        <li>把基础模式和附加规则混在一张列表里</li>
+        <li>没有“为什么可见/不可见”的反馈</li>
+        <li>只有字段，没有模板和预览</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="same-page" onclick="toggleSelect(this)">
+    <div class="letter">S</div>
+    <div class="content">
+      <h3>同页展开</h3>
+      <p>成员基础信息和角色视角都在同一页内，切换快，测试效率高。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="subpage" onclick="toggleSelect(this)">
+    <div class="letter">P</div>
+    <div class="content">
+      <h3>单独子页面</h3>
+      <p>在成员详情页里点进“角色视角”，结构更干净，但多一步跳转。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <p class="subtitle">我个人推荐 <strong>同页展开 S</strong>。你现在明显还在高频试玩法，减少跳转比页面绝对纯净更重要。</p>
+</div>

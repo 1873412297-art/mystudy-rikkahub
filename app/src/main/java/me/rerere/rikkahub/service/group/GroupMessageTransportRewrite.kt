@@ -3,6 +3,7 @@ package me.rerere.rikkahub.service.group
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.ai.ui.isEmptyInputMessage
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantType
 import kotlin.uuid.Uuid
@@ -11,8 +12,8 @@ import kotlin.uuid.Uuid
  * Rewrites stored group chat messages into a provider-safe transient sequence.
  *
  * The returned messages are only sent to the model. They must not be stored back
- * into the conversation because speaker prefixes and continuation nudges are
- * transport hints, not user-visible chat content.
+ * into the conversation because speaker prefixes are transport hints, not
+ * user-visible chat content.
  */
 internal fun List<UIMessage>.applyGroupApiRewrite(
     groupAssistant: Assistant,
@@ -20,7 +21,7 @@ internal fun List<UIMessage>.applyGroupApiRewrite(
 ): List<UIMessage> {
     if (groupAssistant.assistantType != AssistantType.GROUP || effectiveMemberId == null) return this
 
-    val rewritten = map { message ->
+    return map { message ->
         when {
             message.role == MessageRole.ASSISTANT &&
                 message.memberId != null &&
@@ -47,17 +48,30 @@ internal fun List<UIMessage>.applyGroupApiRewrite(
             else -> message
         }
     }
+}
 
-    return if (rewritten.isNotEmpty() && rewritten.last().role == MessageRole.ASSISTANT) {
-        val currentMemberName = groupAssistant.groupMembers
-            .find { it.id == effectiveMemberId }
-            ?.displayName
-            ?.takeIf { it.isNotBlank() }
-            ?: "当前成员"
-        rewritten + UIMessage.user(
-            "请继续以[$currentMemberName]身份回复。不要重复上文，只输出该成员的下一句回应。"
-        )
-    } else {
-        rewritten
+internal fun List<UIMessage>.toStorableGroupGeneratedMessages(
+    originalMessageIds: Set<Uuid>,
+    effectiveMemberId: Uuid,
+    memberName: String?,
+): List<UIMessage> {
+    return filter { message ->
+        message.id !in originalMessageIds &&
+            message.role == MessageRole.ASSISTANT &&
+            !message.parts.isEmptyInputMessage() &&
+            !message.toText().isGroupContinuationNudge()
+    }.map { message ->
+        when {
+            message.memberId != null -> message
+            memberName != null -> message.copy(memberId = effectiveMemberId, name = memberName)
+            else -> message.copy(memberId = effectiveMemberId)
+        }
     }
+}
+
+internal fun String.isGroupContinuationNudge(): Boolean {
+    val text = trim()
+    return text.startsWith("请继续以[") &&
+        text.contains("身份回复") &&
+        text.contains("不要重复上文")
 }

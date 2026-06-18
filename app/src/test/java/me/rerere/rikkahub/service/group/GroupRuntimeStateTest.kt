@@ -27,6 +27,33 @@ class GroupRuntimeStateTest {
                 tension = 6,
                 activeSecrets = listOf("The guest is not human."),
             ),
+            eventState = GroupEventState(
+                recentEvents = listOf(
+                    GroupEventRecord(
+                        sourceMessageId = Uuid.parse("00000000-0000-0000-0000-000000000099"),
+                        speakerId = memberA,
+                        characters = listOf(memberA, memberB),
+                        locations = listOf("Shrine"),
+                        items = listOf("Jade key"),
+                        events = listOf("warns"),
+                        secrets = listOf("The guest is not human."),
+                        emotions = listOf("suspicious"),
+                        conflicts = listOf("distrust"),
+                        importance = 8,
+                    )
+                ),
+                activeFocus = GroupEventFocus(
+                    characterIds = listOf(memberA),
+                    locations = listOf("Shrine"),
+                    items = listOf("Jade key"),
+                    events = listOf("warning"),
+                    secrets = listOf("hidden guest"),
+                    emotions = listOf("tense"),
+                    conflicts = listOf("distrust"),
+                ),
+            ),
+            activeAddressedMemberId = memberB,
+            activeAddressedTurnId = Uuid.parse("00000000-0000-0000-0000-000000000100"),
         )
 
         val json = Json.encodeToString(state)
@@ -35,5 +62,14 @@ class GroupRuntimeStateTest {
         assertEquals("A knows the hidden door.", decoded.privateNotes[memberA])
         assertEquals(4, decoded.relationships[GroupRelationshipKey(memberA, memberB)]?.tension)
         assertTrue(decoded.scene.activeSecrets.contains("The guest is not human."))
+        assertEquals(memberB, decoded.activeAddressedMemberId)
+        assertEquals(
+            listOf("Jade key"),
+            decoded.eventState.recentEvents.single().items,
+        )
+        assertEquals(
+            listOf("hidden guest"),
+            decoded.eventState.activeFocus?.secrets,
+        )
     }
 }

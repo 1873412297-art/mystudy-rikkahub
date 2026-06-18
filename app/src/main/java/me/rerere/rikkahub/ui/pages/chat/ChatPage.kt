@@ -57,6 +57,7 @@ import me.rerere.hugeicons.stroke.MessageAdd01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
+import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
@@ -67,6 +68,7 @@ import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
+import me.rerere.rikkahub.ui.components.ai.completion.GroupMentionCompletionProvider
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.context.Navigator
@@ -81,7 +83,7 @@ import org.koin.core.parameter.parametersOf
 import kotlin.uuid.Uuid
 
 @Composable
-fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
+fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null, greeting: String? = null) {
     val vm: ChatVM = koinViewModel(
         parameters = {
             parametersOf(id.toString())
@@ -123,6 +125,14 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val inputState = vm.inputState
 
     // 初始化输入状态（处理传入的 files 和 text 参数）
+    LaunchedEffect(greeting) {
+        greeting?.base64Decode()?.let { decodedGreeting ->
+            if (decodedGreeting.isNotBlank()) {
+                vm.applyInitialGreeting(decodedGreeting)
+            }
+        }
+    }
+
     LaunchedEffect(files, text) {
         if (files.isNotEmpty()) {
             val localFiles = filesManager.createChatFilesByContents(files)
@@ -257,17 +267,37 @@ private fun ChatPageContent(
     val workspaceRepository: WorkspaceRepository = koinInject()
     var previewMode by rememberSaveable { mutableStateOf(false) }
     val hazeState = rememberHazeState()
-    val assistant = setting.getCurrentAssistant()
-    val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
-        assistant.workspaceId?.let { workspaceId ->
-            listOf(
-                WorkspaceCompletionProvider(
-                    workspaceId = workspaceId.toString(),
-                    repository = workspaceRepository,
-                    currentCwd = conversation.workspaceCwd,
+    val assistant = remember(setting.assistants, conversation.assistantId) {
+        setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
+    }
+    val completionProviders = remember(
+        assistant.workspaceId,
+        assistant.groupMembers,
+        assistant.assistantType,
+        conversation.workspaceCwd,
+        workspaceRepository,
+    ) {
+        buildList {
+            assistant.workspaceId?.let { workspaceId ->
+                add(
+                    WorkspaceCompletionProvider(
+                        workspaceId = workspaceId.toString(),
+                        repository = workspaceRepository,
+                        currentCwd = conversation.workspaceCwd,
+                    )
                 )
-            )
-        }.orEmpty()
+            }
+            if (assistant.assistantType == AssistantType.GROUP) {
+                add(GroupMentionCompletionProvider(assistant.groupMembers))
+            }
+        }
+    }
+    val onMentionRole: (String) -> Unit = remember(inputState) {
+        { roleName ->
+            if (roleName.isNotBlank()) {
+                inputState.insertTextAtCursor("@$roleName ")
+            }
+        }
     }
 
     TTSAutoPlay(vm = vm, setting = setting, conversation = conversation)
@@ -300,11 +330,18 @@ private fun ChatPageContent(
                 Column {
                     val selectedIds = vm.selectedGroupMemberIds.collectAsStateWithLifecycle().value
                     val ga = setting.assistants.find { it.id == conversation.assistantId }
+                    val enabledManualMembers = ga?.groupMembers?.filter { it.enabled }.orEmpty()
+                    val availableManualMemberIds = remember(enabledManualMembers) {
+                        enabledManualMembers.map { it.id }
+                    }
+                    LaunchedEffect(availableManualMemberIds) {
+                        vm.sanitizeGroupMemberSelection(availableManualMemberIds)
+                    }
                     val isGrp = ga != null && ga.assistantType == AssistantType.GROUP &&
-                        ga.turnTakingStrategy == TurnTakingStrategy.MANUAL && ga.groupMembers.isNotEmpty()
+                        ga.turnTakingStrategy == TurnTakingStrategy.MANUAL && enabledManualMembers.isNotEmpty()
                     if (isGrp) {
                         GroupMemberSelector(
-                            members = ga!!.groupMembers,
+                            members = enabledManualMembers,
                             selectedMemberIds = selectedIds,
                             settings = setting,
                             onToggle = { vm.toggleGroupMember(it) },
@@ -477,6 +514,7 @@ private fun ChatPageContent(
                     vm.updateConversation(conversation.copy(customSystemPrompt = newPrompt))
                     vm.saveConversationAsync()
                 },
+                onMentionRole = onMentionRole,
             )
         }
     }

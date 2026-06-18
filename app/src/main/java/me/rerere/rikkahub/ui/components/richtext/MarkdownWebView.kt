@@ -1,7 +1,6 @@
 package me.rerere.rikkahub.ui.components.richtext
 
 import android.annotation.SuppressLint
-import android.util.Log
 import android.view.MotionEvent
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
@@ -14,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -23,7 +23,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.abs
+import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeBridge
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeController
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimePermissionStore
+import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsBackedTavernWorldRepository
+import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernWorldGateway
+import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScript
+import org.koin.compose.koinInject
 
 /**
  * Renders content in a WebView. Two modes:
@@ -54,6 +63,8 @@ fun MarkdownWebView(
     fixedHeight: Boolean = false,
 ) {
     val context = LocalContext.current
+    val settingsStore: SettingsStore = koinInject()
+    val appSettings by settingsStore.settingsFlow.collectAsStateWithLifecycle()
     val colorScheme = MaterialTheme.colorScheme
     val density = LocalDensity.current
     var viewHeight by remember { mutableStateOf(100) }
@@ -68,10 +79,36 @@ fun MarkdownWebView(
     val surfaceVariantHex = hex(colorScheme.surfaceVariant)
     val outlineVariantHex = hex(colorScheme.outlineVariant)
     val onSurfaceVariantHex = hex(colorScheme.onSurfaceVariant)
+    val runtimePermissionStore = remember {
+        TavernRuntimePermissionStore(appSettings.runtimePermissions)
+    }
+    LaunchedEffect(appSettings.runtimePermissions) {
+        runtimePermissionStore.update(appSettings.runtimePermissions)
+    }
+    val runtimeController = remember(settingsStore) {
+        TavernRuntimeController(
+            worldRepository = SettingsBackedTavernWorldRepository(
+                SettingsStoreTavernWorldGateway(settingsStore)
+            ),
+            permissionStore = runtimePermissionStore,
+        )
+    }
 
-    // 是否走 raw-HTML iframe 隔离路径（用户/LLM/角色卡的整段 HTML）。
-    val useIframeSandbox = isRawHtml || looksLikeHtml(content)
+    val useIframeSandbox = isRawHtml || looksLikeHtmlDocument(content)
     val maxHeightPx = maxHeightDp?.let { with(density) { it.dp.toPx().toInt() } }
+    val renderKey = listOf(
+        useIframeSandbox,
+        fixedHeight,
+        content.length,
+        content.hashCode(),
+        bgHex,
+        textHex,
+        primaryHex,
+        surfaceHex,
+        surfaceVariantHex,
+        outlineVariantHex,
+        onSurfaceVariantHex,
+    ).joinToString("|")
 
     Surface(
         modifier = modifier,
@@ -86,6 +123,7 @@ fun MarkdownWebView(
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
+                    val webView = this
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
                     isVerticalScrollBarEnabled = false
                     isHorizontalScrollBarEnabled = false
@@ -190,6 +228,20 @@ fun MarkdownWebView(
                     )
                     addJavascriptInterface(bridge, "RikkahubBridge")
 
+                    val tavernBridge = TavernRuntimeBridge(
+                        controller = runtimeController,
+                        emitResult = { callbackName, responseJson ->
+                            val payload = org.json.JSONObject.quote(responseJson)
+                            webView.post {
+                                webView.evaluateJavascript(
+                                    "(function(){var cb=window['$callbackName'];if(typeof cb==='function'){cb(JSON.parse($payload));}})();",
+                                    null
+                                )
+                            }
+                        }
+                    )
+                    addJavascriptInterface(tavernBridge, "TavernRuntimeBridge")
+
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(
                             view: WebView?,
@@ -278,21 +330,21 @@ fun MarkdownWebView(
                     val html = if (useIframeSandbox) {
                         buildSandboxHostHtml(content, bgHex, textHex, fixedHeight)
                     } else {
-                        buildMarkdownPreviewHtml(context, content, colorScheme)
+                        buildMarkdownPreviewHtml(context, normalizeRichTextContent(content), colorScheme)
                     }
                     loadDataWithBaseURL("https://rikkahub.local/", html, "text/html", "UTF-8", null)
-                    lastLoadedKey.value = "${useIframeSandbox}|${content.hashCode()}"
+                    lastLoadedKey.value = renderKey
                 }
             },
             update = { webView ->
                 // 只有 content 或路径模式真正变了才重 load。同 key 的 recompose（比如外层
                 // viewHeight 变化触发的）跳过，让 iframe 自然完成首次加载和高度测量。
-                val key = "${useIframeSandbox}|${content.hashCode()}"
+                val key = renderKey
                 if (lastLoadedKey.value != key) {
                     val html = if (useIframeSandbox) {
                         buildSandboxHostHtml(content, bgHex, textHex, fixedHeight)
                     } else {
-                        buildMarkdownPreviewHtml(context, content, colorScheme)
+                        buildMarkdownPreviewHtml(context, normalizeRichTextContent(content), colorScheme)
                     }
                     webView.loadDataWithBaseURL("https://rikkahub.local/", html, "text/html", "UTF-8", null)
                     lastLoadedKey.value = key
@@ -362,30 +414,7 @@ private fun WebView.measureContentHeight(onResult: (Int) -> Unit) {
  * 被错判时用户也只是落到 WebView/sandbox iframe 渲染，不是安全漏洞——
  * 真正的 XSS 拦截在 mark.html 的 DOMPurify 与 MarkdownWebView 的 sandbox 隔离里。
  */
-internal fun looksLikeHtml(content: String): Boolean {
-    val t = content.trimStart()
-    // 1) 顶层信号：以 HTML 文档/元素/CSS 块开头（这些绝不会出现在代码块里，所以
-    //    放在剥离前判断）
-    if (t.startsWith("<!DOCTYPE", ignoreCase = true)) return true
-    if (t.startsWith("<html", ignoreCase = true)) return true
-    if (t.startsWith("<body", ignoreCase = true)) return true
-    if (t.startsWith("@media")) return true
-    if (Regex("^<[a-zA-Z][a-zA-Z0-9-]*[\\s>/]").containsMatchIn(t)) return true
-
-    // 2) 「整段 HTML 被 ``` 包住」的情况：原文剥离前先看是不是 ``` 开头并且整段近似
-    //    被一个 fenced block 包住，且内容是 HTML 文档级标签。这是 ST 角色卡的常见写法。
-    if (looksLikeFencedHtmlDocument(t)) return true
-
-    // 3) 内嵌信号：先剥离 markdown 代码块再扫描，避免「模型在 ```html ... ``` 里
-    //    讲教程」被误判成真 HTML。
-    val stripped = stripMarkdownCodeRegions(t)
-    if (Regex("<!doctype\\s+html", RegexOption.IGNORE_CASE).containsMatchIn(stripped)) return true
-    if (Regex("<html[\\s>]", RegexOption.IGNORE_CASE).containsMatchIn(stripped)) return true
-    if (Regex("<style[^>]*>[\\s\\S]*?</style>", RegexOption.IGNORE_CASE).containsMatchIn(stripped)) return true
-    if (Regex("<script[^>]*>[\\s\\S]*?</script>", RegexOption.IGNORE_CASE).containsMatchIn(stripped)) return true
-    if (Regex("<svg[\\s>][\\s\\S]*?</svg>", RegexOption.IGNORE_CASE).containsMatchIn(stripped)) return true
-    return false
-}
+internal fun looksLikeHtml(content: String): Boolean = looksLikeHtmlDocument(content)
 
 /**
  * 检测「整段 HTML 文档被 fenced code block (```html ... ```) 包住」的写法。
@@ -397,7 +426,7 @@ internal fun looksLikeHtml(content: String): Boolean {
  *
  * 命中时返回 true，整段会走 sandbox iframe 渲染（fence 包裹会被剥掉）。
  */
-private fun looksLikeFencedHtmlDocument(content: String): Boolean {
+internal fun looksLikeFencedHtmlDocument(content: String): Boolean {
     val text = content.trim()
     if (text.length < 30) return false
     val firstChar = text[0]
@@ -434,11 +463,18 @@ private fun looksLikeFencedHtmlDocument(content: String): Boolean {
     val tail = text.substring(closeEnd).trim()
     if (tail.length > 32) return false  // 文档外内容太多 → 是教程文本，不命中
 
-    // fence 内的内容。命中条件收紧到「真正文档级标志」：必须含 <!doctype> 或 <html> 标签。
-    // 单纯的 <style>/<script> 块认为是教程展示，不算整段文档，让走 markdown 代码块渲染。
+    // fence 内的内容。完整文档命中 <!doctype>/<html>；JS-Slash-Runner/SillyTavern
+    // 常见写法会把可运行 HTML app 包在 ```html 中，只提供 <body> + <style>/<script>。
+    // 这种结构也需要作为 HTML app 渲染，而不是作为代码块显示。
     val inner = text.substring(firstLineEnd + 1, closeStart)
-    return Regex("<!doctype\\s+html", RegexOption.IGNORE_CASE).containsMatchIn(inner) ||
+    val hasDocumentRoot = Regex("<!doctype\\s+html", RegexOption.IGNORE_CASE).containsMatchIn(inner) ||
         Regex("<html[\\s>]", RegexOption.IGNORE_CASE).containsMatchIn(inner)
+    val hasRunnableBody = Regex("<body[\\s>][\\s\\S]*?</body>", RegexOption.IGNORE_CASE).containsMatchIn(inner) &&
+        (
+            Regex("<style[\\s>][\\s\\S]*?</style>", RegexOption.IGNORE_CASE).containsMatchIn(inner) ||
+                Regex("<script[\\s>][\\s\\S]*?</script>", RegexOption.IGNORE_CASE).containsMatchIn(inner)
+            )
+    return hasDocumentRoot || hasRunnableBody
 }
 
 /**
@@ -491,7 +527,7 @@ private fun unwrapFencedHtml(content: String): String {
  *  - inline code 用单反引号配对，避免误吃跨行内容。
  *  - 代码区被替换成等长空白（保留行号/偏移信息），不影响后续正则按位置切片。
  */
-private fun stripMarkdownCodeRegions(text: String): String {
+internal fun stripMarkdownCodeRegions(text: String): String {
     val sb = StringBuilder(text.length)
     var i = 0
     val n = text.length
@@ -608,11 +644,9 @@ private fun stripMarkdownCodeRegions(text: String): String {
  *     WebStorage.getInstance().deleteAllData()。
  */
 private fun buildSandboxHostHtml(userHtml: String, bgHex: String, textHex: String, fixedHeight: Boolean = false): String {
-    Log.d("RWKV", "buildSandboxHostHtml: userHtml.length=${userHtml.length}")
     val unwrapped = unwrapFencedHtml(userHtml)
-    Log.d("RWKV", "buildSandboxHostHtml: unwrapped.length=${unwrapped.length}")
 
-    val injectTag = "<script>${buildIframeInjectScript()}</script>"
+    val injectTag = "<script>${buildTavernRuntimeScript()}\n${buildIframeInjectScript()}</script>"
 
     val isCompleteDoc = unwrapped.trimStart().let {
         it.startsWith("<!DOCTYPE", ignoreCase = true) || it.startsWith("<html", ignoreCase = true)
@@ -637,7 +671,6 @@ $unwrapped
 $injectTag
 </body></html>"""
     }
-    Log.d("RWKV", "buildSandboxHostHtml: finalHtml.length=${finalHtml.length}")
     return finalHtml
 }
 
