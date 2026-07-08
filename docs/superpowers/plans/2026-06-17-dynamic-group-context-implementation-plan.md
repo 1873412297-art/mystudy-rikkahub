@@ -166,12 +166,12 @@ Modify:
 
 ## Manual Test Results Status
 
-- [ ] `@role` insertion from input box
-- [ ] Long-press avatar mention insertion
-- [ ] Addressed turn only generating the addressed role
-- [ ] Follow-up second-person continuation preserving addressed target
-- [ ] Event-heavy scene causing Core history expansion
-- [ ] Low-relevance role receiving isolated context only
+- [x] `@role` insertion from input box
+- [x] Long-press avatar mention insertion
+- [x] Addressed turn only generating the addressed role
+- [x] Follow-up second-person continuation preserving addressed target
+- [x] Event-heavy scene causing Core history expansion
+- [x] Low-relevance role receiving isolated context only
 
 ## Execution Notes
 
@@ -186,9 +186,24 @@ Modify:
     - `./gradlew :app:assembleDebug`
     - `adb -s emulator-5554 install -r app/build/outputs/apk/debug/app-x86_64-debug.apk`
 
-- Still pending manual smoke:
-  - The six checklist items above still need human in-app verification.
-  - The app was launched on `emulator-5554`, but these interaction-level checks were not fully closed in this implementation pass.
+- Manual smoke follow-up:
+  - The original interaction-level gaps from this implementation pass were closed in the `2026-07-01 Manual Verification` block below.
 
 - Cleanup follow-up:
-  - `ChatService.kt` still contains an older local `applyGroupContextFilter(...)` helper near file end; current runtime path is explicitly routed to the new shared helper via import alias, so behavior is correct, but the dead helper should be deleted in a later cleanup pass.
+  - The older local `ChatService.kt` `applyGroupContextFilter(...)` helper was deleted in the final cleanup pass; the runtime path remains routed through the shared group helper.
+
+### 2026-07-01 Manual Verification
+
+- Passed on `emulator-5554` / Android 15 with `app-x86_64-debug.apk`:
+  - Typing an ASCII `@` through an existing mention opened the group-member completion row; selecting the row replaced the query with `@八千代`.
+  - Long-pressing a group message header inserted the corresponding plain-text mention.
+  - With both manual members selected, `@八千代 hello` generated only 八千代.
+  - The runtime debug sheet exposed the addressed target, event count, focus characters, reply speaker, and `CORE` resolver layer.
+- The first English `continue` smoke exposed a real gap: only Chinese second-person continuation phrases were recognized, so the addressed target was cleared and both selected manual members replied.
+- Fixed with TDD by adding `resolves bare english continuation when previous addressed target exists` and a minimal case-insensitive `continue` match in `GroupAddressing.kt`.
+- Reinstalled and reverified with both members selected: `@辉夜 ping` followed by bare `continue` kept `当前点名角色: 辉夜` and `当前回复角色: 辉夜`; the scene summary contained two consecutive 辉夜 turns and no fallback batch reply from 八千代.
+- Event-heavy and low-relevance verification completed with real provider-backed turns:
+  - Selected 辉夜 and sent `betrayal`; the runtime sheet showed secret focus `betrayal / 背叛`, conflict focus `危险 / betrayal`, score `event=14, recent=3, relation=0, total=17`, and layer `CORE`.
+  - Started a fresh group conversation, selected 八千代, and sent `hello`; the runtime sheet showed empty event/conflict focus, score `0`, and layer `ISOLATED`.
+- Round-robin follow-up: the first live run exposed a stale conversation write at generation startup that reset the resolved speaker queue. A focused `ChatServiceTest` now protects `conversationAtGenerationStart(...)`, and the reinstalled APK completed the configured two-reply chain as 八千代 -> 辉夜.
+- Moderator follow-up: unaddressed `modtest` selected 辉夜 and stopped normally after one reply; invalid moderator output is covered by a local-fallback unit test.

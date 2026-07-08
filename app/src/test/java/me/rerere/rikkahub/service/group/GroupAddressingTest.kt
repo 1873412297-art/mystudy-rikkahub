@@ -45,10 +45,32 @@ class GroupAddressingTest {
     }
 
     @Test
+    fun `at mention overrides manual reply selection for current send`() {
+        val result = resolveManualReplyMemberIds(
+            selectedMemberIds = listOf(memberA, memberB),
+            addressedMemberId = memberB,
+        )
+
+        assertEquals(listOf(memberB), result)
+    }
+
+    @Test
     fun `resolves second person continuation when previous addressed target exists`() {
         val result = resolveAddressedMember(
             groupAssistant = groupAssistant,
             userText = "你继续说下去。",
+            previousAddressedMemberId = memberB,
+        )
+
+        assertEquals(memberB, result?.memberId)
+        assertEquals(AddressingSource.CONTINUATION, result?.source)
+    }
+
+    @Test
+    fun `resolves bare english continuation when previous addressed target exists`() {
+        val result = resolveAddressedMember(
+            groupAssistant = groupAssistant,
+            userText = "continue",
             previousAddressedMemberId = memberB,
         )
 

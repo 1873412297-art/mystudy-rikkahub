@@ -1540,7 +1540,7 @@ BUILD SUCCESSFUL
 Success
 ```
 
-- [ ] **Step 2: Manual mode smoke test**
+- [x] **Step 2: Manual mode smoke test**
 
 In the app:
 
@@ -1556,7 +1556,7 @@ Expected:
 - Visible message text does not show `[User]` or `[member]` prefixes.
 - The second selected member can see the first selected member's reply through the transport rewrite.
 
-- [ ] **Step 3: Round-robin smoke test**
+- [x] **Step 3: Round-robin smoke test**
 
 In the app:
 
@@ -1570,19 +1570,19 @@ Expected:
 - Consecutive same speaker is avoided when `allowConsecutiveSameSpeaker=false`.
 - Replies remain on the left.
 
-- [ ] **Step 4: Moderator smoke test**
+- [x] **Step 4: Moderator smoke test**
 
 In the app:
 
 1. Set group mode to auto moderator.
-2. Send a message that names a specific member.
+2. Send an unaddressed message so the moderator path executes. Explicit member names are routed deterministically before moderator selection.
 
 Expected:
 
-- The named member is more likely to respond.
-- If moderator model fails, local scorer fallback picks a member instead of aborting.
+- The moderator selects a member and the chain stops through `STOP` or the configured cap.
+- If moderator output is invalid, the local scorer fallback picks a member instead of aborting (covered by `GroupModeratorDecisionTest`).
 
-- [ ] **Step 5: Runtime state smoke test**
+- [x] **Step 5: Runtime state smoke test**
 
 In the app:
 
@@ -1664,3 +1664,23 @@ git commit -m "docs: record group context gameplay manual test results"
   - `adb shell input text` corrupts non-ASCII / spaced prompts on this emulator-Gboard setup.
   - `adb` coordinate taps on the Compose send affordance leave the draft text in place, so the send event is not firing reliably during automated smoke.
   - Observed `INVALID_ARGUMENT` entries in logcat were emitted by Google system components (`GlsClientGrpc` / app credential header), not by `me.rerere.rikkahub.debug` during this test pass.
+
+### 2026-07-01 Execution Result
+
+- Manual mode: pass, `emulator-5554`; selected both members, verified the plain-text mention picker and long-press mention insertion, and successfully dispatched group turns after committing the IME composition with Back. Addressed sends produced only the named member even while both manual members remained selected.
+- Addressed continuation: pass after a focused fix; bare English `continue` now preserves the previous addressed member. The runtime sheet showed `当前点名角色: 辉夜`, `当前回复角色: 辉夜`, `上下文层级: CORE`, and two consecutive event records for the addressed `ping` plus continuation turns.
+- Round-robin mode: pass, `emulator-5554`; with max auto replies set to `2` and consecutive same-speaker replies disabled, `roundfix` generated 八千代 followed by 辉夜 and stopped normally.
+- Moderator mode: pass, `emulator-5554`; unaddressed `modtest` exercised the moderator path, selected 辉夜 for one reply, then stopped normally without exceeding the cap. Explicit names intentionally use deterministic addressing before moderator selection; invalid moderator output falls back locally and is covered by `GroupModeratorDecisionTest`.
+- Runtime state: pass, `emulator-5554`; `betrayal` produced conflict focus `危险 / betrayal`, secret focus `betrayal / 背叛`, and a 辉夜 resolver score of `event=14, recent=3, relation=0, total=17` with layer `CORE`. A fresh conversation with 八千代 and `hello` produced no event/conflict focus, score `0`, and layer `ISOLATED`. Both were real provider-backed turns with no serialization crash.
+- Emulator: `emulator-5554`, Android 15, package `me.rerere.rikkahub.debug`, activity `me.rerere.rikkahub.RouteActivity`.
+- APK: `C:\Users\18734\Desktop\HTML\rikkahub-source\app\build\outputs\apk\debug\app-x86_64-debug.apk`.
+- Verification:
+  - `./gradlew :app:testDebugUnitTest --tests 'me.rerere.rikkahub.service.group.*' --tests 'me.rerere.rikkahub.service.ChatServiceTest'`
+  - `./gradlew :app:assembleDebug`
+  - `adb -s emulator-5554 install -r app/build/outputs/apk/debug/app-x86_64-debug.apk`
+- Regression fixed during smoke: the addressing parser recognized only Chinese continuation phrases, so English `continue` cleared the active target and fell back to both manually selected members. A failing JVM test was added first, followed by the minimal case-insensitive English continuation match.
+- Regression fixed during round-robin smoke: generation startup cleared suggestions by writing a stale pre-resolution `Conversation`, which overwrote the newly persisted active speaker and queue index and selected the same member again. `conversationAtGenerationStart(...)` now starts from the freshly resolved conversation; a focused `ChatServiceTest` was added before the fix and the reinstalled APK produced 八千代 -> 辉夜.
+- Automation notes:
+  - `adb input text` leaves Gboard text in composition state; send becomes reliable after `adb shell input keyevent 4` commits/hides the IME.
+  - Manual member selection is ViewModel state and resets when the app process restarts; smoke scripts must reselect members before sending.
+  - Do not run overlapping `uiautomator dump` commands; Android 15 can reject the second shell automation service registration even though the RikkaHub process remains healthy.

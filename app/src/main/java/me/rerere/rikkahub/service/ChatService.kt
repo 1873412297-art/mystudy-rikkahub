@@ -88,7 +88,6 @@ import me.rerere.rikkahub.data.ai.slash.SlashCommandInterceptor
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.transformers.StatusPlaceholderTransformer
 import me.rerere.rikkahub.data.model.AssistantType
-import me.rerere.rikkahub.data.model.ContextScope
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.replaceRegexes
@@ -109,6 +108,7 @@ import me.rerere.rikkahub.service.group.DynamicGroupContextResolver
 import me.rerere.rikkahub.service.group.isGroupContinuationNudge
 import me.rerere.rikkahub.service.group.parseGroupModeratorDecision
 import me.rerere.rikkahub.service.group.resolveEffectiveGroupMemberAssistant
+import me.rerere.rikkahub.service.group.resolveManualReplyMemberIds
 import me.rerere.rikkahub.service.group.toStorableGroupGeneratedMessages
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
@@ -194,6 +194,14 @@ internal fun renderPresetMessageMacros(
             }
         )
     }
+}
+
+internal fun conversationAtGenerationStart(
+    initialConversation: Conversation,
+    resolvedConversation: Conversation,
+): Conversation {
+    require(initialConversation.id == resolvedConversation.id)
+    return resolvedConversation.copy(chatSuggestions = emptyList())
 }
 
 class ChatService(
@@ -582,11 +590,17 @@ class ChatService(
                 runCatching { previousJob?.join() }
                 finishInterruptedPendingTools(conversationId)
 
+                var replyMemberIds = memberIds.distinct()
                 if (!content.isEmptyInputMessage()) {
                     appendUserMessage(conversationId, session, content)
+                    val conversationAfterUserMessage = getConversationFlow(conversationId).value
+                    replyMemberIds = resolveManualReplyMemberIds(
+                        selectedMemberIds = replyMemberIds,
+                        addressedMemberId = conversationAfterUserMessage.groupRuntimeState.activeAddressedMemberId,
+                    )
                 }
 
-                memberIds.distinct().forEach { memberId ->
+                replyMemberIds.forEach { memberId ->
                     handleMessageComplete(conversationId, memberId = memberId, allowAutoChain = false)
                 }
 
@@ -833,8 +847,12 @@ class ChatService(
 
         runCatching {
 
-            // reset suggestions
-            updateConversation(conversationId, initialConversation.copy(chatSuggestions = emptyList()))
+            // Reset suggestions without overwriting group speaker state persisted during resolution.
+            val resolvedConversation = getConversationFlow(conversationId).value
+            updateConversation(
+                conversationId,
+                conversationAtGenerationStart(initialConversation, resolvedConversation),
+            )
 
             // memory tool
             if (!model.abilities.contains(ModelAbility.TOOL)) {
@@ -2011,53 +2029,5 @@ private fun List<UIMessage>.applyEnhancementPrompt(assistant: Assistant): List<U
     val textPart = parts[lastTextIdx] as UIMessagePart.Text
     parts[lastTextIdx] = textPart.copy(text = textPart.text + "\n\n" + extra)
     return toMutableList().also { it[lastUserIdx] = userMsg.copy(parts = parts) }
-}
-
-/**
- * 群组对话：按当前发言成员的 ContextFilter 筛选可见消息（scope/exclude/mention/maxMessages 四层）。
- * 非群组对话或解析不到成员时直接返回原列表。
- */
-private fun List<UIMessage>.applyGroupContextFilter(
-    groupAssistant: Assistant,
-    effectiveMemberId: Uuid?,
-): List<UIMessage> {
-    if (groupAssistant.assistantType != AssistantType.GROUP) return this
-    if (effectiveMemberId == null) return this
-    val member = groupAssistant.groupMembers.find { it.id == effectiveMemberId } ?: return this
-    val filter = member.contextFilter
-    if (filter.scope == ContextScope.ALL
-        && filter.excludedMemberIds.isEmpty()
-        && !filter.mentionEnabled
-        && filter.maxMessages <= 0
-    ) return this
-
-    var result: List<UIMessage> = this
-    // Layer 1: 范围
-    result = when (filter.scope) {
-        ContextScope.ALL -> result
-        ContextScope.SELF -> result.filter { it.role == MessageRole.USER || it.memberId == effectiveMemberId }
-        ContextScope.MEMBER_LIST -> result.filter { it.role == MessageRole.USER || it.memberId in filter.visibleMemberIds }
-        ContextScope.DIRECTED -> result.filter { it.memberId == effectiveMemberId }
-    }
-    // Layer 2: 排除
-    if (filter.excludedMemberIds.isNotEmpty()) {
-        result = result.filter { it.memberId !in filter.excludedMemberIds }
-    }
-    // Layer 3: 提及关键词
-    if (filter.mentionEnabled && filter.mentionKeywords.isNotEmpty()) {
-        result = result.filter { msg ->
-            msg.role == MessageRole.USER || filter.mentionKeywords.any { kw ->
-                msg.toText().contains(kw, ignoreCase = true)
-            }
-        }
-    }
-    // Layer 4: 截断（保留所有 USER 消息）
-    if (filter.maxMessages > 0 && result.size > filter.maxMessages) {
-        val users = result.filter { it.role == MessageRole.USER }
-        val others = result.filter { it.role != MessageRole.USER }
-        val keep = (filter.maxMessages - users.size).coerceAtLeast(0)
-        result = others.takeLast(keep) + users
-    }
-    return result
 }
 

@@ -14,12 +14,15 @@ private val EVENT_KEYWORDS = listOf(
     "警告", "质问", "隐瞒", "追问", "争吵", "安慰", "保护", "揭穿", "试探", "偷听", "对峙", "继续",
 )
 private val SECRET_KEYWORDS = listOf(
+    "affair", "betrayal", "secret romance",
     "秘密", "真相", "不要告诉", "不能说", "隐瞒", "阴谋", "背叛", "不是人", "身份",
 )
 private val EMOTION_KEYWORDS = listOf(
+    "jealous", "jealousy", "guilt", "possessive",
     "愤怒", "紧张", "怀疑", "担忧", "害怕", "温柔", "嫉妒", " suspicious", "protective",
 )
 private val CONFLICT_KEYWORDS = listOf(
+    "affair", "betrayal", "cheat", "cheating", "ntr", "rival",
     "危险", "不信", "怀疑", "反驳", "敌意", "冲突", "威胁", "争执",
 )
 

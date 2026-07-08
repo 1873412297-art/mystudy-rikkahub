@@ -15,6 +15,13 @@ data class AddressedMemberResolution(
     val source: AddressingSource,
 )
 
+internal fun resolveManualReplyMemberIds(
+    selectedMemberIds: List<Uuid>,
+    addressedMemberId: Uuid?,
+): List<Uuid> {
+    return addressedMemberId?.let { listOf(it) } ?: selectedMemberIds.distinct()
+}
+
 internal fun resolveAddressedMember(
     groupAssistant: Assistant,
     userText: String,
@@ -62,5 +69,6 @@ private fun String.isSecondPersonContinuation(): Boolean {
     if (continuationPhrases.any { contains(it, ignoreCase = true) }) {
         return true
     }
-    return trim() == "你"
+    val trimmed = trim()
+    return trimmed == "你" || trimmed.equals("continue", ignoreCase = true)
 }
