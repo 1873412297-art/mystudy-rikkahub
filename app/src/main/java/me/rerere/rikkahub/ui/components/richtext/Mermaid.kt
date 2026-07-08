@@ -208,6 +208,7 @@ private fun buildMermaidHtml(
               mermaid.initialize({
                     startOnLoad: true,
                     theme: 'base',
+                    securityLevel: 'strict',
                     themeVariables: {
                         primaryColor: '${primaryColor}',
                         primaryTextColor: '${onPrimary}',

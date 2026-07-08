@@ -61,6 +61,17 @@ internal class MyWebViewClient(private val state: WebViewState) : WebViewClient(
         state.canGoBack = view?.canGoBack() == true
         state.canGoForward = view?.canGoForward() == true
     }
+
+    /** 协议白名单：阻止 javascript/intent/file/content 等危险跳转。*/
+    override fun shouldOverrideUrlLoading(
+        view: WebView?,
+        request: android.webkit.WebResourceRequest?
+    ): Boolean {
+        val url = request?.url?.toString() ?: return false
+        val allowed = listOf("http://", "https://")
+        if (url.equals("about:blank", ignoreCase = true)) return false
+        return !allowed.any { url.startsWith(it, ignoreCase = true) }
+    }
 }
 
 private fun WebView.resetState(
@@ -107,6 +118,10 @@ fun WebView(
                     settings.javaScriptEnabled = true // Enable JavaScript
                     settings.domStorageEnabled = true
                     settings.allowContentAccess = true
+                    // 安全加固：禁止 file:// 协议越权访问 + 禁止混合内容
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    settings.allowFileAccessFromFileURLs = false
+                    settings.allowUniversalAccessFromFileURLs = false
                     settings.apply(state.settings)
 
                     // Use the created clients

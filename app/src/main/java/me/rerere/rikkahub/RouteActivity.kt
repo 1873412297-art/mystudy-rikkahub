@@ -108,6 +108,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesThemePage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesNotificationPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesGeneralPage
+import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesRuntimePage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesUIPage
 import me.rerere.rikkahub.ui.pages.setting.SettingThemePage
 import me.rerere.rikkahub.ui.pages.setting.SettingDonatePage
@@ -125,6 +126,9 @@ import me.rerere.rikkahub.ui.pages.share.handler.ShareHandlerPage
 import me.rerere.rikkahub.ui.pages.stats.StatsPage
 import me.rerere.rikkahub.ui.pages.translator.TranslatorPage
 import me.rerere.rikkahub.ui.pages.webview.WebViewPage
+import me.rerere.rikkahub.ui.pages.tavern.TavernCardEditorPage
+import me.rerere.rikkahub.ui.pages.tavern.TavernCardViewerPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantGroupMembersPage
 import me.rerere.rikkahub.ui.theme.LocalDarkMode
 import me.rerere.rikkahub.ui.theme.RikkahubTheme
 import me.rerere.rikkahub.utils.CrashHandler
@@ -156,6 +160,24 @@ class RouteActivity : ComponentActivity() {
             if (volumeKeyListeners.lastOrNull()?.invoke(isVolumeUp) == true) return true
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // Prevent TransactionTooLargeException by stripping Compose saveable state
+        // when it grows too large. All important data (conversations, settings)
+        // is already persisted in Room DB / DataStore.
+        val composeStateKey = "androidx.lifecycle.BundlableSavedStateRegistry.key"
+        val composeBundle = outState.getBundle(composeStateKey) ?: return
+        val parcel = android.os.Parcel.obtain()
+        try {
+            composeBundle.writeToParcel(parcel, 0)
+            if (parcel.dataSize() > 500_000) {
+                outState.remove(composeStateKey)
+            }
+        } finally {
+            parcel.recycle()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -327,7 +349,8 @@ class RouteActivity : ComponentActivity() {
                                     id = Uuid.parse(key.id),
                                     text = key.text,
                                     files = key.files.map { it.toUri() },
-                                    nodeId = key.nodeId?.let { Uuid.parse(it) }
+                                    nodeId = key.nodeId?.let { Uuid.parse(it) },
+                                    greeting = key.greeting,
                                 )
                             }
 
@@ -402,6 +425,22 @@ class RouteActivity : ComponentActivity() {
                                 WebViewPage(key.url, key.content)
                             }
 
+                            entry<Screen.TavernCardViewer> { key ->
+                                TavernCardViewerPage(
+                                    cardUri = key.cardUri,
+                                    cardJson = key.cardJson,
+                                    assistantId = key.assistantId,
+                                )
+                            }
+
+                            entry<Screen.TavernCardEditor> { key ->
+                                TavernCardEditorPage(assistantId = key.assistantId)
+                            }
+
+                            entry<Screen.AssistantGroupMembers> { key ->
+                                AssistantGroupMembersPage(key.id)
+                            }
+
                             entry<Screen.SettingTheme> {
                                 SettingThemePage()
                             }
@@ -420,6 +459,10 @@ class RouteActivity : ComponentActivity() {
 
                             entry<Screen.SettingPreferencesGeneral> {
                                 SettingPreferencesGeneralPage()
+                            }
+
+                            entry<Screen.SettingPreferencesRuntime> {
+                                SettingPreferencesRuntimePage()
                             }
 
                             entry<Screen.SettingPreferencesUI> {
@@ -575,7 +618,9 @@ sealed interface Screen : NavKey {
         val id: String,
         val text: String? = null,
         val files: List<String> = emptyList(),
-        val nodeId: String? = null
+        val nodeId: String? = null,
+        /** 角色卡查看页选定开场白后传入新对话；base64-encoded 文本，由 ChatPage 解码并作为首条 ASSISTANT 消息插入。null = 不预置。 */
+        val greeting: String? = null,
     ) : Screen
 
     @Serializable
@@ -630,6 +675,15 @@ sealed interface Screen : NavKey {
     data class WebView(val url: String = "", val content: String = "") : Screen
 
     @Serializable
+    data class TavernCardViewer(val cardUri: String? = null, val cardJson: String? = null, val assistantId: String? = null) : Screen
+
+    @Serializable
+    data class TavernCardEditor(val assistantId: String) : Screen
+
+    @Serializable
+    data class AssistantGroupMembers(val id: String) : Screen
+
+    @Serializable
     data object SettingTheme : Screen
 
     @Serializable
@@ -643,6 +697,9 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object SettingPreferencesGeneral : Screen
+
+    @Serializable
+    data object SettingPreferencesRuntime : Screen
 
     @Serializable
     data object SettingPreferencesUI : Screen

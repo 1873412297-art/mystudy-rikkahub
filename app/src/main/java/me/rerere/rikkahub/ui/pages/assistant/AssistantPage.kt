@@ -6,17 +6,22 @@ import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.Search01
 import me.rerere.hugeicons.stroke.Delete01
 import me.rerere.hugeicons.stroke.Cancel01
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -67,7 +72,11 @@ import me.rerere.rikkahub.data.model.AssistantMemory
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.FormItem
 import me.rerere.rikkahub.ui.components.ui.Tag
+import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.components.ui.TagType
+import me.rerere.rikkahub.data.model.AssistantType
+import me.rerere.rikkahub.data.model.GroupMember
+import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.ui.components.ui.UIAvatar
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.hooks.EditState
@@ -96,17 +105,20 @@ fun AssistantPage(vm: AssistantVM = koinViewModel()) {
     var searchQuery by remember { mutableStateOf("") }
     // 标签过滤状态
     var selectedTagIds by remember { mutableStateOf(emptySet<Uuid>()) }
+    // 群组/单人类型过滤
+    var selectedAssistantType by remember { mutableStateOf(AssistantType.SOLO) }
     // 操作菜单状态
     var actionSheetAssistant by remember { mutableStateOf<Assistant?>(null) }
 
     // 根据搜索关键词和选中的标签过滤助手
-    val filteredAssistants = remember(settings.assistants, selectedTagIds, searchQuery) {
+    val filteredAssistants = remember(settings.assistants, selectedTagIds, searchQuery, selectedAssistantType) {
         settings.assistants.filter { assistant ->
             val matchesSearch = searchQuery.isBlank() ||
                 assistant.name.contains(searchQuery, ignoreCase = true)
             val matchesTags = selectedTagIds.isEmpty() ||
                 assistant.tags.any { tagId -> tagId in selectedTagIds }
-            matchesSearch && matchesTags
+            val matchesType = assistant.assistantType == selectedAssistantType
+            matchesSearch && matchesTags && matchesType
         }
     }
 
@@ -122,7 +134,7 @@ fun AssistantPage(vm: AssistantVM = koinViewModel()) {
                 actions = {
                     IconButton(
                         onClick = {
-                            createState.open(Assistant())
+                            createState.open(Assistant(assistantType = selectedAssistantType))
                         }) {
                         Icon(HugeIcons.Add01, stringResource(R.string.assistant_page_add))
                     }
@@ -185,6 +197,42 @@ fun AssistantPage(vm: AssistantVM = koinViewModel()) {
                     selectedTagIds = ids
                 }
             )
+
+            // SOLO / GROUP 类型切换
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                val typeOptions = listOf(
+                    AssistantType.SOLO to "单人助手",
+                    AssistantType.GROUP to "群组助手",
+                )
+                typeOptions.forEach { (type, label) ->
+                    val selected = selectedAssistantType == type
+                    Column(
+                        modifier = Modifier.weight(1f).clickable { selectedAssistantType = type },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (selected) MaterialTheme.colorScheme.onSurface
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = if (selected) MaterialTheme.typography.titleSmall
+                                    else MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(vertical = 8.dp),
+                        )
+                        if (selected) {
+                            Surface(
+                                modifier = Modifier.width(48.dp).height(2.dp),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                shape = MaterialTheme.shapes.small,
+                            ) {}
+                        } else {
+                            Spacer(modifier = Modifier.height(2.dp))
+                        }
+                    }
+                }
+            }
 
             LazyColumn(
                 modifier = Modifier
@@ -324,6 +372,11 @@ private fun AssistantCreationSheet(
     state: EditState<Assistant>,
 ) {
     state.EditStateContent { assistant, update ->
+        var showMemberPicker by remember { mutableStateOf(false) }
+        val settings = LocalSettings.current
+        val soloAssistants = remember(settings.assistants) {
+            settings.assistants.filter { it.assistantType == AssistantType.SOLO || it.assistantType != AssistantType.GROUP }
+        }
         ModalBottomSheet(
             onDismissRequest = {
                 state.dismiss()
@@ -359,13 +412,71 @@ private fun AssistantCreationSheet(
                         )
                     }
 
-                    AssistantImporter(
-                        onUpdate = {
-                            update(it)
-                            state.confirm()
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    // SOLO / GROUP type toggle
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = assistant.assistantType == AssistantType.SOLO,
+                            onClick = { update(assistant.copy(assistantType = AssistantType.SOLO)) },
+                            label = { Text("单人模式") },
+                            shape = RoundedCornerShape(50),
+                        )
+                        FilterChip(
+                            selected = assistant.assistantType == AssistantType.GROUP,
+                            onClick = { update(assistant.copy(assistantType = AssistantType.GROUP)) },
+                            label = { Text("多人模式") },
+                            shape = RoundedCornerShape(50),
+                        )
+                    }
+
+                    if (assistant.assistantType == AssistantType.GROUP) {
+                        // Turn-taking strategy
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text("发言策略", style = MaterialTheme.typography.labelLarge)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(
+                                    selected = assistant.turnTakingStrategy == TurnTakingStrategy.MANUAL,
+                                    onClick = { update(assistant.copy(turnTakingStrategy = TurnTakingStrategy.MANUAL)) },
+                                    label = { Text("手动") },
+                                    shape = RoundedCornerShape(50),
+                                )
+                                FilterChip(
+                                    selected = assistant.turnTakingStrategy == TurnTakingStrategy.AUTO_ROUND_ROBIN,
+                                    onClick = { update(assistant.copy(turnTakingStrategy = TurnTakingStrategy.AUTO_ROUND_ROBIN)) },
+                                    label = { Text("轮询") },
+                                    shape = RoundedCornerShape(50),
+                                )
+                            }
+                        }
+                        // Member list
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("成员 (${assistant.groupMembers.size})", modifier = Modifier.weight(1f))
+                                TextButton(onClick = { showMemberPicker = true }) {
+                                    Icon(HugeIcons.Add01, null, Modifier.size(16.dp))
+                                    Text(" 添加")
+                                }
+                            }
+                            assistant.groupMembers.forEach { member ->
+                                val src = settings.assistants.find { it.id == member.assistantId }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(member.displayName.ifBlank { src?.name ?: "未知" }, modifier = Modifier.weight(1f))
+                                    IconButton(onClick = {
+                                        update(assistant.copy(groupMembers = assistant.groupMembers.filter { it.id != member.id }))
+                                    }) { Icon(HugeIcons.Delete01, null, Modifier.size(16.dp)) }
+                                }
+                            }
+                        }
+                    }
+
+                    if (assistant.assistantType == AssistantType.SOLO) {
+                        AssistantImporter(
+                            onUpdate = {
+                                update(it)
+                                state.confirm()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -382,6 +493,45 @@ private fun AssistantCreationSheet(
                             state.confirm()
                         }) {
                         Text(stringResource(R.string.assistant_page_save))
+                    }
+                }
+            }
+        }
+
+        // 成员选择 BottomSheet
+        if (showMemberPicker) {
+            ModalBottomSheet(onDismissRequest = { showMemberPicker = false }) {
+                Column(modifier = Modifier.padding(16.dp).padding(bottom = 32.dp)) {
+                    Text("选择成员", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (soloAssistants.isEmpty()) {
+                        Text("没有可用的单人助手，请先创建至少一个助手。",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        LazyColumn(modifier = Modifier.height(400.dp)) {
+                            items(soloAssistants, key = { it.id }) { candidate ->
+                                val alreadyAdded = assistant.groupMembers.any { it.assistantId == candidate.id }
+                                val candidateName = candidate.name.ifBlank { "默认助手" }
+                                ListItem(
+                                    headlineContent = { Text(candidateName) },
+                                    supportingContent = { if (alreadyAdded) Text("已添加") },
+                                    modifier = Modifier.clickable {
+                                        if (!alreadyAdded) {
+                                            update(assistant.copy(
+                                                groupMembers = assistant.groupMembers + GroupMember(
+                                                    id = Uuid.random(),
+                                                    assistantId = candidate.id,
+                                                    displayName = candidateName,
+                                                    avatar = candidate.avatar,
+                                                )
+                                            ))
+                                        }
+                                        showMemberPicker = false
+                                    },
+                                )
+                                HorizontalDivider()
+                            }
+                        }
                     }
                 }
             }

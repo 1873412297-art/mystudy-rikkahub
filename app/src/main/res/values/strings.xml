@@ -415,9 +415,9 @@
   <string name="language_french">🇫🇷 Français</string>
   <string name="language_german">🇩🇪 Deutsch</string>
   <string name="language_italian">🇮🇹 Italiano</string>
-  <string name="language_japanese">🇯🇵 日本語</string>
-  <string name="language_korean">🇰🇷 한국어</string>
-  <string name="language_simplified_chinese">🇨🇳 简体中文</string>
+  <string name="language_japanese">🇯🇵 日本�</string>
+  <string name="language_korean">🇰🇷 한국�</string>
+  <string name="language_simplified_chinese">🇨🇳 简体中�</string>
   <string name="language_spanish">🇪🇸 Español</string>
   <string name="language_traditional_chinese">🇨🇳 繁體中文</string>
   <string name="mcp_picker_syncing">Syncing MCP servers...</string>
@@ -691,7 +691,7 @@
   <string name="setting_display_page_enable_latex_rendering_title">Enable LaTeX Rendering</string>
   <string name="setting_display_page_enable_message_generation_haptic_effect_desc">Enable haptic feedback when messages are being generated</string>
   <string name="setting_display_page_enable_message_generation_haptic_effect_title">Message Generation Haptic Effect</string>
-  <string name="setting_display_page_font_size_preview">At four in the morning, I saw the begonia flowers still awake. I am often like this — lying awake alone in the quiet night, thinking: if someone is thinking of me at this moment, that would be wonderful.</string>
+  <string name="setting_display_page_font_size_preview">At four in the morning, I saw the begonia flowers still awake. I am often like this �?lying awake alone in the quiet night, thinking: if someone is thinking of me at this moment, that would be wonderful.</string>
   <string name="setting_display_page_font_size_title">Chat Font Size</string>
   <string name="setting_display_page_live_update_notification">Live Update Notification</string>
   <string name="setting_display_page_live_update_notification_desc">Show real-time notification updates during message generation (Android 15+)</string>
@@ -863,7 +863,7 @@
   <string name="setting_page_search_service">Search Service</string>
   <string name="setting_page_search_service_desc">Set up search service</string>
   <string name="setting_page_search_test">Test Search</string>
-  <string name="setting_page_search_test_query_hint">Enter test query…</string>
+  <string name="setting_page_search_test_query_hint">Enter test query�</string>
   <string name="setting_page_search_test_run">Run Test</string>
   <string name="setting_page_search_title">Search Service</string>
   <string name="setting_page_share">Share</string>
@@ -1203,7 +1203,7 @@
   <string name="workspace_terminal_title">Terminal</string>
   <string name="workspace_terminal_title_with_name">%s · Terminal</string>
   <string name="workspace_terminal_not_installed">Please install Rootfs first</string>
-  <string name="workspace_terminal_loading">Loading workspace…</string>
+  <string name="workspace_terminal_loading">Loading workspace�</string>
   <string name="workspace_terminal_exited">Terminal exited</string>
   <string name="extensions_page_workspace">Workspace</string>
   <string name="extensions_page_workspace_desc">Manage local working directories accessible by Agent</string>
@@ -1248,6 +1248,36 @@
   <string name="tool_ui_replay">Replay</string>
   <string name="tool_ui_delete_memory">Delete memory</string>
   <string name="tool_ui_file">file</string>
+  <string name="assistant_page_enhancement_prompt">Enhancement Prompt</string>
+  <string name="assistant_page_enhancement_prompt_desc">Appended to the last user message before sending to the AI; not shown in chat.</string>
+  <string name="setting_display_page_auto_show_greeting_picker_title">Auto pick greeting on new chat</string>
+  <string name="setting_display_page_auto_show_greeting_picker_desc">When the assistant has multiple greetings, automatically open the picker. Off lets you pick from the character-card view.</string>
+  <string name="assistant_importer_imported_lorebook">Imported character book with %d entries</string>
+  <string name="assistant_importer_imported_regexes">Imported %d regex scripts</string>
+  <string name="render_html">Render HTML</string>
+  <string name="tavern_card_viewer_title">Character Card</string>
+  <string name="tavern_card_load_error">Failed to load character card</string>
+  <string name="tavern_card_section_overview">Overview</string>
+  <string name="tavern_card_section_details">Details</string>
+  <string name="tavern_card_section_examples">Examples</string>
+  <string name="tavern_card_creator_notes">Creator Notes</string>
+  <string name="tavern_card_description">Description</string>
+  <string name="tavern_card_personality">Personality</string>
+  <string name="tavern_card_scenario">Scenario</string>
+  <string name="tavern_card_system_prompt">System Prompt</string>
+  <string name="tavern_card_post_history">Post-history Instructions</string>
+  <string name="tavern_card_first_message">First Message</string>
+  <string name="tavern_card_alternate_greeting">Alternate Greeting</string>
+  <string name="tavern_card_example_messages">Example Messages</string>
+  <string name="tavern_card_character_book">Character Book</string>
+  <string name="tavern_card_view_card">View Character Card</string>
+  <string name="tavern_card_import_card">Import Character Card</string>
+  <string name="tavern_card_view_full">View Full Card</string>
+  <string name="tavern_card_no_data">No character card data available. Please re-import the card.</string>
+  <string name="tavern_card_export_title">Export Character Card</string>
+  <string name="tavern_card_export_desc">Export as SillyTavern V2 JSON</string>
+  <string name="tavern_card_export_success">Character card exported successfully</string>
+  <string name="tavern_card_export_failed">Failed to export character card</string>
   <string name="workspace_page_name_duplicate">Name already exists</string>
   <string name="setting_mcp_page_name_invalid">Name can only contain English letters and numbers</string>
   <string name="log_page_record_requests">Record requests</string>
@@ -1276,4 +1306,3 @@
   <string name="chat_page_delete_folder_confirm">Delete folder "%1$s"? Conversations inside will not be deleted, only removed from the folder.</string>
   <string name="chat_page_delete_folder_generating">Some conversations in this folder are still generating. Please stop them before deleting.</string>
 </resources>
-

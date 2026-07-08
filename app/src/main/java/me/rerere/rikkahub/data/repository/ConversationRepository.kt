@@ -362,6 +362,10 @@ class ConversationRepository(
             lorebookIds = JsonInstant.encodeToString(conversation.lorebookIds),
             workspaceCwd = conversation.workspaceCwd ?: "",
             folderId = conversation.folderId?.toString() ?: "",
+            statusVariables = JsonInstant.encodeToString(conversation.statusVariables),
+            activeGroupMemberId = conversation.activeGroupMemberId?.toString() ?: "",
+            groupMemberQueue = JsonInstant.encodeToString(conversation.groupMemberQueue),
+            groupMemberQueueIndex = conversation.groupMemberQueueIndex,
         )
     }
 
@@ -383,6 +387,14 @@ class ConversationRepository(
             lorebookIds = JsonInstant.decodeFromString(conversationEntity.lorebookIds),
             workspaceCwd = conversationEntity.workspaceCwd.ifEmpty { null },
             folderId = conversationEntity.folderId.ifEmpty { null }?.let { Uuid.parse(it) },
+            statusVariables = runCatching {
+                JsonInstant.decodeFromString<kotlinx.serialization.json.JsonObject>(conversationEntity.statusVariables)
+            }.getOrDefault(kotlinx.serialization.json.JsonObject(emptyMap())),
+            activeGroupMemberId = conversationEntity.activeGroupMemberId.ifEmpty { null }?.let { Uuid.parse(it) },
+            groupMemberQueue = runCatching {
+                JsonInstant.decodeFromString<List<Uuid>>(conversationEntity.groupMemberQueue)
+            }.getOrDefault(emptyList()),
+            groupMemberQueueIndex = conversationEntity.groupMemberQueueIndex,
         )
     }
 

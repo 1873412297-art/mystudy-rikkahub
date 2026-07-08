@@ -13,11 +13,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.analytics.FirebaseAnalytics
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessage
@@ -37,6 +41,8 @@ import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FavoriteRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.service.group.sanitizeManualSelection
+import me.rerere.rikkahub.service.group.toggleManualSelection
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.utils.UiState
@@ -59,6 +65,7 @@ class ChatVM(
 ) : ViewModel() {
     private val _conversationId: Uuid = Uuid.parse(id)
     val conversation: StateFlow<Conversation> = chatService.getConversationFlow(_conversationId)
+    private val initializationJob: Job
     var chatListInitialized by mutableStateOf(false) // 聊天列表是否已经滚动到底部
 
     // 聊天输入状态 - 保存在 ViewModel 中避免 TransactionTooLargeException
@@ -83,7 +90,7 @@ class ChatVM(
         chatService.addConversationReference(_conversationId)
 
         // 初始化对话
-        viewModelScope.launch {
+        initializationJob = viewModelScope.launch {
             chatService.initializeConversation(_conversationId)
         }
 
@@ -117,6 +124,67 @@ class ChatVM(
     fun dismissError(id: Uuid) = chatService.dismissError(id)
 
     fun clearAllErrors() = chatService.clearAllErrors()
+
+    // ── 群组手动模式：选中成员状态（会话级，由 ChatPage 读取并驱动 UI）──
+    private val _selectedGroupMemberIds = MutableStateFlow<List<Uuid>>(emptyList())
+    val selectedGroupMemberIds: StateFlow<List<Uuid>> = _selectedGroupMemberIds.asStateFlow()
+
+    fun toggleGroupMember(memberId: Uuid) {
+        _selectedGroupMemberIds.update { ids -> toggleManualSelection(ids, memberId) }
+    }
+
+    fun setGroupMemberSelection(ids: List<Uuid>) {
+        _selectedGroupMemberIds.value = ids.distinct()
+    }
+
+    fun sanitizeGroupMemberSelection(availableIds: List<Uuid>) {
+        _selectedGroupMemberIds.update { ids ->
+            sanitizeManualSelection(ids, availableIds)
+        }
+    }
+
+    /** 触发群组指定成员回复 —— 仅手动模式下有效。 */
+    fun triggerMember(memberId: Uuid) {
+        viewModelScope.launch {
+            chatService.triggerMemberReply(_conversationId, memberId)
+        }
+    }
+
+    /** 更新单个 Assistant（群组合保存/改名等用，不改变其它 assistant）。 */
+    fun updateAssistant(updated: Assistant) {
+        viewModelScope.launch {
+            val cur = settings.value
+            settingsStore.update(
+                cur.copy(assistants = cur.assistants.map { if (it.id == updated.id) updated else it })
+            )
+        }
+    }
+
+    /**
+     * 群组手动模式批量发送：先写入用户消息（非空时），再依次触发每个指定成员回复。
+     * 不传 memberIds 时自动使用当前 VM 内的 _selectedGroupMemberIds。
+     */
+    fun handleGroupSend(memberIds: List<Uuid> = _selectedGroupMemberIds.value, content: List<UIMessagePart>) {
+        viewModelScope.launch {
+            if (memberIds.isEmpty()) {
+                /*
+                chatService.addError(
+                    error = IllegalStateException("请先选择至少一个群组成员"),
+                    conversationId = _conversationId,
+                    title = "未选择群组成员",
+                )
+                */
+                chatService.addError(
+                    error = IllegalStateException("Please select at least one group member"),
+                    conversationId = _conversationId,
+                    title = "No group member selected",
+                )
+                return@launch
+            }
+            ensureActive()
+            chatService.sendGroupMessage(_conversationId, content, memberIds)
+        }
+    }
 
     // 生成完成
     val generationDoneFlow: SharedFlow<Uuid> = chatService.generationDoneFlow
@@ -177,6 +245,14 @@ class ChatVM(
         analytics.logEvent("ai_send_message", null)
 
         chatService.sendMessage(_conversationId, content, answer)
+    }
+
+    fun applyInitialGreeting(greeting: String) {
+        if (greeting.isBlank()) return
+        viewModelScope.launch {
+            initializationJob.join()
+            chatService.applyInitialGreeting(_conversationId, greeting)
+        }
     }
 
     fun handleMessageEdit(parts: List<UIMessagePart>, messageId: Uuid) {

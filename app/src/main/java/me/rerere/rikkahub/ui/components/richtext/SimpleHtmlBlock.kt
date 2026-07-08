@@ -60,7 +60,11 @@ fun SimpleHtmlBlock(
                 node = node,
                 onLinkClick = { url ->
                     try {
-                        uriHandler.openUri(url)
+                        // 协议白名单：只允许 http/https/mailto/tel，其它（如 javascript:/intent:/file:）一律忽略
+                        val safeSchemes = listOf("http://", "https://", "mailto:", "tel:")
+                        if (safeSchemes.any { url.startsWith(it, ignoreCase = true) }) {
+                            uriHandler.openUri(url)
+                        }
                     } catch (e: Exception) {
                         // Handle link click error silently
                     }

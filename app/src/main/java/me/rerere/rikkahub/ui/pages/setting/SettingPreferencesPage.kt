@@ -16,6 +16,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Code
 import me.rerere.hugeicons.stroke.Notification01
 import me.rerere.hugeicons.stroke.PaintBoard
 import me.rerere.hugeicons.stroke.Settings03
@@ -75,6 +76,12 @@ fun SettingPreferencesPage() {
                         leadingContent = { Icon(HugeIcons.Settings03, null) },
                         headlineContent = { Text(stringResource(R.string.setting_page_preferences_general)) },
                         supportingContent = { Text(stringResource(R.string.setting_page_preferences_general_desc)) },
+                    )
+                    item(
+                        onClick = { navController.navigate(Screen.SettingPreferencesRuntime) },
+                        leadingContent = { Icon(HugeIcons.Code, null) },
+                        headlineContent = { Text("运行时权限") },
+                        supportingContent = { Text("控制兼容脚本可访问的能力和写入范围") },
                     )
                     item(
                         onClick = { navController.navigate(Screen.SettingPreferencesUI) },

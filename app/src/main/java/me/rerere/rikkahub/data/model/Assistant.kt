@@ -48,6 +48,17 @@ data class Assistant(
     val enableTimeReminder: Boolean = false,            // 时间间隔提醒注入
     val allowConversationSystemPrompt: Boolean = false, // 允许对话单独重写 system prompt
     val allowConversationPromptInjection: Boolean = false, // 允许对话单独绑定提示词注入
+    val enableEnhancementPrompt: Boolean = false, // 在最后一条用户消息后追加增强提示词
+    val enhancementPrompt: String = "",           // 增强提示词正文
+    val tavernCardJson: String? = null,           // SillyTavern 角色卡原始 JSON（V2/V3 格式），用于查看/导出
+    val statusRenderJs: String? = null,           // 状态渲染 JS 脚本（renderStatus 函数）
+    // ── 群组助手 ──
+    val assistantType: AssistantType = AssistantType.SOLO,
+    val groupMembers: List<GroupMember> = emptyList(),
+    val turnTakingStrategy: TurnTakingStrategy = TurnTakingStrategy.MANUAL,
+    val groupReplyOptions: GroupReplyOptions = GroupReplyOptions(),
+    val groupContextOptions: GroupContextOptions = GroupContextOptions(),
+    val groupMemberCombos: List<GroupMemberCombo> = emptyList(),
 )
 
 @Serializable
@@ -267,3 +278,78 @@ fun getTriggeredInjections(
         .filter { it.isTriggered(context) }
         .sortedByDescending { it.priority }
 }
+
+// region 群组助手相关类型
+
+@Serializable
+enum class AssistantType {
+    @SerialName("solo") SOLO,
+    @SerialName("group") GROUP,
+}
+
+@Serializable
+enum class ContextScope {
+    @SerialName("all") ALL,
+    @SerialName("self") SELF,
+    @SerialName("member_list") MEMBER_LIST,
+    @SerialName("directed") DIRECTED,
+}
+
+@Serializable
+data class ContextFilter(
+    val scope: ContextScope = ContextScope.ALL,
+    val visibleMemberIds: List<Uuid> = emptyList(),
+    val excludedMemberIds: List<Uuid> = emptyList(),
+    val mentionEnabled: Boolean = false,
+    val mentionKeywords: List<String> = emptyList(),
+    val maxMessages: Int = 0,  // 0 = 不限制
+)
+
+@Serializable
+data class GroupMember(
+    val id: Uuid = Uuid.random(),
+    val assistantId: Uuid,
+    val displayName: String = "",
+    val avatar: Avatar = Avatar.Dummy,
+    val systemPromptOverride: String? = null,
+    val chatModelIdOverride: Uuid? = null,
+    val enabled: Boolean = true,
+    val contextFilter: ContextFilter = ContextFilter(),
+)
+
+@Serializable
+enum class TurnTakingStrategy {
+    @SerialName("manual") MANUAL,
+    @SerialName("auto_round_robin") AUTO_ROUND_ROBIN,
+    @SerialName("auto_moderator") AUTO_MODERATOR,
+}
+
+/**
+ * 群组手动模式下的「常用成员组合」—— 用户保存一组成员（含顺序），下次直接一键应用。
+ * 顺序就是发言顺序，所以用 List 而非 Set。
+ */
+@Serializable
+data class GroupMemberCombo(
+    val id: Uuid = Uuid.random(),
+    val name: String = "",
+    val memberIds: List<Uuid> = emptyList(),
+)
+
+@Serializable
+data class GroupReplyOptions(
+    val allowConsecutiveSameSpeaker: Boolean = false,
+    val maxAutoRepliesPerUserTurn: Int = 1,
+)
+
+@Serializable
+data class GroupContextOptions(
+    val enableLayeredContext: Boolean = true,
+    val enablePrivateViewpoint: Boolean = true,
+    val enableRelationshipNotes: Boolean = true,
+    val enableSceneState: Boolean = true,
+    val enableMotivationScoring: Boolean = true,
+    val maxPrivateNoteChars: Int = 800,
+    val maxSceneSummaryChars: Int = 800,
+)
+
+// endregion

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://esm.sh; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://esm.sh; frame-src 'self' data: blob:; child-src 'self' data: blob:;">
+    <title>HTML Preview</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+            line-height: 1.6;
+            color: {{ON_BACKGROUND_COLOR}};
+            max-width: 100%;
+            margin: 0;
+            padding: 16px;
+            background: {{BACKGROUND_COLOR}};
+        }
+
+        /* Responsive design */
+        @media (min-width: 768px) {
+            body {
+                max-width: 900px;
+                margin: 0 auto;
+                padding: 24px;
+            }
+        }
+
+        .html-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            background: {{PRIMARY_COLOR}};
+            color: {{BACKGROUND_COLOR}};
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .html-iframe-container {
+            width: 100%;
+            border: 1px solid {{OUTLINE_VARIANT_COLOR}};
+            border-radius: 12px;
+            overflow: hidden;
+            background: {{SURFACE_COLOR}};
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .html-iframe-container iframe {
+            width: 100%;
+            min-height: 300px;
+            border: none;
+            display: block;
+        }
+
+        .fallback-content {
+            padding: 16px;
+        }
+
+        .fallback-content pre {
+            background: {{SURFACE_VARIANT_COLOR}};
+            border-radius: 8px;
+            padding: 16px;
+            overflow-x: auto;
+            font-family: 'SF Mono', Monaco, Inconsolata, 'Roboto Mono', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .fallback-content code {
+            font-family: 'SF Mono', Monaco, Inconsolata, 'Roboto Mono', monospace;
+            background: {{SURFACE_VARIANT_COLOR}};
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="html-badge">&#60;&#47;&#62; HTML Preview</div>
+    <div id="content">
+        <div class="html-iframe-container">
+            <iframe
+                id="html-frame"
+                sandbox="allow-scripts"
+                title="HTML Preview"
+            ></iframe>
+        </div>
+    </div>
+
+    <script type="module">
+        import { Base64 } from 'https://esm.sh/js-base64@3.7.5';
+
+        const htmlBase64 = `{{HTML_BASE64}}`;
+        let htmlContent = Base64.decode(htmlBase64);
+
+        const bgColor = '{{BACKGROUND_COLOR}}';
+        const textColor = '{{ON_BACKGROUND_COLOR}}';
+        const primaryColor = '{{PRIMARY_COLOR}}';
+        const surfaceColor = '{{SURFACE_COLOR}}';
+        const surfaceVariantColor = '{{SURFACE_VARIANT_COLOR}}';
+        const outlineColor = '{{OUTLINE_VARIANT_COLOR}}';
+
+        function buildStyledHtml(originalHtml) {
+            // Extract body content if full HTML document
+            let bodyContent = originalHtml;
+            const bodyMatch = originalHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+            if (bodyMatch) {
+                bodyContent = bodyMatch[1].trim();
+            }
+
+            // 高度上报脚本：iframe 与父页跨 origin（sandbox 不含 allow-same-origin），
+            // 用 postMessage 而非直接读取 contentDocument。
+            const heightReporter = `<script>
+(function(){
+  function postHeight(){
+    try { parent.postMessage({type:'rikkahub:height', h: document.body.scrollHeight}, '*'); } catch(_){}
+  }
+  window.addEventListener('load', postHeight);
+  if (window.ResizeObserver) {
+    new ResizeObserver(postHeight).observe(document.body);
+  } else {
+    setInterval(postHeight, 1000);
+  }
+})();
+<\/script>`;
+
+            return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' blob: data:;">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+            line-height: 1.6;
+            color: ${textColor};
+            margin: 0;
+            padding: 16px;
+            background: ${bgColor};
+            min-height: 100vh;
+        }
+        a { color: ${primaryColor}; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        img { max-width: 100%; height: auto; border-radius: 6px; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
+        td, th { border: 1px solid ${outlineColor}; padding: 8px 12px; }
+        th { background: ${surfaceVariantColor}; font-weight: 600; }
+        tr:nth-child(2n) { background: ${surfaceVariantColor}22; }
+        pre { overflow-x: auto; padding: 16px; background: ${surfaceVariantColor}; border-radius: 8px; margin-bottom: 16px; }
+        code { font-family: 'SF Mono', Monaco, Inconsolata, 'Roboto Mono', monospace; background: ${surfaceVariantColor}; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+        pre code { background: transparent; padding: 0; }
+        blockquote { border-left: 4px solid ${primaryColor}; margin: 0 0 16px 0; padding: 0 16px; color: ${textColor}cc; }
+        h1, h2, h3, h4, h5, h6 { margin-top: 24px; margin-bottom: 12px; font-weight: 600; line-height: 1.3; }
+        h1 { font-size: 2em; border-bottom: 1px solid ${outlineColor}; padding-bottom: 8px; }
+        h2 { font-size: 1.6em; border-bottom: 1px solid ${outlineColor}; padding-bottom: 6px; }
+        h3 { font-size: 1.4em; }
+        h4 { font-size: 1.2em; }
+        ul, ol { margin-bottom: 16px; padding-left: 2em; }
+        li { margin-bottom: 4px; }
+        hr { border: 0; height: 1px; background: ${outlineColor}; margin: 24px 0; }
+        input, textarea, select, button {
+            font-family: inherit;
+            padding: 8px 12px;
+            border: 1px solid ${outlineColor};
+            border-radius: 6px;
+            background: ${surfaceColor};
+            color: ${textColor};
+        }
+        button {
+            background: ${primaryColor};
+            color: ${bgColor};
+            cursor: pointer;
+            font-weight: 500;
+        }
+        button:hover { opacity: 0.9; }
+        .card {
+            background: ${surfaceColor};
+            border: 1px solid ${outlineColor};
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .alert {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+        .alert-success { background: #4caf5022; border-left: 4px solid #4caf50; }
+        .alert-warning { background: #ff980022; border-left: 4px solid #ff9800; }
+        .alert-error { background: #f4433622; border-left: 4px solid #f44336; }
+        .alert-info { background: ${primaryColor}22; border-left: 4px solid ${primaryColor}; }
+    </style>
+</head>
+<body>
+${bodyContent}
+${heightReporter}
+</body>
+</html>`;
+        }
+
+        const styledHtml = buildStyledHtml(htmlContent);
+        const blob = new Blob([styledHtml], { type: 'text/html' });
+        const blobUrl = URL.createObjectURL(blob);
+
+        const iframe = document.getElementById('html-frame');
+        iframe.src = blobUrl;
+
+        // 跨源 sandbox iframe 通过 postMessage 上报高度（防止 sandbox 逃逸）
+        window.addEventListener('message', function(ev) {
+            if (ev.source !== iframe.contentWindow) return;
+            const data = ev.data;
+            if (data && data.type === 'rikkahub:height' && typeof data.h === 'number') {
+                iframe.style.height = Math.max(data.h + 32, 300) + 'px';
+            }
+        });
+
+        iframe.onload = function() {
+            // 默认高度兜底（如果 iframe 内未上报高度）
+            if (!iframe.style.height) iframe.style.height = '600px';
+        };
+
+        iframe.onerror = function() {
+            document.getElementById('content').innerHTML = `
+                <div class="fallback-content">
+                    <p>Unable to render HTML preview. Displaying raw content:</p>
+                    <pre><code>${htmlContent.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></pre>
+                </div>
+            `;
+        };
+    </script>
+    <script nomodule>
+        alert('您的系统WebView不支持 ES Modules，请升级WebView或者系统!');
+    </script>
+</body>
+</html>

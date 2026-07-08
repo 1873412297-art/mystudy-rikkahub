@@ -97,6 +97,18 @@ fun SettingPreferencesGeneralPage(vm: SettingVM = koinViewModel()) {
                         },
                     )
                     item(
+                        headlineContent = { Text(stringResource(R.string.setting_display_page_auto_show_greeting_picker_title)) },
+                        supportingContent = { Text(stringResource(R.string.setting_display_page_auto_show_greeting_picker_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = displaySetting.autoShowGreetingPicker,
+                                onCheckedChange = {
+                                    updateDisplaySetting(displaySetting.copy(autoShowGreetingPicker = it))
+                                }
+                            )
+                        },
+                    )
+                    item(
                         headlineContent = { Text(stringResource(R.string.setting_display_page_show_message_jumper_title)) },
                         supportingContent = { Text(stringResource(R.string.setting_display_page_show_message_jumper_desc)) },
                         trailingContent = {
