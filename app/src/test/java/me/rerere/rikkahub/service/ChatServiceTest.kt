@@ -11,8 +11,10 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.datastore.DisplaySetting
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.Conversation
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import kotlin.uuid.Uuid
 
 class ChatServiceTest {
     @Test
@@ -55,5 +57,32 @@ class ChatServiceTest {
         val text = rendered.single().parts.single() as UIMessagePart.Text
         assertEquals("<main>Bob meets Alice on Test Model</main>", text.text)
         assertEquals(UIMessagePart.RenderMode.HTML, text.renderMode)
+    }
+
+    @Test
+    fun `generation start keeps group speaker state from resolved conversation`() {
+        val assistantId = Uuid.parse("00000000-0000-0000-0000-000000000010")
+        val memberA = Uuid.parse("00000000-0000-0000-0000-000000000001")
+        val memberB = Uuid.parse("00000000-0000-0000-0000-000000000002")
+        val initial = Conversation(
+            assistantId = assistantId,
+            messageNodes = emptyList(),
+            chatSuggestions = listOf("stale suggestion"),
+        )
+        val resolved = initial.copy(
+            activeGroupMemberId = memberA,
+            groupMemberQueue = listOf(memberA, memberB),
+            groupMemberQueueIndex = 1,
+        )
+
+        val result = conversationAtGenerationStart(
+            initialConversation = initial,
+            resolvedConversation = resolved,
+        )
+
+        assertEquals(emptyList<String>(), result.chatSuggestions)
+        assertEquals(memberA, result.activeGroupMemberId)
+        assertEquals(listOf(memberA, memberB), result.groupMemberQueue)
+        assertEquals(1, result.groupMemberQueueIndex)
     }
 }

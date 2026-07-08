@@ -25,8 +25,13 @@ class DynamicGroupContextResolver {
         runtimeState: GroupRuntimeState,
     ): DynamicGroupContextResult {
         val filteredMessages = messages.applyGroupContextFilter(groupAssistant, effectiveMemberId)
-        val focus = extractor.extractFocus(groupAssistant, filteredMessages, runtimeState)
-        val scores = scoreMembers(groupAssistant, filteredMessages, runtimeState, focus)
+        val contextMessages = filteredMessages.withAddressedUserPrompt(
+            originalMessages = messages,
+            effectiveMemberId = effectiveMemberId,
+            runtimeState = runtimeState,
+        )
+        val focus = extractor.extractFocus(groupAssistant, contextMessages, runtimeState)
+        val scores = scoreMembers(groupAssistant, contextMessages, runtimeState, focus)
         val speakerScore = scores[effectiveMemberId] ?: GroupContextScoreBreakdown()
         val maxScore = scores.values.maxOfOrNull { it.total } ?: 0
         val layer = classifyLayer(
@@ -36,7 +41,7 @@ class DynamicGroupContextResolver {
             maxScore = maxScore,
             focus = focus,
         )
-        val visibleMessages = buildVisibleMessages(filteredMessages, effectiveMemberId, layer, focus)
+        val visibleMessages = buildVisibleMessages(contextMessages, effectiveMemberId, layer, focus)
         val adjustedRuntimeState = adjustRuntimeState(runtimeState, effectiveMemberId, layer, focus)
         val debugState = GroupResolverDebugState(
             speakerId = effectiveMemberId,
@@ -97,7 +102,7 @@ class DynamicGroupContextResolver {
                 if (member.id == lastSpeakerId) {
                     recentInteraction += 2
                 }
-                if (messages.takeLast(2).any { it.memberId == member.id }) {
+                if (messages.takeLast(4).any { it.memberId == member.id }) {
                     recentInteraction += 1
                 }
 
@@ -160,13 +165,24 @@ class DynamicGroupContextResolver {
             GroupContextLayer.STRONGLY_RELATED -> {
                 val recent = messages.takeRecentRounds(2)
                 val ownLatest = messages.lastOrNull { it.memberId == effectiveMemberId }
-                (recent + listOfNotNull(ownLatest)).distinctBy { it.id }
+                messages.keepInOriginalOrder(
+                    recent +
+                        messages.takeRelationshipDramaAnchors(effectiveMemberId, focus) +
+                        listOfNotNull(ownLatest)
+                )
             }
 
             GroupContextLayer.WEAKLY_RELATED -> {
                 val lastUser = messages.lastOrNull { it.role == MessageRole.USER }
                 val ownLatest = messages.lastOrNull { it.memberId == effectiveMemberId }
-                listOfNotNull(lastUser, ownLatest).distinctBy { it.id }
+                val latestPublicReply = messages.lastOrNull {
+                    it.role == MessageRole.ASSISTANT && it.memberId != null && it.memberId != effectiveMemberId
+                }
+                messages.keepInOriginalOrder(
+                    listOfNotNull(ownLatest, latestPublicReply) +
+                        messages.takeRelationshipDramaAnchors(effectiveMemberId, focus) +
+                        listOfNotNull(lastUser)
+                )
             }
 
             GroupContextLayer.ISOLATED -> {
@@ -202,6 +218,55 @@ class DynamicGroupContextResolver {
         }
     }
 }
+
+private fun List<UIMessage>.withAddressedUserPrompt(
+    originalMessages: List<UIMessage>,
+    effectiveMemberId: Uuid,
+    runtimeState: GroupRuntimeState,
+): List<UIMessage> {
+    if (runtimeState.activeAddressedMemberId != effectiveMemberId) return this
+    val latestUser = originalMessages.lastOrNull { it.role == MessageRole.USER } ?: return this
+    if (any { it.id == latestUser.id }) return this
+    return (this + latestUser).keepInOriginalOrder(originalMessages)
+}
+
+private fun List<UIMessage>.keepInOriginalOrder(selectedMessages: List<UIMessage>): List<UIMessage> {
+    val selectedIds = selectedMessages.map { it.id }.toSet()
+    return filter { it.id in selectedIds }.distinctBy { it.id }
+}
+
+private fun List<UIMessage>.takeRelationshipDramaAnchors(
+    effectiveMemberId: Uuid,
+    focus: GroupEventFocus,
+): List<UIMessage> {
+    if (!focus.hasRelationshipDramaSignal()) return emptyList()
+    val focusCharacterIds = focus.characterIds.toSet() - effectiveMemberId
+    if (focusCharacterIds.isEmpty()) return emptyList()
+    return focusCharacterIds.mapNotNull { memberId ->
+        lastOrNull { message ->
+            message.role == MessageRole.ASSISTANT && message.memberId == memberId
+        }
+    }
+}
+
+private fun GroupEventFocus.hasRelationshipDramaSignal(): Boolean {
+    val text = (secrets + emotions + conflicts + events)
+        .joinToString(" ")
+        .lowercase()
+    return RELATIONSHIP_DRAMA_KEYWORDS.any { keyword -> keyword in text }
+}
+
+private val RELATIONSHIP_DRAMA_KEYWORDS = listOf(
+    "affair",
+    "betrayal",
+    "cheat",
+    "cheating",
+    "jealous",
+    "jealousy",
+    "ntr",
+    "rival",
+    "secret romance",
+)
 
 private fun List<UIMessage>.takeRecentRounds(userTurns: Int): List<UIMessage> {
     if (isEmpty()) return emptyList()

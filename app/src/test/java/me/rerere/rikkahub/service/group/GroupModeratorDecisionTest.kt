@@ -45,4 +45,19 @@ class GroupModeratorDecisionTest {
 
         assertEquals(memberId, result)
     }
+
+    @Test
+    fun `falls back locally when moderator response is invalid`() {
+        val fallback = Uuid.random()
+        val member = GroupMember(assistantId = Uuid.random(), displayName = "甲")
+
+        val result = parseGroupModeratorDecision(
+            responseText = "not-a-member",
+            enabledMembers = listOf(member),
+            localFallback = fallback,
+            allowStop = true,
+        )
+
+        assertEquals(fallback, result)
+    }
 }
