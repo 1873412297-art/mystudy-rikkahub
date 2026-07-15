@@ -2,6 +2,7 @@ package me.rerere.rikkahub.service.group
 
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -71,5 +72,31 @@ class GroupRuntimeStateTest {
             listOf("hidden guest"),
             decoded.eventState.activeFocus?.secrets,
         )
+    }
+
+    @Test
+    fun `runtime state round trips every director field`() {
+        val state = GroupRuntimeState(
+            director = GroupDirectorState(
+                modeOverride = TurnTakingStrategy.AUTO_MODERATOR,
+                playbackState = GroupPlaybackState.PAUSE_AFTER_CURRENT,
+                oneShotNextMemberId = memberA,
+                oneShotReturnToPaused = true,
+                oneRoundActive = true,
+                oneRoundRemainingMemberIds = listOf(memberA, memberB),
+                skipNextRequested = true,
+            )
+        )
+
+        val decoded = Json.decodeFromString<GroupRuntimeState>(Json.encodeToString(state))
+
+        assertEquals(state.director, decoded.director)
+    }
+
+    @Test
+    fun `legacy runtime json without director uses defaults`() {
+        val decoded = Json.decodeFromString<GroupRuntimeState>("{}")
+
+        assertEquals(GroupDirectorState(), decoded.director)
     }
 }
