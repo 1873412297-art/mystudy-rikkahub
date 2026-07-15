@@ -48,7 +48,7 @@
 - Consumes: `List<UIMessage>.applyGroupContextFilter(Assistant, Uuid?)`
 - Produces: the same interface with source order preserved and result size bounded by `ContextFilter.maxMessages`
 
-- [ ] **Step 1: Write failing order and upper-bound tests**
+- [x] **Step 1: Write failing order and upper-bound tests**
 
 Create `GroupMessageContextFilterTest.kt`:
 
@@ -123,7 +123,7 @@ class GroupMessageContextFilterTest {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -133,7 +133,7 @@ Run:
 
 Expected: both tests fail because the current implementation moves all user messages to the end and may exceed the configured limit.
 
-- [ ] **Step 3: Implement strict chronological limiting**
+- [x] **Step 3: Implement strict chronological limiting**
 
 Replace the current user/other recombination in `GroupMessageContextFilter.kt` with:
 
@@ -143,7 +143,7 @@ if (filter.maxMessages > 0 && result.size > filter.maxMessages) {
 }
 ```
 
-- [ ] **Step 4: Run focused and existing resolver tests**
+- [x] **Step 4: Run focused and existing resolver tests**
 
 Run:
 
@@ -153,7 +153,7 @@ Run:
 
 Expected: `BUILD SUCCESSFUL` with zero failed tests.
 
-- [ ] **Step 5: Commit the filter fix**
+- [x] **Step 5: Commit the filter fix**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/service/group/GroupMessageContextFilter.kt app/src/test/java/me/rerere/rikkahub/service/group/GroupMessageContextFilterTest.kt
@@ -173,7 +173,7 @@ git commit -m "fix: preserve group context message order"
 - Consumes: an unfiltered selected message range, group assistant, effective member ID, and `GroupRuntimeState`
 - Produces: `GroupContextPipelineResult(visibleMessages, dynamicResult)`
 
-- [ ] **Step 1: Write the failing full-pipeline regression test**
+- [x] **Step 1: Write the failing full-pipeline regression test**
 
 Create `GroupContextPipelineTest.kt`:
 
@@ -235,7 +235,7 @@ class GroupContextPipelineTest {
 }
 ```
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -245,7 +245,7 @@ Run:
 
 Expected: compilation fails because `resolveGroupContextMessages` and `GroupContextPipelineResult` do not exist.
 
-- [ ] **Step 3: Add the single-owner pipeline helper**
+- [x] **Step 3: Add the single-owner pipeline helper**
 
 Create `GroupContextPipeline.kt`:
 
@@ -289,7 +289,7 @@ internal fun resolveGroupContextMessages(
 }
 ```
 
-- [ ] **Step 4: Route `ChatService` through the helper**
+- [x] **Step 4: Route `ChatService` through the helper**
 
 Add this import and remove the aliased `applyDynamicGroupContextFilter` import:
 
@@ -319,7 +319,7 @@ val visibleMessages = groupContext.visibleMessages.applyEnhancementPrompt(assist
 
 Remove the now-unused aliased `applyDynamicGroupContextFilter` import from `ChatService.kt`.
 
-- [ ] **Step 5: Run the group context suite**
+- [x] **Step 5: Run the group context suite**
 
 Run:
 
@@ -329,7 +329,7 @@ Run:
 
 Expected: `BUILD SUCCESSFUL` with the addressed user prompt retained.
 
-- [ ] **Step 6: Commit the exactly-once pipeline**
+- [x] **Step 6: Commit the exactly-once pipeline**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/service/ChatService.kt app/src/main/java/me/rerere/rikkahub/service/group/GroupContextPipeline.kt app/src/test/java/me/rerere/rikkahub/service/group/GroupContextPipelineTest.kt
@@ -351,7 +351,7 @@ git commit -m "fix: apply group context filtering once"
 - Produces: `nextDifferentGroupMember(List<Uuid>, Uuid?): Uuid?`
 - Produces: `resolveGroupAutoReplyLimit(Int): Int`
 
-- [ ] **Step 1: Write failing scheduler tests**
+- [x] **Step 1: Write failing scheduler tests**
 
 Create `GroupTurnSchedulerTest.kt`:
 
@@ -429,7 +429,7 @@ class GroupTurnSchedulerTest {
 }
 ```
 
-- [ ] **Step 2: Run the scheduler test and verify RED**
+- [x] **Step 2: Run the scheduler test and verify RED**
 
 Run:
 
@@ -439,7 +439,7 @@ Run:
 
 Expected: compilation fails because the scheduler interfaces do not exist.
 
-- [ ] **Step 3: Implement the deterministic scheduler helper**
+- [x] **Step 3: Implement the deterministic scheduler helper**
 
 Create `GroupTurnScheduler.kt`:
 
@@ -494,7 +494,7 @@ internal fun nextDifferentGroupMember(
 internal fun resolveGroupAutoReplyLimit(configuredLimit: Int): Int = configuredLimit.coerceAtLeast(1)
 ```
 
-- [ ] **Step 4: Run the scheduler tests and verify GREEN**
+- [x] **Step 4: Run the scheduler tests and verify GREEN**
 
 Run:
 
@@ -504,7 +504,7 @@ Run:
 
 Expected: `BUILD SUCCESSFUL`.
 
-- [ ] **Step 5: Replace round-robin selection in `ChatService`**
+- [x] **Step 5: Replace round-robin selection in `ChatService`**
 
 Add these imports:
 
@@ -587,7 +587,7 @@ val queueFallback = nextRoundRobinSelection(
 val localFallback = localScores.firstOrNull()?.memberId ?: queueFallback
 ```
 
-- [ ] **Step 6: Make the automatic reply cap authoritative**
+- [x] **Step 6: Make the automatic reply cap authoritative**
 
 Replace the member-count-based cap block in `ChatService` with:
 
@@ -597,7 +597,7 @@ val maxReplies = resolveGroupAutoReplyLimit(
 )
 ```
 
-- [ ] **Step 7: Run scheduler, moderator, and service tests**
+- [x] **Step 7: Run scheduler, moderator, and service tests**
 
 Run:
 
@@ -607,7 +607,7 @@ Run:
 
 Expected: `BUILD SUCCESSFUL` with no duplicate first round-robin turn and no raised moderator cap.
 
-- [ ] **Step 8: Commit scheduler integration**
+- [x] **Step 8: Commit scheduler integration**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/service/ChatService.kt app/src/main/java/me/rerere/rikkahub/service/group/GroupTurnScheduler.kt app/src/test/java/me/rerere/rikkahub/service/group/GroupTurnSchedulerTest.kt
@@ -625,7 +625,7 @@ git commit -m "fix: normalize automatic group turns"
 - Consumes: all changes from Tasks 1-3
 - Produces: verified commits and a dated execution-result block
 
-- [ ] **Step 1: Run the complete JVM test suite and Debug build**
+- [x] **Step 1: Run the complete JVM test suite and Debug build**
 
 Run:
 
@@ -635,7 +635,7 @@ Run:
 
 Expected: `BUILD SUCCESSFUL`.
 
-- [ ] **Step 2: Run all Android instrumentation tests**
+- [x] **Step 2: Run all Android instrumentation tests**
 
 Confirm `emulator-5554` is online with `adb devices`, then run:
 
@@ -645,7 +645,7 @@ Confirm `emulator-5554` is online with `adb devices`, then run:
 
 Expected: all module tests finish with `BUILD SUCCESSFUL`.
 
-- [ ] **Step 3: Install and launch the current universal APK**
+- [x] **Step 3: Install and launch the current universal APK**
 
 Run:
 
@@ -662,7 +662,7 @@ adb -s emulator-5554 logcat -b crash -d
 
 Expected: a live process ID, `RouteActivity` focused, and an empty crash buffer.
 
-- [ ] **Step 4: Record the execution result**
+- [x] **Step 4: Record the execution result**
 
 Append a dated `2026-07-15 Execution Result` section to this plan containing:
 
@@ -676,7 +676,7 @@ Append a dated `2026-07-15 Execution Result` section to this plan containing:
 - APK smoke: exact APK path, focused activity, and crash-buffer result
 ```
 
-- [ ] **Step 5: Check the final diff and commit verification records**
+- [x] **Step 5: Check the final diff and commit verification records**
 
 Run:
 
@@ -689,3 +689,15 @@ git push
 ```
 
 Expected: clean status on `codex/port-private-to-2.4.1` after the push.
+
+## 2026-07-15 Execution Result
+
+- Context filtering: pass. `GroupContextPipelineTest` completed 1 test with 0 failures/errors; the exactly-once layered pipeline retained the addressed `DIRECTED` user prompt.
+- Message limiting: pass. `GroupMessageContextFilterTest` completed 2 tests with 0 failures/errors, covering chronological order and the strict `maxMessages` bound.
+- Round-robin queue: pass. `GroupTurnSchedulerTest` completed 14 tests with 0 failures/errors, including initialization, advancement, stale-member repair, cursor repair, and moderator selection consistency.
+- Auto-reply cap: pass. The scheduler suite verified that the configured value remains authoritative and that invalid non-positive values are floored to 1.
+- JVM tests and Debug build: `.\gradlew.bat test :app:assembleDebug --console=plain` exited 0 with `BUILD SUCCESSFUL in 19s` (`288 actionable tasks: 13 executed, 275 up-to-date`).
+- Instrumentation: `emulator-5554` was online as `sdk_gphone64_x86_64`, `sys.boot_completed=1`. `.\gradlew.bat connectedDebugAndroidTest --console=plain` exited 0 with all module tests finishing and `BUILD SUCCESSFUL in 1m 17s` (`550 actionable tasks: 20 executed, 530 up-to-date`); Gradle identified the device as `RikkaHub(AVD) - 15`.
+- APK smoke: installed `C:\Users\18734\Desktop\HTML\rikkahub-port-2.4.1\app\build\outputs\apk\debug\app-universal-debug.apk` with `Success`, then launched `me.rerere.rikkahub.debug/me.rerere.rikkahub.RouteActivity`. After 8 seconds, PID was `13661`; both `mCurrentFocus` and `mFocusedApp` named `RouteActivity`; `adb logcat -b crash -d` returned an empty buffer.
+- UI render evidence: the hierarchy dump contained package `me.rerere.rikkahub.debug`, 46 nodes, and visible chat-home text including `新聊天`, `默认助手 / Auto (RikkaHub)`, and `输入消息与AI聊天`.
+- Verification record: `git diff --check` exited 0 before staging; this task records the result in one local documentation commit, with push reserved for the controlling agent.
