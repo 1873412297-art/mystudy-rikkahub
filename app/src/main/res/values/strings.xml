@@ -1305,4 +1305,22 @@
   <string name="chat_page_folder_add">New</string>
   <string name="chat_page_delete_folder_confirm">Delete folder "%1$s"? Conversations inside will not be deleted, only removed from the folder.</string>
   <string name="chat_page_delete_folder_generating">Some conversations in this folder are still generating. Please stop them before deleting.</string>
+    <string name="group_director_title">Director</string>
+    <string name="group_director_open">Open group director</string>
+    <string name="group_director_pause_after_current">Pause after current reply</string>
+    <string name="group_director_continue_round">Continue one round</string>
+    <string name="group_director_continue_current_round">Continue this round</string>
+    <string name="group_director_skip_next">Skip next speaker</string>
+    <string name="group_director_mode_manual">Manual</string>
+    <string name="group_director_mode_round_robin">Round robin</string>
+    <string name="group_director_mode_moderator">Moderator</string>
+    <string name="group_director_status_running">Running</string>
+    <string name="group_director_status_paused">Paused</string>
+    <string name="group_director_status_pause_pending">Pauses after this reply</string>
+    <string name="group_director_status_round_remaining">Round: %1$d remaining</string>
+    <string name="group_director_nominate_member">Make %1$s the next speaker</string>
+    <string name="group_director_no_members">No enabled group members</string>
+    <string name="group_director_invalid_member">That member is no longer available</string>
+    <string name="group_director_no_alternative">No other member is available</string>
+    <string name="group_director_not_group">This conversation is not a group chat</string>
 </resources>

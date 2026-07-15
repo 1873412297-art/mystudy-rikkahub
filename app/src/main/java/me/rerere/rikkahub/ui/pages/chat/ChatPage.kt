@@ -77,6 +77,7 @@ import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
+import me.rerere.rikkahub.service.group.GroupDirectorCommandStatus
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.ai.completion.GroupMentionCompletionProvider
@@ -297,6 +298,26 @@ private fun ChatPageContent(
     val assistant = remember(setting.assistants, conversation.assistantId) {
         setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
     }
+    val groupAssistant = assistant.takeIf { it.assistantType == AssistantType.GROUP }
+    val directorUiState = remember(conversation, groupAssistant, setting, loadingJob) {
+        groupAssistant?.let {
+            buildGroupDirectorUiState(
+                conversation = conversation,
+                assistant = it,
+                settings = setting,
+                isGenerating = loadingJob?.isActive == true,
+            )
+        }
+    }
+    var showDirectorSheet by rememberSaveable { mutableStateOf(false) }
+    val enabledManualMembers = groupAssistant?.groupMembers?.filter { it.enabled }.orEmpty()
+    val availableManualMemberIds = remember(enabledManualMembers) {
+        enabledManualMembers.map { it.id }
+    }
+    val selectedIds = vm.selectedGroupMemberIds.collectAsStateWithLifecycle().value
+    val isManualGroup = groupAssistant != null &&
+        directorUiState?.effectiveMode == TurnTakingStrategy.MANUAL &&
+        enabledManualMembers.isNotEmpty()
     var showFilesSheet by remember { mutableStateOf(false) }
     val completionProviders = remember(
         assistant.workspaceId,
@@ -328,6 +349,24 @@ private fun ChatPageContent(
         }
     }
 
+    val context = LocalContext.current
+    LaunchedEffect(vm) {
+        vm.groupDirectorNotices.collect { status ->
+            val message = when (status) {
+                GroupDirectorCommandStatus.NO_ENABLED_MEMBERS -> R.string.group_director_no_members
+                GroupDirectorCommandStatus.INVALID_MEMBER -> R.string.group_director_invalid_member
+                GroupDirectorCommandStatus.NO_ALTERNATIVE_MEMBER -> R.string.group_director_no_alternative
+                GroupDirectorCommandStatus.NOT_GROUP -> R.string.group_director_not_group
+                GroupDirectorCommandStatus.APPLIED -> return@collect
+            }
+            toaster.show(context.getString(message))
+        }
+    }
+
+    LaunchedEffect(availableManualMemberIds) {
+        vm.sanitizeGroupMemberSelection(availableManualMemberIds)
+    }
+
     TTSAutoPlay(vm = vm, setting = setting, conversation = conversation)
 
     Surface(
@@ -356,18 +395,7 @@ private fun ChatPageContent(
             },
             bottomBar = {
                 Column {
-                    val selectedIds = vm.selectedGroupMemberIds.collectAsStateWithLifecycle().value
-                    val ga = setting.assistants.find { it.id == conversation.assistantId }
-                    val enabledManualMembers = ga?.groupMembers?.filter { it.enabled }.orEmpty()
-                    val availableManualMemberIds = remember(enabledManualMembers) {
-                        enabledManualMembers.map { it.id }
-                    }
-                    LaunchedEffect(availableManualMemberIds) {
-                        vm.sanitizeGroupMemberSelection(availableManualMemberIds)
-                    }
-                    val isGrp = ga != null && ga.assistantType == AssistantType.GROUP &&
-                        ga.turnTakingStrategy == TurnTakingStrategy.MANUAL && enabledManualMembers.isNotEmpty()
-                    if (isGrp) {
+                    if (isManualGroup) {
                         GroupMemberSelector(
                             members = enabledManualMembers,
                             selectedMemberIds = selectedIds,
@@ -401,7 +429,7 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
-                            if (isGrp) {
+                            if (isManualGroup) {
                                 if (selectedIds.isNotEmpty()) {
                                     vm.handleGroupSend(content = inputState.getContents())
                                 } else {
@@ -458,6 +486,14 @@ private fun ChatPageContent(
                         showFilesSheet = true
                     },
                 )
+                }
+            },
+            floatingActionButton = {
+                directorUiState?.let { state ->
+                    GroupDirectorFab(
+                        state = state,
+                        onClick = { showDirectorSheet = true },
+                    )
                 }
             },
             containerColor = Color.Transparent,
@@ -537,6 +573,14 @@ private fun ChatPageContent(
                     vm.saveConversationAsync()
                 },
                 onMentionRole = onMentionRole,
+            )
+        }
+
+        if (showDirectorSheet && directorUiState != null) {
+            GroupDirectorSheet(
+                state = directorUiState,
+                onDismiss = { showDirectorSheet = false },
+                onCommand = vm::applyGroupDirectorCommand,
             )
         }
 
