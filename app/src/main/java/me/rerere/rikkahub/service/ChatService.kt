@@ -100,8 +100,12 @@ import me.rerere.rikkahub.service.group.applyGroupApiRewrite
 import me.rerere.rikkahub.service.group.resolveGroupContextMessages
 import me.rerere.rikkahub.service.group.resolveAddressedMember
 import me.rerere.rikkahub.service.group.isGroupContinuationNudge
+import me.rerere.rikkahub.service.group.nextDifferentGroupMember
+import me.rerere.rikkahub.service.group.nextRoundRobinSelection
+import me.rerere.rikkahub.service.group.normalizeGroupMemberQueue
 import me.rerere.rikkahub.service.group.parseGroupModeratorDecision
 import me.rerere.rikkahub.service.group.resolveEffectiveGroupMemberAssistant
+import me.rerere.rikkahub.service.group.resolveGroupAutoReplyLimit
 import me.rerere.rikkahub.service.group.resolveManualReplyMemberIds
 import me.rerere.rikkahub.service.group.toStorableGroupGeneratedMessages
 import me.rerere.rikkahub.web.BadRequestException
@@ -1071,14 +1075,9 @@ class ChatService(
                 groupAssistant.turnTakingStrategy != TurnTakingStrategy.MANUAL &&
                 !isAddressedTurn
             ) {
-                val configuredMaxReplies = groupAssistant.groupReplyOptions.maxAutoRepliesPerUserTurn.coerceAtLeast(1)
-                val moderatorAutoCap = groupAssistant.groupMembers.count { it.enabled }
-                    .coerceIn(1, 3)
-                val maxReplies = if (groupAssistant.turnTakingStrategy == TurnTakingStrategy.AUTO_MODERATOR) {
-                    configuredMaxReplies.coerceAtLeast(moderatorAutoCap)
-                } else {
-                    configuredMaxReplies
-                }
+                val maxReplies = resolveGroupAutoReplyLimit(
+                    groupAssistant.groupReplyOptions.maxAutoRepliesPerUserTurn,
+                )
                 val alreadySent = countGroupRepliesSinceLastUserMessage(
                     conversationAfterRuntimeUpdate,
                     groupAssistant,
@@ -1743,14 +1742,6 @@ class ChatService(
 
     // ---- 群组发言决策 ----
 
-    /** 取下一个轮转发言者（round-robin），不修改 conversation。 */
-    private fun getNextSpeakerRoundRobin(conversation: Conversation): Uuid? {
-        val queue = conversation.groupMemberQueue
-        if (queue.isEmpty()) return null
-        val nextIndex = (conversation.groupMemberQueueIndex + 1) % queue.size
-        return queue[nextIndex]
-    }
-
     private fun countGroupRepliesSinceLastUserMessage(
         conversation: Conversation,
         groupAssistant: Assistant,
@@ -1770,15 +1761,6 @@ class ChatService(
             }
     }
 
-    private fun getNextDifferentSpeaker(
-        queue: List<Uuid>,
-        currentSpeakerId: Uuid?,
-    ): Uuid? {
-        if (queue.isEmpty()) return null
-        if (currentSpeakerId == null) return queue.firstOrNull()
-        return queue.firstOrNull { it != currentSpeakerId } ?: queue.firstOrNull()
-    }
-
     /** 解析下一个发言者：依据助手的 turnTakingStrategy。返回 null 表示无可用成员。 */
     private suspend fun resolveNextSpeaker(
         conversation: Conversation,
@@ -1790,61 +1772,52 @@ class ChatService(
             TurnTakingStrategy.MANUAL -> return conversation.activeGroupMemberId
                 ?: groupAssistant.groupMembers.firstOrNull { it.enabled }?.id
             TurnTakingStrategy.AUTO_ROUND_ROBIN -> {
-                val preferredId = getNextSpeakerRoundRobin(conversation)
-                    ?: groupAssistant.groupMembers.firstOrNull { it.enabled }?.id
-                val nextId = if (!groupAssistant.groupReplyOptions.allowConsecutiveSameSpeaker) {
-                    val activeId = conversation.activeGroupMemberId
-                    if (preferredId != null && preferredId == activeId) {
-                        getNextDifferentSpeaker(
-                            conversation.groupMemberQueue.ifEmpty {
-                                groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
-                            },
-                            activeId,
-                        ) ?: preferredId
-                    } else {
-                        preferredId
-                    }
-                } else {
-                    preferredId
-                }
-                if (nextId != null) {
-                    val queue = conversation.groupMemberQueue.ifEmpty {
-                        groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
-                    }
-                    val nextIndex = (conversation.groupMemberQueueIndex + 1) % queue.size.coerceAtLeast(1)
-                    saveConversation(conversation.id, conversation.copy(
-                        activeGroupMemberId = nextId,
-                        groupMemberQueue = queue,
-                        groupMemberQueueIndex = nextIndex,
-                    ))
-                }
-                return nextId
+                val selection = nextRoundRobinSelection(
+                    persistedQueue = conversation.groupMemberQueue,
+                    persistedIndex = conversation.groupMemberQueueIndex,
+                    activeMemberId = conversation.activeGroupMemberId,
+                    enabledMemberIds = groupAssistant.groupMembers.filter { it.enabled }.map { it.id },
+                ) ?: return null
+                saveConversation(
+                    conversation.id,
+                    conversation.copy(
+                        activeGroupMemberId = selection.memberId,
+                        groupMemberQueue = selection.queue,
+                        groupMemberQueueIndex = selection.selectedIndex,
+                    ),
+                )
+                return selection.memberId
             }
             TurnTakingStrategy.AUTO_MODERATOR -> {
+                val enabledMemberIds = groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
+                val queue = normalizeGroupMemberQueue(
+                    persistedQueue = conversation.groupMemberQueue,
+                    enabledMemberIds = enabledMemberIds,
+                )
+                if (queue.isEmpty()) return null
                 val resolved = resolveNextSpeakerViaModerator(
                     conversation = conversation,
                     groupAssistant = groupAssistant,
                     settings = settings,
                     allowStop = allowModeratorStop,
                 )
-                val queue = conversation.groupMemberQueue.ifEmpty {
-                    groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
-                }
-                val activeId = conversation.activeGroupMemberId
-                val nextId = if (groupAssistant.groupReplyOptions.allowConsecutiveSameSpeaker) {
-                    resolved
-                } else if (resolved != null && resolved == activeId) {
-                    getNextDifferentSpeaker(queue, activeId)
-                } else {
-                    resolved
+                val activeId = conversation.activeGroupMemberId?.takeIf { it in queue }
+                val nextId = when {
+                    resolved == null -> null
+                    groupAssistant.groupReplyOptions.allowConsecutiveSameSpeaker -> resolved
+                    resolved == activeId -> nextDifferentGroupMember(queue, activeId)
+                    else -> resolved
                 }
                 if (nextId != null) {
-                    val nextIndex = queue.indexOf(nextId).takeIf { it >= 0 } ?: 0
-                    saveConversation(conversation.id, conversation.copy(
-                        activeGroupMemberId = nextId,
-                        groupMemberQueue = queue,
-                        groupMemberQueueIndex = nextIndex,
-                    ))
+                    val selectedIndex = queue.indexOf(nextId).takeIf { it >= 0 } ?: return null
+                    saveConversation(
+                        conversation.id,
+                        conversation.copy(
+                            activeGroupMemberId = nextId,
+                            groupMemberQueue = queue,
+                            groupMemberQueueIndex = selectedIndex,
+                        ),
+                    )
                 }
                 return nextId
             }
@@ -1867,7 +1840,13 @@ class ChatService(
             runtimeState = conversation.groupRuntimeState,
             activeMemberId = conversation.activeGroupMemberId,
         )
-        val localFallback = localScores.firstOrNull()?.memberId ?: getNextSpeakerRoundRobin(conversation)
+        val queueFallback = nextRoundRobinSelection(
+            persistedQueue = conversation.groupMemberQueue,
+            persistedIndex = conversation.groupMemberQueueIndex,
+            activeMemberId = conversation.activeGroupMemberId,
+            enabledMemberIds = enabled.map { it.id },
+        )?.memberId
+        val localFallback = localScores.firstOrNull()?.memberId ?: queueFallback
 
         val descriptions = enabled.joinToString("\n") { m ->
             val source = settings.getAssistantById(m.assistantId)
