@@ -1684,3 +1684,11 @@ git commit -m "docs: record group context gameplay manual test results"
   - `adb input text` leaves Gboard text in composition state; send becomes reliable after `adb shell input keyevent 4` commits/hides the IME.
   - Manual member selection is ViewModel state and resets when the app process restarts; smoke scripts must reselect members before sending.
   - Do not run overlapping `uiautomator dump` commands; Android 15 can reject the second shell automation service registration even though the RikkaHub process remains healthy.
+
+### 2026-07-15 Port Verification Result
+
+- Branch: `codex/port-private-to-2.4.1`, based on upstream `2.4.1`.
+- Emulator: `emulator-5554`, Android 15; the ported debug APK installed over existing data, launched into `RouteActivity`, rendered the chat page, and produced no crash-buffer entries.
+- Database upgrade: the old private v25 database migrated to v26 with `folder_id`, `conversation_folder`, and Room identity hash `f0b200e6a24ae0931995e0b76fecfa13` preserved.
+- Instrumentation: `./gradlew connectedDebugAndroidTest --console=plain` passed across all modules after adding the missing AndroidX Test dependencies to `material3`, `highlight`, and `search`, and updating the renamed `speech` module's package assertion.
+- APK: `C:\Users\18734\Desktop\HTML\rikkahub-port-2.4.1\app\build\outputs\apk\debug\app-universal-debug.apk`.
