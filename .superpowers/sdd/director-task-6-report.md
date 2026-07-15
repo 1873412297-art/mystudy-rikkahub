@@ -61,14 +61,25 @@ The installed app initially had no conversations and no three-member group. With
 
 1. **PASS — group FAB placement and style.** `30-ui-group-new-chat.xml/png` shows the themed director FAB with accessibility label `打开群聊导演台`. FAB bounds `[891,1743][1038,1890]` do not overlap send bounds `[925,2180][1051,2306]` or the input/member controls.
 2. **PASS — director sheet visual contract.** `31-ui-director-sheet.xml` and `39-ui-moderator-paused.png` show the Material 3 drag handle, `导演台` title, playback status, pause/continue/skip actions, segmented manual/round-robin/moderator modes, and all three member avatars in the current light theme.
-3. **BLOCKED — graceful pause during a successful reply.** A real `hello` turn started `QA Member` generation, but RikkaHub Auto returned HTTP 402 (`You need positive balance to do inference`) before a reply could stream. Therefore reply completion, pending pause during streaming, and suppression of the next successful auto reply were not observable. The idle command path did transition Room state from `RUNNING` to `PAUSED` and the sheet displayed `已暂停` (`39-ui-moderator-paused.xml`), but that is only partial evidence for this row.
-4. **PARTIAL — continue one round.** From paused state, `继续一轮` created a three-member round snapshot and attempted generation. The prior skip request was consumed and the selected valid member was `QA B`; the provider then returned HTTP 402. Room/UI restored paused with `oneRoundActive=true`, three remaining members, and `本轮剩余 3 位`/`继续本轮` (`40-one-round-log.txt`, `40-db-one-round-after-failure.txt`, `40-ui-one-round-provider-failure.xml`). At-most-once replies for all members and normal round completion were not observable.
-5. **BLOCKED — moderator early STOP.** Moderator mode selection and persistence were verified, but a moderator response containing `STOP` could not be produced because the configured provider returned HTTP 402. Remaining-reply suppression from an accepted STOP was not observable.
-6. **PARTIAL — skip-next; PASS — single-member notice.** On the three-member conversation, `SkipNext` persisted `skipNextRequested=true`; `继续一轮` then consumed it and selected/started `QA B` rather than the next `Q AA` (`38-db-round-robin.txt`, `40-one-round-log.txt`). Successful speech was blocked by HTTP 402. On `Solo Group`, tapping skip displayed `暂无其他角色`, captured in `50b-ui-solo-group-skip-notice.png`.
-7. **PARTIAL — one-shot nomination.** Tapping the `QA Member` avatar caused exactly one additional `QA Member` generation start (`35-app-log-filtered.txt`), consistent with the passing Compose test. HTTP 402 prevented a successful reply and therefore prevented observing the normal post-reply return to paused.
+3. **PASS — graceful pause during a successful reply.** With the local mock streaming four SSE chunks, `说完暂停` was tapped while the successful `Q AA` reply was active. The stream completed, the sheet returned to `已暂停`, Room recorded `playbackState=PAUSED`, and no additional request followed (`mock-unblock/15-autopause2.log`, `15-autopause2-requests.jsonl`, `15-ui-final-summary.txt`, `15-db-after-autopause.jsonl`).
+4. **PASS — continue one round.** From paused round-robin state, `继续一轮` produced exactly three successful member streams in snapshot order: `QA B`, `QA Member`, then `Q AA`. Each snapshot member appeared once, no duplicate request followed, and Room ended with `playbackState=PAUSED`, `oneRoundActive=false`, and an empty remainder (`mock-unblock/16-one-round-requests.jsonl`, `16-ui-one-round-final-summary.txt`, `16-db-after-one-round.json`).
+5. **PASS — moderator early STOP.** The deterministic moderator first returned the UUID for `QA Member`; that member completed one streamed reply; the second moderator call returned `STOP`. No remaining member request followed and the sheet/Room state was paused (`mock-unblock/17-moderator-stop-requests.jsonl`, `17-ui-moderator-stop-final-summary.txt`, `17-db-after-moderator-stop.json`).
+6. **PASS — skip-next and single-member notice.** In a persisted paused three-member conversation, Room first recorded `skipNextRequested=true` with no active member and an empty persisted queue, making the normalized first candidate `QA Member`. `继续一轮` then consumed the skip and the following member `Q AA` completed exactly one successful stream before the requested pause. Final Room state recorded active `Q AA`, queue index 1, `skipNextRequested=false`, and paused playback (`mock-unblock/21-skip-pending-db.json`, `21-skip-verified-requests.jsonl`, `21-skip-verified-final.xml`, `21-skip-final-db.json`). On `Solo Group`, tapping skip displayed `暂无其他角色`, captured in `50b-ui-solo-group-skip-notice.png`.
+7. **PASS — one-shot nomination.** While paused, tapping the `QA B` avatar produced exactly one successful `QA B` stream and returned the conversation to `已暂停`; persisted director state had no pending one-shot and remained paused (`mock-unblock/19-one-shot-requests.jsonl`, `19-ui-one-shot-final.xml`, `19-db-after-one-shot-correct.json`).
 8. **PASS — conversation-only mode override and manual selector.** Manual, round-robin, and moderator segments all became checked when selected. Room state for the saved conversation recorded `auto_round_robin`, then `auto_moderator`; a new `QA Group` conversation still opened in the assistant default manual mode and exposed the existing member selector (`38-ui-round-robin.xml`, `39-db-moderator-paused.txt`, `45-ui-new-group-manual-selector.xml`, `45b-ui-new-group-manual-sheet.xml`).
 9. **PASS — page/process restoration without implicit generation.** The saved conversation was left and reopened; UI restored moderator, paused round, and three remaining members (`42b-ui-page-reopen-state.xml`). After `am force-stop` plus launcher monkey, the app was focused again; opening the saved conversation restored the same moderator/paused/three-remaining state (`44b-ui-sheet-after-process.xml`). Room retained active queued member `QA B`, queue cursor 2, and the three-member remainder. Corrected app-PID logcat check found `IMPLICIT_GENERATION_MATCHES_CORRECTED=0` (`43-force-stop-relaunch.log`).
 10. **PASS — non-group visibility guard.** A `QA Member` solo conversation UI dump contained zero matches for the director accessibility label or title (`47-ui-nongroup-no-fab.xml`, `DIRECTOR_MATCH_COUNT=0`).
+
+## Successful-output unblock setup
+
+The five initially provider-blocked rows were rerun against a deterministic local OpenAI-compatible fixture without changing production source or clearing app data:
+
+- Host server: `.superpowers/sdd/task6_mock_provider.py`, port `18080`; Android base URL `http://10.0.2.2:18080/v1`.
+- Supported test surface: model discovery plus streamed/non-streamed `/v1/chat/completions`, including deterministic moderator UUID then `STOP` behavior.
+- Request/chunk audit: `.superpowers/sdd/task6-evidence/mock-unblock/requests.jsonl`.
+- Configuration method: a reversible debug-app DataStore snapshot replacement after `adb shell input text` proved unreliable for the URL. The original file was also retained on-device as `settings.preferences_pb.task6-pre-mock`.
+- Restore verification: original and restored SHA-256 both `044858f075bf06306e299b516620230ef0f4f0cb45edd2ed1d9a80652c79c58a`, `match=True` (`mock-unblock/22-final-restore.txt`).
+- Cleanup: the pre-mock DataStore was restored, the mock server was stopped, and the debug app was relaunched successfully.
 
 ## Final crash-buffer verification
 
@@ -78,7 +89,7 @@ adb -s emulator-5554 logcat -d -b crash
 
 - Result: empty crash buffer; `CRASH_MATCHES_APP=0`.
 - Final focus remained `me.rerere.rikkahub.debug/me.rerere.rikkahub.RouteActivity`.
-- Local raw log: `.superpowers/sdd/task6-evidence/51-final-focus-crash.log`.
+- Local raw logs: `.superpowers/sdd/task6-evidence/51-final-focus-crash.log`, `mock-unblock/22-final-focus.txt`, and `mock-unblock/22-final-crash.txt`.
 
 ## Result summary
 
@@ -86,10 +97,10 @@ adb -s emulator-5554 logcat -d -b crash
 - Connected instrumentation: PASS
 - Migration 26-to-27: PASS
 - Director FAB and original visual style: PASS
-- Graceful pause: BLOCKED by provider HTTP 402 for the successful-stream portion; idle pause transition PASS
-- One-round and moderator STOP: PARTIAL/BLOCKED by provider HTTP 402
-- Skip-next and single-member notice: PARTIAL (selection/start verified; speech blocked) / PASS (notice)
-- One-shot nomination: PARTIAL (single dispatch verified; successful reply blocked)
+- Graceful pause: PASS
+- One-round and moderator STOP: PASS
+- Skip-next and single-member notice: PASS
+- One-shot nomination: PASS
 - Conversation-only mode override: PASS
 - Page/process restoration: PASS
 - Non-group visibility guard: PASS
@@ -103,10 +114,11 @@ adb -s emulator-5554 logcat -d -b crash
 - APK was installed with `-r`; app data was never cleared.
 - All taps used UI-tree bounds. Each claim above points to a UI dump, screenshot, Room snapshot, instrumentation XML, or filtered log.
 - No production source, test source, Android resource, build output, or local configuration is staged by this verification task.
-- Smoke rows dependent on successful model output are not marked PASS.
+- Successful-output rows were rerun against an auditable deterministic fixture and are supported by request/chunk logs plus UI/Room evidence.
+- Temporary mock configuration was restored byte-for-byte and the local server was stopped.
 
 ## Concerns
 
-1. The configured RikkaHub Auto endpoint returned HTTP 402 for every attempted generation. A provider with usable inference balance is needed to complete rows 3, 4, 5, 6 speech completion, and 7 end to end.
-2. The successful-reply-specific pause/round/STOP semantics remain unverified on emulator despite green JVM/Compose coverage.
-3. Task 6 and the overall completion gate should remain open until those blocked rows are rerun with successful streamed replies.
+1. The user's configured RikkaHub Auto endpoint returned HTTP 402 during the first pass; the deterministic local provider removed that external dependency for the five successful-output smoke rows.
+2. The mock implements only the OpenAI-compatible surface required by this verification and was not added to production sources.
+3. No blocking Task 6 concern remains.

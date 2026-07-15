@@ -2156,7 +2156,7 @@ git commit -m "feat: add group director controls"
 - Consumes: completed Tasks 1-5.
 - Produces: verified APK, migration/Compose evidence, emulator evidence, and an updated result block in this plan.
 
-- [ ] **Step 1: Run the complete JVM suite and Debug build**
+- [x] **Step 1: Run the complete JVM suite and Debug build**
 
 Run:
 
@@ -2166,7 +2166,7 @@ Run:
 
 Expected: `BUILD SUCCESSFUL`; `app/build/outputs/apk/debug/app-universal-debug.apk` exists and is newer than the last source commit.
 
-- [ ] **Step 2: Run all connected instrumentation tests**
+- [x] **Step 2: Run all connected instrumentation tests**
 
 Run:
 
@@ -2177,7 +2177,7 @@ adb -s emulator-5554 wait-for-device
 
 Expected: `BUILD SUCCESSFUL`; migration and director Compose tests pass on `emulator-5554`.
 
-- [ ] **Step 3: Install and launch the universal Debug APK**
+- [x] **Step 3: Install and launch the universal Debug APK**
 
 Run:
 
@@ -2189,7 +2189,7 @@ adb -s emulator-5554 shell dumpsys window | Select-String 'mCurrentFocus|mFocuse
 
 Expected: install reports `Success`; focused package is `me.rerere.rikkahub.debug`.
 
-- [ ] **Step 4: Perform the exact manual smoke matrix**
+- [x] **Step 4: Perform the exact manual smoke matrix**
 
 Use an existing group assistant with at least three enabled members and record each row as `PASS` or `FAIL` in the result block:
 
@@ -2204,7 +2204,7 @@ Use an existing group assistant with at least three enabled members and record e
 9. Leave and reopen the chat, then force-stop/relaunch the app: mode, paused state, queued next member, and round remainder restore without implicit generation.
 10. Open a non-group conversation: director FAB is absent.
 
-- [ ] **Step 5: Verify a clean crash buffer after the smoke**
+- [x] **Step 5: Verify a clean crash buffer after the smoke**
 
 Run:
 
@@ -2214,7 +2214,7 @@ adb -s emulator-5554 logcat -d -b crash
 
 Expected: no new crash entry for `me.rerere.rikkahub.debug`.
 
-- [ ] **Step 6: Record final evidence in this plan**
+- [x] **Step 6: Record final evidence in this plan**
 
 Append this block and replace each result value with the observed command result or manual status:
 
@@ -2237,7 +2237,7 @@ Append this block and replace each result value with the observed command result
 
 If one row fails, record the exact observed behavior and keep Task 6 open until the corresponding focused test and implementation are corrected.
 
-- [ ] **Step 7: Check the final diff and commit verification evidence**
+- [x] **Step 7: Check the final diff and commit verification evidence**
 
 Run:
 
@@ -2254,25 +2254,27 @@ Expected: `git diff --check` prints nothing; the commit succeeds; no build outpu
 
 ## Implementation Results
 
-Verified on `emulator-5554` (Android 15 / API 35) on 2026-07-16. Full evidence and exact commands are recorded in `.superpowers/sdd/director-task-6-report.md`. The configured RikkaHub Auto provider returned HTTP 402 for each real generation attempt, so successful-reply-dependent rows remain open rather than being reported as PASS.
+Verified on `emulator-5554` (Android 15 / API 35) on 2026-07-16. Full evidence and exact commands are recorded in `.superpowers/sdd/director-task-6-report.md`. After the configured external provider returned HTTP 402, the five successful-output-dependent rows were rerun against a deterministic local OpenAI-compatible fixture. The fixture configuration was then restored byte-for-byte and its server stopped.
 
 - JVM tests and Debug APK: **PASS** — `BUILD SUCCESSFUL`; rebuilt universal APK timestamp `2026-07-16T04:57:06.9124708+08:00`, SHA-256 `94B0EA6FF1DE70E4CD6FD5C6C0F695104975A64EA75620A9DD797A01CF64C802`.
 - Connected instrumentation: **PASS** — `BUILD SUCCESSFUL`; app instrumentation 13 tests, 0 failures/errors/skips.
 - Migration 26-to-27: **PASS** — focused migration instrumentation 1/1.
 - Director FAB and original visual style: **PASS** — themed non-overlapping FAB plus Material 3 sheet/handle/actions/modes/three avatars verified by UI tree and screenshot.
-- Graceful pause: **BLOCKED** — idle pause persisted and displayed `已暂停`, but HTTP 402 prevented observing pause-after-current across a successful streamed reply.
-- One-round and moderator STOP: **PARTIAL / BLOCKED** — one-round snapshot, generation dispatch, failure pause, and remainder persistence were observed; all-member completion and moderator `STOP` require successful provider output.
-- Skip-next and single-member notice: **PARTIAL / PASS** — skip selected and started the following valid member (`QA B` after skipping `Q AA`), but speech failed with HTTP 402; one-member `暂无其他角色` notice is screenshot-confirmed.
-- One-shot nomination: **PARTIAL** — exactly one nominated-member generation start observed and Compose dispatch test passed; successful reply and post-reply pause were blocked by HTTP 402.
+- Graceful pause: **PASS** — successful four-chunk stream completed after `说完暂停`; UI/Room returned paused and no next automatic request started.
+- One-round and moderator STOP: **PASS** — one round produced `QA B`, `QA Member`, and `Q AA` exactly once then paused; moderator UUID -> member -> `STOP` produced no remaining auto reply.
+- Skip-next and single-member notice: **PASS** — skip was consumed and a following valid member completed a successful reply; one-member `暂无其他角色` notice remains screenshot-confirmed.
+- One-shot nomination: **PASS** — paused nomination produced exactly one successful `QA B` stream and returned to paused with no pending one-shot.
 - Conversation-only mode override: **PASS** — saved conversation persisted moderator override while a new same-group conversation stayed manual and exposed the existing member selector.
 - Page/process restoration: **PASS** — page reopen and force-stop/relaunch restored moderator, paused round, queued member/cursor, and three-member remainder; corrected app-PID logcat showed zero implicit generation starts.
 - Non-group visibility guard: **PASS** — solo conversation UI dump contained zero director label/title matches.
 - Crash buffer: **PASS** — final crash buffer empty and app remained focused in `RouteActivity`.
 
-Task 6 remains open for the successful-output portions of smoke rows 3, 4, 5, 6, and 7.
+Task 6 is complete: every required command is green, all ten emulator smoke rows are PASS, the crash buffer is clean, and temporary fixture configuration was restored.
 
 ---
 
 ## Completion Gate
 
 The feature is complete only when all six tasks are checked, every command in Task 6 is green, the ten-row emulator matrix is recorded, the crash buffer is clean, and the branch contains no uncommitted production or test change.
+
+**Completion gate: PASS (2026-07-16).** Task 6 steps 1-7 are checked; the required JVM/build and connected-instrumentation commands are green; all ten emulator rows are recorded as PASS; the final crash buffer is empty; and this verification pass leaves no uncommitted production or test change.
