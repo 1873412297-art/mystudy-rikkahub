@@ -100,13 +100,12 @@ import me.rerere.rikkahub.service.group.applyGroupApiRewrite
 import me.rerere.rikkahub.service.group.resolveGroupContextMessages
 import me.rerere.rikkahub.service.group.resolveAddressedMember
 import me.rerere.rikkahub.service.group.isGroupContinuationNudge
-import me.rerere.rikkahub.service.group.nextDifferentGroupMember
 import me.rerere.rikkahub.service.group.nextRoundRobinSelection
-import me.rerere.rikkahub.service.group.normalizeGroupMemberQueue
 import me.rerere.rikkahub.service.group.parseGroupModeratorDecision
 import me.rerere.rikkahub.service.group.resolveEffectiveGroupMemberAssistant
-import me.rerere.rikkahub.service.group.resolveGroupAutoReplyLimit
 import me.rerere.rikkahub.service.group.resolveManualReplyMemberIds
+import me.rerere.rikkahub.service.group.selectModeratorTurn
+import me.rerere.rikkahub.service.group.shouldContinueGroupAutoReplies
 import me.rerere.rikkahub.service.group.toStorableGroupGeneratedMessages
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
@@ -1075,14 +1074,15 @@ class ChatService(
                 groupAssistant.turnTakingStrategy != TurnTakingStrategy.MANUAL &&
                 !isAddressedTurn
             ) {
-                val maxReplies = resolveGroupAutoReplyLimit(
-                    groupAssistant.groupReplyOptions.maxAutoRepliesPerUserTurn,
-                )
                 val alreadySent = countGroupRepliesSinceLastUserMessage(
                     conversationAfterRuntimeUpdate,
                     groupAssistant,
                 )
-                if (alreadySent < maxReplies) {
+                val shouldContinue = shouldContinueGroupAutoReplies(
+                    alreadySent = alreadySent,
+                    configuredLimit = groupAssistant.groupReplyOptions.maxAutoRepliesPerUserTurn,
+                )
+                if (shouldContinue) {
                     handleMessageComplete(
                         conversationId = conversationId,
                         allowAutoChain = true,
@@ -1790,36 +1790,28 @@ class ChatService(
             }
             TurnTakingStrategy.AUTO_MODERATOR -> {
                 val enabledMemberIds = groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
-                val queue = normalizeGroupMemberQueue(
-                    persistedQueue = conversation.groupMemberQueue,
-                    enabledMemberIds = enabledMemberIds,
-                )
-                if (queue.isEmpty()) return null
                 val resolved = resolveNextSpeakerViaModerator(
                     conversation = conversation,
                     groupAssistant = groupAssistant,
                     settings = settings,
                     allowStop = allowModeratorStop,
                 )
-                val activeId = conversation.activeGroupMemberId?.takeIf { it in queue }
-                val nextId = when {
-                    resolved == null -> null
-                    groupAssistant.groupReplyOptions.allowConsecutiveSameSpeaker -> resolved
-                    resolved == activeId -> nextDifferentGroupMember(queue, activeId)
-                    else -> resolved
-                }
-                if (nextId != null) {
-                    val selectedIndex = queue.indexOf(nextId).takeIf { it >= 0 } ?: return null
-                    saveConversation(
-                        conversation.id,
-                        conversation.copy(
-                            activeGroupMemberId = nextId,
-                            groupMemberQueue = queue,
-                            groupMemberQueueIndex = selectedIndex,
-                        ),
-                    )
-                }
-                return nextId
+                val selection = selectModeratorTurn(
+                    persistedQueue = conversation.groupMemberQueue,
+                    enabledMemberIds = enabledMemberIds,
+                    activeMemberId = conversation.activeGroupMemberId,
+                    resolvedMemberId = resolved,
+                    allowConsecutiveSameSpeaker = groupAssistant.groupReplyOptions.allowConsecutiveSameSpeaker,
+                ) ?: return null
+                saveConversation(
+                    conversation.id,
+                    conversation.copy(
+                        activeGroupMemberId = selection.memberId,
+                        groupMemberQueue = selection.queue,
+                        groupMemberQueueIndex = selection.selectedIndex,
+                    ),
+                )
+                return selection.memberId
             }
         }
     }

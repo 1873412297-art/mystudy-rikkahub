@@ -45,4 +45,31 @@ internal fun nextDifferentGroupMember(
     currentMemberId: Uuid?,
 ): Uuid? = queue.firstOrNull { it != currentMemberId } ?: queue.firstOrNull()
 
+internal fun selectModeratorTurn(
+    persistedQueue: List<Uuid>,
+    enabledMemberIds: List<Uuid>,
+    activeMemberId: Uuid?,
+    resolvedMemberId: Uuid?,
+    allowConsecutiveSameSpeaker: Boolean,
+): GroupTurnSelection? {
+    val queue = normalizeGroupMemberQueue(persistedQueue, enabledMemberIds)
+    val resolvedId = resolvedMemberId?.takeIf { it in queue } ?: return null
+    val activeId = activeMemberId?.takeIf { it in queue }
+    val selectedId = when {
+        allowConsecutiveSameSpeaker -> resolvedId
+        resolvedId != activeId -> resolvedId
+        else -> nextDifferentGroupMember(queue, activeId) ?: return null
+    }
+    return GroupTurnSelection(
+        memberId = selectedId,
+        queue = queue,
+        selectedIndex = queue.indexOf(selectedId),
+    )
+}
+
 internal fun resolveGroupAutoReplyLimit(configuredLimit: Int): Int = configuredLimit.coerceAtLeast(1)
+
+internal fun shouldContinueGroupAutoReplies(
+    alreadySent: Int,
+    configuredLimit: Int,
+): Boolean = alreadySent < resolveGroupAutoReplyLimit(configuredLimit)
