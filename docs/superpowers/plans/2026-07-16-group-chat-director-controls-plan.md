@@ -2252,6 +2252,27 @@ Expected: `git diff --check` prints nothing; the commit succeeds; no build outpu
 
 ---
 
+## Implementation Results
+
+Verified on `emulator-5554` (Android 15 / API 35) on 2026-07-16. Full evidence and exact commands are recorded in `.superpowers/sdd/director-task-6-report.md`. The configured RikkaHub Auto provider returned HTTP 402 for each real generation attempt, so successful-reply-dependent rows remain open rather than being reported as PASS.
+
+- JVM tests and Debug APK: **PASS** — `BUILD SUCCESSFUL`; rebuilt universal APK timestamp `2026-07-16T04:57:06.9124708+08:00`, SHA-256 `94B0EA6FF1DE70E4CD6FD5C6C0F695104975A64EA75620A9DD797A01CF64C802`.
+- Connected instrumentation: **PASS** — `BUILD SUCCESSFUL`; app instrumentation 13 tests, 0 failures/errors/skips.
+- Migration 26-to-27: **PASS** — focused migration instrumentation 1/1.
+- Director FAB and original visual style: **PASS** — themed non-overlapping FAB plus Material 3 sheet/handle/actions/modes/three avatars verified by UI tree and screenshot.
+- Graceful pause: **BLOCKED** — idle pause persisted and displayed `已暂停`, but HTTP 402 prevented observing pause-after-current across a successful streamed reply.
+- One-round and moderator STOP: **PARTIAL / BLOCKED** — one-round snapshot, generation dispatch, failure pause, and remainder persistence were observed; all-member completion and moderator `STOP` require successful provider output.
+- Skip-next and single-member notice: **PARTIAL / PASS** — skip selected and started the following valid member (`QA B` after skipping `Q AA`), but speech failed with HTTP 402; one-member `暂无其他角色` notice is screenshot-confirmed.
+- One-shot nomination: **PARTIAL** — exactly one nominated-member generation start observed and Compose dispatch test passed; successful reply and post-reply pause were blocked by HTTP 402.
+- Conversation-only mode override: **PASS** — saved conversation persisted moderator override while a new same-group conversation stayed manual and exposed the existing member selector.
+- Page/process restoration: **PASS** — page reopen and force-stop/relaunch restored moderator, paused round, queued member/cursor, and three-member remainder; corrected app-PID logcat showed zero implicit generation starts.
+- Non-group visibility guard: **PASS** — solo conversation UI dump contained zero director label/title matches.
+- Crash buffer: **PASS** — final crash buffer empty and app remained focused in `RouteActivity`.
+
+Task 6 remains open for the successful-output portions of smoke rows 3, 4, 5, 6, and 7.
+
+---
+
 ## Completion Gate
 
 The feature is complete only when all six tasks are checked, every command in Task 6 is green, the ten-row emulator matrix is recorded, the crash buffer is clean, and the branch contains no uncommitted production or test change.
