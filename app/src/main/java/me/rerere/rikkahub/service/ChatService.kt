@@ -97,9 +97,8 @@ import me.rerere.rikkahub.service.group.GroupSpeakerScorer
 import me.rerere.rikkahub.service.group.GroupSpeakingIntent
 import me.rerere.rikkahub.service.group.DynamicGroupContextResult
 import me.rerere.rikkahub.service.group.applyGroupApiRewrite
-import me.rerere.rikkahub.service.group.applyGroupContextFilter as applyDynamicGroupContextFilter
+import me.rerere.rikkahub.service.group.resolveGroupContextMessages
 import me.rerere.rikkahub.service.group.resolveAddressedMember
-import me.rerere.rikkahub.service.group.DynamicGroupContextResolver
 import me.rerere.rikkahub.service.group.isGroupContinuationNudge
 import me.rerere.rikkahub.service.group.parseGroupModeratorDecision
 import me.rerere.rikkahub.service.group.resolveEffectiveGroupMemberAssistant
@@ -854,29 +853,21 @@ class ChatService(
             } else {
                 rawConversation
             }
-            val baseVisibleMessages = conversation.currentMessages.let {
+            val selectedMessages = conversation.currentMessages.let {
                 if (messageRange != null) {
                     it.subList(messageRange.start, messageRange.endInclusive + 1)
                 } else {
                     it
                 }
-            }.applyDynamicGroupContextFilter(groupAssistant, effectiveMemberId)
-            val visibleMessages = if (
-                effectiveMemberId != null &&
-                groupAssistant.assistantType == AssistantType.GROUP &&
-                groupAssistant.groupContextOptions.enableLayeredContext
-            ) {
-                DynamicGroupContextResolver().resolve(
-                    groupAssistant = groupAssistant,
-                    messages = baseVisibleMessages,
-                    effectiveMemberId = effectiveMemberId,
-                    runtimeState = conversation.groupRuntimeState,
-                ).also {
-                    dynamicContextResult = it
-                }.visibleMessages
-            } else {
-                baseVisibleMessages
-            }.applyEnhancementPrompt(assistant)
+            }
+            val groupContext = resolveGroupContextMessages(
+                groupAssistant = groupAssistant,
+                messages = selectedMessages,
+                effectiveMemberId = effectiveMemberId,
+                runtimeState = conversation.groupRuntimeState,
+            )
+            dynamicContextResult = groupContext.dynamicResult
+            val visibleMessages = groupContext.visibleMessages.applyEnhancementPrompt(assistant)
             val localSpeakerScore = if (effectiveMemberId != null && groupAssistant.assistantType == AssistantType.GROUP) {
                 GroupSpeakerScorer().score(
                     groupAssistant = groupAssistant,
