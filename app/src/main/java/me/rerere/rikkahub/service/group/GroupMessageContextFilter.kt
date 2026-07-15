@@ -41,10 +41,7 @@ internal fun List<UIMessage>.applyGroupContextFilter(
         }
     }
     if (filter.maxMessages > 0 && result.size > filter.maxMessages) {
-        val users = result.filter { it.role == MessageRole.USER }
-        val others = result.filter { it.role != MessageRole.USER }
-        val keep = (filter.maxMessages - users.size).coerceAtLeast(0)
-        result = others.takeLast(keep) + users
+        result = result.takeLast(filter.maxMessages)
     }
     return result
 }
