@@ -97,7 +97,7 @@ import me.rerere.rikkahub.service.group.GroupSpeakerScorer
 import me.rerere.rikkahub.service.group.GroupSpeakingIntent
 import me.rerere.rikkahub.service.group.DynamicGroupContextResult
 import me.rerere.rikkahub.service.group.applyGroupApiRewrite
-import me.rerere.rikkahub.service.group.resolveGroupContextMessages
+import me.rerere.rikkahub.service.group.resolveSelectedGroupContextMessages
 import me.rerere.rikkahub.service.group.resolveAddressedMember
 import me.rerere.rikkahub.service.group.isGroupContinuationNudge
 import me.rerere.rikkahub.service.group.nextRoundRobinSelection
@@ -856,16 +856,10 @@ class ChatService(
             } else {
                 rawConversation
             }
-            val selectedMessages = conversation.currentMessages.let {
-                if (messageRange != null) {
-                    it.subList(messageRange.start, messageRange.endInclusive + 1)
-                } else {
-                    it
-                }
-            }
-            val groupContext = resolveGroupContextMessages(
+            val groupContext = resolveSelectedGroupContextMessages(
                 groupAssistant = groupAssistant,
-                messages = selectedMessages,
+                messages = conversation.currentMessages,
+                messageRange = messageRange,
                 effectiveMemberId = effectiveMemberId,
                 runtimeState = conversation.groupRuntimeState,
             )

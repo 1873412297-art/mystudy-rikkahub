@@ -15,13 +15,17 @@ internal fun resolveGroupContextMessages(
     messages: List<UIMessage>,
     effectiveMemberId: Uuid?,
     runtimeState: GroupRuntimeState,
+    legacyFilter: (List<UIMessage>, Assistant, Uuid) -> List<UIMessage> =
+        { selectedMessages, assistant, memberId ->
+            selectedMessages.applyGroupContextFilter(assistant, memberId)
+        },
 ): GroupContextPipelineResult {
     if (groupAssistant.assistantType != AssistantType.GROUP || effectiveMemberId == null) {
         return GroupContextPipelineResult(visibleMessages = messages)
     }
     if (!groupAssistant.groupContextOptions.enableLayeredContext) {
         return GroupContextPipelineResult(
-            visibleMessages = messages.applyGroupContextFilter(groupAssistant, effectiveMemberId),
+            visibleMessages = legacyFilter(messages, groupAssistant, effectiveMemberId),
         )
     }
     val dynamicResult = DynamicGroupContextResolver().resolve(
@@ -33,5 +37,25 @@ internal fun resolveGroupContextMessages(
     return GroupContextPipelineResult(
         visibleMessages = dynamicResult.visibleMessages,
         dynamicResult = dynamicResult,
+    )
+}
+
+internal fun resolveSelectedGroupContextMessages(
+    groupAssistant: Assistant,
+    messages: List<UIMessage>,
+    messageRange: ClosedRange<Int>?,
+    effectiveMemberId: Uuid?,
+    runtimeState: GroupRuntimeState,
+): GroupContextPipelineResult {
+    val selectedMessages = if (messageRange != null) {
+        messages.subList(messageRange.start, messageRange.endInclusive + 1)
+    } else {
+        messages
+    }
+    return resolveGroupContextMessages(
+        groupAssistant = groupAssistant,
+        messages = selectedMessages,
+        effectiveMemberId = effectiveMemberId,
+        runtimeState = runtimeState,
     )
 }
