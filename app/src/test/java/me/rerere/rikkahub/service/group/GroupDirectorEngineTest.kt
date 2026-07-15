@@ -124,6 +124,60 @@ class GroupDirectorEngineTest {
     }
 
     @Test
+    fun `active one round continues past ordinary cap while members remain`() {
+        val state = GroupDirectorState(
+            playbackState = GroupPlaybackState.RUNNING,
+            oneRoundActive = true,
+            oneRoundRemainingMemberIds = listOf(b, c),
+        )
+
+        assertTrue(
+            engine.shouldContinueAfterReply(
+                state = state,
+                effectiveStrategy = TurnTakingStrategy.AUTO_MODERATOR,
+                isAddressedTurn = false,
+                alreadySent = 9,
+                configuredLimit = 1,
+            )
+        )
+    }
+
+    @Test
+    fun `ordinary auto mode stops at configured cap`() {
+        assertFalse(
+            engine.shouldContinueAfterReply(
+                state = GroupDirectorState(playbackState = GroupPlaybackState.RUNNING),
+                effectiveStrategy = TurnTakingStrategy.AUTO_MODERATOR,
+                isAddressedTurn = false,
+                alreadySent = 1,
+                configuredLimit = 1,
+            )
+        )
+    }
+
+    @Test
+    fun `failure pauses explicit director run and clears one shot return`() {
+        val failed = engine.afterFailure(
+            GroupDirectorState(
+                playbackState = GroupPlaybackState.RUNNING,
+                oneShotReturnToPaused = true,
+            )
+        )
+
+        assertEquals(GroupPlaybackState.PAUSED, failed.playbackState)
+        assertFalse(failed.oneShotReturnToPaused)
+    }
+
+    @Test
+    fun `failure keeps ordinary running playback active`() {
+        val failed = engine.afterFailure(
+            GroupDirectorState(playbackState = GroupPlaybackState.RUNNING)
+        )
+
+        assertEquals(GroupPlaybackState.RUNNING, failed.playbackState)
+    }
+
+    @Test
     fun `moderator stop ends an active round and keeps it paused`() {
         val stopped = engine.afterNoCandidate(
             GroupDirectorState(

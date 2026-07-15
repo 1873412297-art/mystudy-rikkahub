@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import me.rerere.rikkahub.data.model.Conversation
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.uuid.Uuid
@@ -35,6 +37,11 @@ class ConversationSession(
     val generationJob: StateFlow<Job?> = _generationJob.asStateFlow()
     val isGenerating: Boolean get() = _generationJob.value?.isActive == true
     val isInUse: Boolean get() = refCount.get() > 0 || isGenerating
+
+    private val groupDirectorMutex = Mutex()
+
+    suspend fun <T> withGroupDirectorLock(block: suspend () -> T): T =
+        groupDirectorMutex.withLock { block() }
 
     // 空闲检查任务
     private var idleCheckJob: Job? = null
@@ -73,7 +80,7 @@ class ConversationSession(
         _generationJob.value?.cancel()
         _generationJob.value = job
         job?.invokeOnCompletion {
-            _generationJob.value = null
+            _generationJob.compareAndSet(job, null)
             if (refCount.get() <= 0) {
                 scheduleIdleCheck()
             }
