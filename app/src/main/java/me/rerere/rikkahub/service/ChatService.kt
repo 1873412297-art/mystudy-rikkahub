@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -26,6 +27,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.core.MessageRole
@@ -122,6 +124,7 @@ import me.rerere.workspace.WorkspaceShellStatus
 import java.time.Instant
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.coroutineContext
 import kotlin.uuid.Uuid
 
 private const val TAG = "ChatService"
@@ -692,7 +695,7 @@ class ChatService(
                 state = current.groupRuntimeState.director,
                 command = command,
                 context = GroupDirectorCommandContext(
-                    generationActive = session.isGenerating,
+                    generationActive = session.isGroupReplyActiveLocked(),
                     orderedEnabledMemberIds = orderedIds,
                 ),
             )
@@ -857,6 +860,7 @@ class ChatService(
         memberId: Uuid? = null,
         allowAutoChain: Boolean = true,
     ) {
+        val generationJob = coroutineContext[Job]
         val settings = settingsStore.settingsFlow.first()
         val initialConversation = getConversationFlow(conversationId).value
         val groupAssistant = settings.getAssistantById(initialConversation.assistantId)
@@ -881,6 +885,7 @@ class ChatService(
                     groupAssistant = groupAssistant,
                     settings = settings,
                     allowModeratorStop = groupRepliesSinceLastUser > 0,
+                    generationJob = generationJob,
                 )
             if (resolvedMemberId == null) return
             val baseModel = settings.findModelById(groupAssistant.chatModelId ?: settings.chatModelId)
@@ -901,6 +906,13 @@ class ChatService(
         } else {
             val soloModel = settings.findModelById(groupAssistant.chatModelId ?: settings.chatModelId) ?: return
             Triple(groupAssistant, soloModel, null)
+        }
+
+        if (groupAssistant.assistantType == AssistantType.GROUP && effectiveMemberId != null) {
+            val session = getOrCreateSession(conversationId)
+            session.withGroupDirectorLock {
+                session.markGroupReplyStartedLocked(generationJob)
+            }
         }
 
         val senderName = if (assistant.useAssistantAvatar) {
@@ -1121,10 +1133,19 @@ class ChatService(
                 }
             }
         }.onFailure {
-            if (it is CancellationException) throw it
+            if (it is CancellationException) {
+                if (groupAssistant.assistantType == AssistantType.GROUP && effectiveMemberId != null) {
+                    withContext(NonCancellable) {
+                        getOrCreateSession(conversationId).completeGroupReplyHandoff(generationJob) {
+                            GroupGenerationHandoffResult(Unit, shouldContinue = false)
+                        }
+                    }
+                }
+                throw it
+            }
             if (groupAssistant.assistantType == AssistantType.GROUP && effectiveMemberId != null) {
                 val session = getOrCreateSession(conversationId)
-                session.withGroupDirectorLock {
+                session.completeGroupReplyHandoff(generationJob) {
                     val current = session.state.value
                     val failedState = groupDirectorEngine.afterFailure(current.groupRuntimeState.director)
                     if (failedState != current.groupRuntimeState.director) {
@@ -1135,6 +1156,7 @@ class ChatService(
                             ),
                         )
                     }
+                    GroupGenerationHandoffResult(Unit, shouldContinue = false)
                 }
             }
             // 兜底取消 Live Update 通知（生成开始前失败时 onCompletion 不会执行）
@@ -1145,11 +1167,12 @@ class ChatService(
             Logging.log(TAG, "handleMessageComplete: $it")
             Logging.log(TAG, it.stackTraceToString())
         }.onSuccess {
-            val conversationAfterRuntimeUpdate = if (
+            val groupHandoff = if (
                 groupAssistant.assistantType == AssistantType.GROUP && effectiveMemberId != null
             ) {
-                getOrCreateSession(conversationId).withGroupDirectorLock {
-                    val latest = getConversationFlow(conversationId).value
+                val session = getOrCreateSession(conversationId)
+                session.completeGroupReplyHandoff(generationJob) {
+                    val latest = session.state.value
                     val runtimeWithDebug = latest.groupRuntimeState.copy(
                         lastResolverDebug = dynamicContextResult?.debugState
                             ?: latest.groupRuntimeState.lastResolverDebug,
@@ -1168,10 +1191,26 @@ class ChatService(
                             )
                         )
                     )
+                    val alreadySent = countGroupRepliesSinceLastUserMessage(updated, groupAssistant)
+                    val director = updated.groupRuntimeState.director
+                    val effectiveStrategy = groupDirectorEngine.effectiveStrategy(
+                        director,
+                        groupAssistant.turnTakingStrategy,
+                    )
+                    val shouldContinue = allowAutoChain && groupDirectorEngine.shouldContinueAfterReply(
+                        state = director,
+                        effectiveStrategy = effectiveStrategy,
+                        isAddressedTurn = isAddressedTurn,
+                        alreadySent = alreadySent,
+                        configuredLimit = groupAssistant.groupReplyOptions.maxAutoRepliesPerUserTurn,
+                    )
                     saveConversation(conversationId, updated)
-                    updated
+                    GroupGenerationHandoffResult(updated, shouldContinue)
                 }
             } else {
+                null
+            }
+            val conversationAfterRuntimeUpdate = groupHandoff?.value ?: run {
                 getConversationFlow(conversationId).value.also {
                     saveConversation(conversationId, it)
                 }
@@ -1185,27 +1224,8 @@ class ChatService(
                 launchWithConversationReference(conversationId) {
                     generateSuggestion(conversationId, conversationAfterRuntimeUpdate)
                 }
-            } else if (allowAutoChain && groupAssistant.assistantType == AssistantType.GROUP) {
-                val alreadySent = countGroupRepliesSinceLastUserMessage(
-                    conversationAfterRuntimeUpdate,
-                    groupAssistant,
-                )
-                val director = conversationAfterRuntimeUpdate.groupRuntimeState.director
-                val effectiveStrategy = groupDirectorEngine.effectiveStrategy(
-                    director,
-                    groupAssistant.turnTakingStrategy,
-                )
-                if (
-                    groupDirectorEngine.shouldContinueAfterReply(
-                        state = director,
-                        effectiveStrategy = effectiveStrategy,
-                        isAddressedTurn = isAddressedTurn,
-                        alreadySent = alreadySent,
-                        configuredLimit = groupAssistant.groupReplyOptions.maxAutoRepliesPerUserTurn,
-                    )
-                ) {
-                    handleMessageComplete(conversationId = conversationId, allowAutoChain = true)
-                }
+            } else if (groupHandoff?.shouldContinue == true) {
+                handleMessageComplete(conversationId = conversationId, allowAutoChain = true)
             }
         }
     }
@@ -1885,6 +1905,7 @@ class ChatService(
         groupAssistant: Assistant,
         settings: me.rerere.rikkahub.data.datastore.Settings,
         allowModeratorStop: Boolean = false,
+        generationJob: Job? = null,
     ): Uuid? {
         val session = getOrCreateSession(conversation.id)
         return session.withGroupDirectorLock {
@@ -1962,6 +1983,7 @@ class ChatService(
                         ),
                     )
                 }
+                session.releaseGroupGenerationLocked(generationJob)
                 return@withGroupDirectorLock null
             }
 
@@ -1973,6 +1995,7 @@ class ChatService(
                 groupRuntimeState = current.groupRuntimeState.copy(director = selection.state),
             )
             saveConversation(current.id, committed)
+            session.markGroupReplyStartedLocked(generationJob)
             selectedId
         }
     }

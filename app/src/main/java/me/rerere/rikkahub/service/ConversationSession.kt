@@ -17,6 +17,11 @@ import kotlin.uuid.Uuid
 private const val TAG = "ConversationSession"
 private const val IDLE_TIMEOUT_MS = 5_000L
 
+internal data class GroupGenerationHandoffResult<T>(
+    val value: T,
+    val shouldContinue: Boolean,
+)
+
 class ConversationSession(
     val id: Uuid,
     initial: Conversation,
@@ -39,9 +44,45 @@ class ConversationSession(
     val isInUse: Boolean get() = refCount.get() > 0 || isGenerating
 
     private val groupDirectorMutex = Mutex()
+    private var groupReplyActiveJob: Job? = null
 
     suspend fun <T> withGroupDirectorLock(block: suspend () -> T): T =
         groupDirectorMutex.withLock { block() }
+
+    internal fun markGroupReplyStartedLocked(job: Job?) {
+        groupReplyActiveJob = job
+    }
+
+    internal fun isGroupReplyActiveLocked(): Boolean =
+        groupReplyActiveJob != null && groupReplyActiveJob === _generationJob.value
+
+    internal fun releaseGroupGenerationLocked(job: Job?) {
+        if (groupReplyActiveJob === job) {
+            groupReplyActiveJob = null
+        }
+        if (job != null) {
+            _generationJob.compareAndSet(job, null)
+        }
+    }
+
+    internal suspend fun <T> completeGroupReplyHandoff(
+        job: Job?,
+        block: suspend () -> GroupGenerationHandoffResult<T>,
+    ): GroupGenerationHandoffResult<T> = groupDirectorMutex.withLock {
+        try {
+            block().also { result ->
+                if (groupReplyActiveJob === job) {
+                    groupReplyActiveJob = null
+                }
+                if (!result.shouldContinue && job != null) {
+                    _generationJob.compareAndSet(job, null)
+                }
+            }
+        } catch (error: Throwable) {
+            releaseGroupGenerationLocked(job)
+            throw error
+        }
+    }
 
     // 空闲检查任务
     private var idleCheckJob: Job? = null
@@ -107,6 +148,7 @@ class ConversationSession(
     fun cleanup() {
         _generationJob.value?.cancel()
         _generationJob.value = null
+        groupReplyActiveJob = null
         idleCheckJob?.cancel()
         idleCheckJob = null
     }

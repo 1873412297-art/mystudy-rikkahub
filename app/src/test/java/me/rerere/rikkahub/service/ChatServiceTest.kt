@@ -26,6 +26,10 @@ import me.rerere.rikkahub.data.datastore.DisplaySetting
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.TurnTakingStrategy
+import me.rerere.rikkahub.service.group.GroupDirectorCommand
+import me.rerere.rikkahub.service.group.GroupDirectorCommandContext
+import me.rerere.rikkahub.service.group.GroupDirectorEngine
 import me.rerere.rikkahub.service.group.GroupDirectorState
 import me.rerere.rikkahub.service.group.GroupPlaybackState
 import me.rerere.rikkahub.service.group.GroupRuntimeState
@@ -36,6 +40,9 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.uuid.Uuid
 
 class ChatServiceTest {
+    private val groupMemberA = Uuid.parse("00000000-0000-0000-0000-000000000001")
+    private val groupMemberB = Uuid.parse("00000000-0000-0000-0000-000000000002")
+
     @Test
     fun `session director lock serializes state commits`() = runBlocking {
         val conversationId = Uuid.parse("00000000-0000-0000-0000-000000000020")
@@ -113,6 +120,245 @@ class ChatServiceTest {
             currentJob.cancel()
             scope.cancel()
         }
+    }
+
+    @Test
+    fun `superseded handoff does not clear successor reply phase`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(scope)
+        val oldJob = Job()
+        val successorJob = Job()
+
+        try {
+            session.setJob(oldJob)
+            session.withGroupDirectorLock {
+                session.markGroupReplyStartedLocked(oldJob)
+            }
+            session.setJob(successorJob)
+            session.withGroupDirectorLock {
+                session.markGroupReplyStartedLocked(successorJob)
+            }
+
+            session.completeGroupReplyHandoff(oldJob) {
+                GroupGenerationHandoffResult(Unit, shouldContinue = false)
+            }
+
+            session.withGroupDirectorLock {
+                assertSame(successorJob, session.getJob())
+                assertEquals(true, session.isGroupReplyActiveLocked())
+            }
+        } finally {
+            oldJob.cancel()
+            successorJob.cancel()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `pause command in completion window releases job with no continuation`() = runBlocking {
+        val engine = GroupDirectorEngine()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(scope)
+        val generationJob = Job()
+        session.setJob(generationJob)
+
+        try {
+            session.withGroupDirectorLock {
+                session.markGroupReplyStartedLocked(generationJob)
+                val current = session.state.value
+                val paused = engine.reduce(
+                    state = current.groupRuntimeState.director,
+                    command = GroupDirectorCommand.PauseAfterCurrent,
+                    context = GroupDirectorCommandContext(
+                        generationActive = session.isGroupReplyActiveLocked(),
+                        orderedEnabledMemberIds = listOf(groupMemberA, groupMemberB),
+                    ),
+                ).state
+                session.state.value = current.copy(
+                    groupRuntimeState = current.groupRuntimeState.copy(director = paused)
+                )
+            }
+
+            val handoff = session.completeGroupReplyHandoff(generationJob) {
+                val current = session.state.value
+                val director = engine.afterReply(current.groupRuntimeState.director, groupMemberA)
+                val updated = current.copy(
+                    groupRuntimeState = current.groupRuntimeState.copy(director = director)
+                )
+                session.state.value = updated
+                GroupGenerationHandoffResult(
+                    value = updated,
+                    shouldContinue = engine.shouldContinueAfterReply(
+                        state = director,
+                        effectiveStrategy = TurnTakingStrategy.AUTO_ROUND_ROBIN,
+                        isAddressedTurn = false,
+                        alreadySent = 1,
+                        configuredLimit = 3,
+                    ),
+                )
+            }
+
+            assertEquals(GroupPlaybackState.PAUSED, handoff.value.groupRuntimeState.director.playbackState)
+            assertEquals(false, handoff.shouldContinue)
+            assertEquals(null, session.getJob())
+        } finally {
+            generationJob.cancel()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `queued member in completion window is consumed exactly once`() = runBlocking {
+        val engine = GroupDirectorEngine()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(
+            scope = scope,
+            director = GroupDirectorState(playbackState = GroupPlaybackState.PAUSE_AFTER_CURRENT),
+        )
+        val generationJob = Job()
+        session.setJob(generationJob)
+
+        try {
+            session.withGroupDirectorLock {
+                session.markGroupReplyStartedLocked(generationJob)
+                val current = session.state.value
+                val queued = engine.reduce(
+                    state = current.groupRuntimeState.director,
+                    command = GroupDirectorCommand.QueueMemberOnce(groupMemberB),
+                    context = GroupDirectorCommandContext(
+                        generationActive = session.isGroupReplyActiveLocked(),
+                        orderedEnabledMemberIds = listOf(groupMemberA, groupMemberB),
+                    ),
+                ).state
+                session.state.value = current.copy(
+                    groupRuntimeState = current.groupRuntimeState.copy(director = queued)
+                )
+            }
+
+            val firstHandoff = completeDirectorReply(
+                session = session,
+                generationJob = generationJob,
+                engine = engine,
+                speakerId = groupMemberA,
+            )
+            assertEquals(true, firstHandoff.shouldContinue)
+            assertSame(generationJob, session.getJob())
+
+            session.withGroupDirectorLock {
+                val current = session.state.value
+                val selected = engine.applyCandidate(
+                    state = current.groupRuntimeState.director,
+                    normalCandidateId = groupMemberA,
+                    orderedCandidateMemberIds = listOf(groupMemberA, groupMemberB),
+                )
+                assertEquals(groupMemberB, selected.memberId)
+                session.state.value = current.copy(
+                    groupRuntimeState = current.groupRuntimeState.copy(director = selected.state)
+                )
+                session.markGroupReplyStartedLocked(generationJob)
+            }
+
+            val secondHandoff = completeDirectorReply(
+                session = session,
+                generationJob = generationJob,
+                engine = engine,
+                speakerId = groupMemberB,
+            )
+            assertEquals(false, secondHandoff.shouldContinue)
+            assertEquals(null, secondHandoff.value.groupRuntimeState.director.oneShotNextMemberId)
+            assertEquals(GroupPlaybackState.PAUSED, secondHandoff.value.groupRuntimeState.director.playbackState)
+            assertEquals(null, session.getJob())
+        } finally {
+            generationJob.cancel()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `continue one round in completion window retains current worker`() = runBlocking {
+        val engine = GroupDirectorEngine()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(
+            scope = scope,
+            director = GroupDirectorState(playbackState = GroupPlaybackState.PAUSE_AFTER_CURRENT),
+        )
+        val generationJob = Job()
+        session.setJob(generationJob)
+
+        try {
+            session.withGroupDirectorLock {
+                session.markGroupReplyStartedLocked(generationJob)
+                val current = session.state.value
+                val continued = engine.reduce(
+                    state = current.groupRuntimeState.director,
+                    command = GroupDirectorCommand.ContinueOneRound,
+                    context = GroupDirectorCommandContext(
+                        generationActive = session.isGroupReplyActiveLocked(),
+                        orderedEnabledMemberIds = listOf(groupMemberA, groupMemberB),
+                    ),
+                ).state
+                session.state.value = current.copy(
+                    groupRuntimeState = current.groupRuntimeState.copy(director = continued)
+                )
+            }
+
+            val handoff = completeDirectorReply(
+                session = session,
+                generationJob = generationJob,
+                engine = engine,
+                speakerId = groupMemberA,
+            )
+
+            assertEquals(true, handoff.shouldContinue)
+            assertEquals(listOf(groupMemberB), handoff.value.groupRuntimeState.director.oneRoundRemainingMemberIds)
+            assertSame(generationJob, session.getJob())
+        } finally {
+            generationJob.cancel()
+            scope.cancel()
+        }
+    }
+
+    private fun createGroupSession(
+        scope: CoroutineScope,
+        director: GroupDirectorState = GroupDirectorState(),
+    ): ConversationSession {
+        val conversationId = Uuid.parse("00000000-0000-0000-0000-000000000020")
+        val assistantId = Uuid.parse("00000000-0000-0000-0000-000000000010")
+        return ConversationSession(
+            id = conversationId,
+            initial = Conversation(
+                id = conversationId,
+                assistantId = assistantId,
+                messageNodes = emptyList(),
+                groupRuntimeState = GroupRuntimeState(director = director),
+            ),
+            scope = scope,
+            onIdle = {},
+        )
+    }
+
+    private suspend fun completeDirectorReply(
+        session: ConversationSession,
+        generationJob: Job,
+        engine: GroupDirectorEngine,
+        speakerId: Uuid,
+    ): GroupGenerationHandoffResult<Conversation> = session.completeGroupReplyHandoff(generationJob) {
+        val current = session.state.value
+        val director = engine.afterReply(current.groupRuntimeState.director, speakerId)
+        val updated = current.copy(
+            groupRuntimeState = current.groupRuntimeState.copy(director = director)
+        )
+        session.state.value = updated
+        GroupGenerationHandoffResult(
+            value = updated,
+            shouldContinue = engine.shouldContinueAfterReply(
+                state = director,
+                effectiveStrategy = TurnTakingStrategy.AUTO_ROUND_ROBIN,
+                isAddressedTurn = false,
+                alreadySent = 1,
+                configuredLimit = 1,
+            ),
+        )
     }
 
     @Test
