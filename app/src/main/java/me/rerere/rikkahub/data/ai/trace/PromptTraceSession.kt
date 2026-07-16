@@ -160,13 +160,7 @@ class PromptTraceSession(
             responseMessageId = responseMessageId ?: response.id
             response.usage?.promptTokens?.takeIf { it > 0 }?.let { latestPromptTokens = it }
             if (!persistResponseBindingIfNeeded()) return
-
-            val promptTokens = latestPromptTokens
-            if (promptTokens != null && promptTokens != persistedPromptTokens) {
-                if (persist { store.updateActualPromptTokens(traceId, promptTokens) }) {
-                    persistedPromptTokens = promptTokens
-                }
-            }
+            persistPromptTokensIfNeeded()
         }
     }
 
@@ -190,6 +184,7 @@ class PromptTraceSession(
             if (request == null) terminalRequest = TerminalRequest(status, errorSummary)
             if (terminalPersisted || !persistPreparedIfNeeded()) return
             if (!persistResponseBindingIfNeeded()) return
+            if (!persistPromptTokensIfNeeded()) return
 
             val terminal = requireNotNull(terminalRequest)
             if (persist { store.markTerminal(traceId, terminal.status, terminal.errorSummary) }) {
@@ -258,6 +253,15 @@ class PromptTraceSession(
             state = State.STREAMING
         }
         return responseBindingPersisted
+    }
+
+    private suspend fun persistPromptTokensIfNeeded(): Boolean {
+        val promptTokens = latestPromptTokens ?: return true
+        if (promptTokens == persistedPromptTokens) return true
+        if (persist { store.updateActualPromptTokens(traceId, promptTokens) }) {
+            persistedPromptTokens = promptTokens
+        }
+        return promptTokens == persistedPromptTokens
     }
 
     private suspend fun persist(block: suspend () -> Unit): Boolean {
