@@ -144,3 +144,19 @@ adb -s emulator-5554 logcat -d -b crash
 - Only the newly added `group_director_*` resource lines were changed from four-space to the repository's two-space XML indentation.
 - `.\gradlew.bat :app:compileDebugKotlin -x :web:buildWebUi --console=plain`: `BUILD SUCCESSFUL` in 4m 38s; 96 actionable tasks, 5 executed and 91 up-to-date (`mock-unblock-reviewfix/27-compile-debug-kotlin.log`).
 - `git diff --check`: clean.
+
+## Final branch-review hardening
+
+- Manual mode is now a graceful barrier: active replies finish under `PAUSE_AFTER_CURRENT`, ordinary auto chains stop, active one-round state pauses with its remainder retained, and the completion-window continuation is rejected before another automatic speaker starts.
+- `resolveNextSpeaker` no longer treats `MANUAL` as permission to choose the active/first member. A stale manual `RUNNING` state is normalized to `PAUSED` when automatic selection stops.
+- All group-generation cancellation paths use one `NonCancellable` persistence handoff. The persisted director becomes inactive/paused, an unfinished round keeps its remainder, transient nomination/skip state is cleared, the session job/reply phase is released, and callers rethrow `CancellationException`.
+- The migration test now inserts a valid legacy row into schema 26 before running `Migration_26_27`, then asserts the migrated row has the `{}` runtime-state default.
+- TDD red evidence:
+  - Engine tests failed to compile while `afterCancellation` was absent.
+  - ChatService tests failed to compile while `normalizeCancelledGroupGeneration` was absent.
+  - Manual stale-state coverage failed to compile before `afterNoCandidate` accepted the effective strategy.
+- Final validation:
+  - `ChatServiceTest` plus all `service.group.*`: 90 tests, 0 failures/errors.
+  - Focused `Migration_26_27_Test` on `emulator-5554`: 1 test, PASS.
+  - `:app:compileDebugKotlin -x :web:buildWebUi`: PASS.
+  - `git diff --check`: clean.

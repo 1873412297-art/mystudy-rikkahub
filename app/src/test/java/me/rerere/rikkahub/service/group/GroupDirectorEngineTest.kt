@@ -99,15 +99,39 @@ class GroupDirectorEngineTest {
     }
 
     @Test
-    fun `mode override is conversation local and manual blocks ordinary chaining`() {
+    fun `manual mode during ordinary generation waits for current reply then blocks chaining`() {
         val state = engine.reduce(
             GroupDirectorState(),
             GroupDirectorCommand.SetMode(TurnTakingStrategy.MANUAL),
             context(true),
         ).state
+        val afterCurrent = engine.afterReply(state, a)
 
         assertEquals(TurnTakingStrategy.MANUAL, engine.effectiveStrategy(state, TurnTakingStrategy.AUTO_MODERATOR))
-        assertFalse(engine.shouldContinueAfterReply(state, TurnTakingStrategy.MANUAL, false, 0, 3))
+        assertEquals(GroupPlaybackState.PAUSE_AFTER_CURRENT, state.playbackState)
+        assertEquals(GroupPlaybackState.PAUSED, afterCurrent.playbackState)
+        assertFalse(engine.shouldContinueAfterReply(afterCurrent, TurnTakingStrategy.MANUAL, false, 1, 3))
+    }
+
+    @Test
+    fun `manual mode during one round pauses after current and retains remainder`() {
+        val state = engine.reduce(
+            GroupDirectorState(
+                playbackState = GroupPlaybackState.RUNNING,
+                oneRoundActive = true,
+                oneRoundRemainingMemberIds = enabled,
+            ),
+            GroupDirectorCommand.SetMode(TurnTakingStrategy.MANUAL),
+            context(true),
+        ).state
+        val afterCurrent = engine.afterReply(state, a)
+
+        assertEquals(GroupPlaybackState.PAUSE_AFTER_CURRENT, state.playbackState)
+        assertTrue(state.oneRoundActive)
+        assertEquals(GroupPlaybackState.PAUSED, afterCurrent.playbackState)
+        assertTrue(afterCurrent.oneRoundActive)
+        assertEquals(listOf(b, c), afterCurrent.oneRoundRemainingMemberIds)
+        assertFalse(engine.shouldContinueAfterReply(afterCurrent, TurnTakingStrategy.MANUAL, false, 1, 3))
     }
 
     @Test
@@ -178,6 +202,47 @@ class GroupDirectorEngineTest {
     }
 
     @Test
+    fun `pending pause cancellation becomes paused and clears transient commands`() {
+        val cancelled = engine.afterCancellation(
+            GroupDirectorState(
+                playbackState = GroupPlaybackState.PAUSE_AFTER_CURRENT,
+                oneShotNextMemberId = b,
+                oneShotReturnToPaused = true,
+                skipNextRequested = true,
+            )
+        )
+
+        assertEquals(GroupPlaybackState.PAUSED, cancelled.playbackState)
+        assertNull(cancelled.oneShotNextMemberId)
+        assertFalse(cancelled.oneShotReturnToPaused)
+        assertFalse(cancelled.skipNextRequested)
+    }
+
+    @Test
+    fun `ordinary running cancellation becomes paused`() {
+        val cancelled = engine.afterCancellation(
+            GroupDirectorState(playbackState = GroupPlaybackState.RUNNING)
+        )
+
+        assertEquals(GroupPlaybackState.PAUSED, cancelled.playbackState)
+    }
+
+    @Test
+    fun `one round cancellation pauses and retains remainder`() {
+        val cancelled = engine.afterCancellation(
+            GroupDirectorState(
+                playbackState = GroupPlaybackState.RUNNING,
+                oneRoundActive = true,
+                oneRoundRemainingMemberIds = listOf(b, c),
+            )
+        )
+
+        assertEquals(GroupPlaybackState.PAUSED, cancelled.playbackState)
+        assertTrue(cancelled.oneRoundActive)
+        assertEquals(listOf(b, c), cancelled.oneRoundRemainingMemberIds)
+    }
+
+    @Test
     fun `moderator stop ends an active round and keeps it paused`() {
         val stopped = engine.afterNoCandidate(
             GroupDirectorState(
@@ -189,6 +254,19 @@ class GroupDirectorEngineTest {
 
         assertFalse(stopped.oneRoundActive)
         assertEquals(emptyList<Uuid>(), stopped.oneRoundRemainingMemberIds)
+        assertEquals(GroupPlaybackState.PAUSED, stopped.playbackState)
+    }
+
+    @Test
+    fun `manual automatic selection stop normalizes stale running playback`() {
+        val stopped = engine.afterNoCandidate(
+            state = GroupDirectorState(
+                modeOverride = TurnTakingStrategy.MANUAL,
+                playbackState = GroupPlaybackState.RUNNING,
+            ),
+            effectiveStrategy = TurnTakingStrategy.MANUAL,
+        )
+
         assertEquals(GroupPlaybackState.PAUSED, stopped.playbackState)
     }
 

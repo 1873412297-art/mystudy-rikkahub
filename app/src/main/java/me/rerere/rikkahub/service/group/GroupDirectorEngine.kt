@@ -155,7 +155,18 @@ class GroupDirectorEngine {
             }
 
             is GroupDirectorCommand.SetMode -> GroupDirectorCommandResult(
-                clean.copy(modeOverride = command.strategy)
+                clean.copy(
+                    modeOverride = command.strategy,
+                    playbackState = if (command.strategy == TurnTakingStrategy.MANUAL) {
+                        if (context.generationActive) {
+                            GroupPlaybackState.PAUSE_AFTER_CURRENT
+                        } else {
+                            GroupPlaybackState.PAUSED
+                        }
+                    } else {
+                        clean.playbackState
+                    },
+                )
             )
         }
     }
@@ -220,7 +231,10 @@ class GroupDirectorEngine {
         )
     }
 
-    fun afterNoCandidate(state: GroupDirectorState): GroupDirectorState = if (state.oneRoundActive) {
+    fun afterNoCandidate(
+        state: GroupDirectorState,
+        effectiveStrategy: TurnTakingStrategy? = null,
+    ): GroupDirectorState = if (state.oneRoundActive) {
         state.copy(
             playbackState = GroupPlaybackState.PAUSED,
             oneRoundActive = false,
@@ -229,7 +243,10 @@ class GroupDirectorEngine {
         )
     } else {
         state.copy(
-            playbackState = if (state.playbackState == GroupPlaybackState.PAUSE_AFTER_CURRENT) {
+            playbackState = if (
+                effectiveStrategy == TurnTakingStrategy.MANUAL ||
+                state.playbackState == GroupPlaybackState.PAUSE_AFTER_CURRENT
+            ) {
                 GroupPlaybackState.PAUSED
             } else {
                 state.playbackState
@@ -247,6 +264,13 @@ class GroupDirectorEngine {
             oneShotReturnToPaused = false,
         )
     }
+
+    fun afterCancellation(state: GroupDirectorState): GroupDirectorState = state.copy(
+        playbackState = GroupPlaybackState.PAUSED,
+        oneShotNextMemberId = null,
+        oneShotReturnToPaused = false,
+        skipNextRequested = false,
+    )
 
     fun shouldContinueAfterReply(
         state: GroupDirectorState,

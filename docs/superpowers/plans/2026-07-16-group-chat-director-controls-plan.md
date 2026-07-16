@@ -2273,8 +2273,26 @@ Task 6 is complete: every required command is green, all ten emulator smoke rows
 
 ---
 
+## Final Review Hardening
+
+The final branch review identified two orchestration barriers and one migration-test gap. They were closed on 2026-07-16 without changing the original Material 3 UI:
+
+- **Manual barrier: PASS** — switching to manual during an active reply now records `PAUSE_AFTER_CURRENT`; the current reply finishes, then automatic chaining stops. If a one-round run is active, its remaining snapshot is retained in `PAUSED` state for explicit `继续一轮`. Manual mode no longer supplies an automatic speaker candidate, including the completion-window case where the previous handoff had already approved continuation.
+- **Cancellation normalization: PASS** — cancellation during member streaming, pending pause, one-round generation, or moderator selection before a member is committed now persists `PAUSED`, releases the generation/reply phase, retains an unfinished round remainder, clears transient one-shot/skip commands, and rethrows `CancellationException`.
+- **Legacy-row migration coverage: PASS** — the 26-to-27 instrumentation test now inserts a valid version-26 conversation before migration and verifies that the existing row receives `group_runtime_state='{}'`.
+
+Validation:
+
+- Focused red/green cycles: missing `afterCancellation`, missing cancellation handoff normalization, and missing manual no-candidate normalization each failed before implementation.
+- `:app:testDebugUnitTest` filtered to `ChatServiceTest` and `service.group.*`: **PASS**, 90 tests, 0 failures/errors.
+- Focused `Migration_26_27_Test` on `emulator-5554`: **PASS**, 1 test.
+- `:app:compileDebugKotlin -x :web:buildWebUi`: **PASS**.
+- `git diff --check`: **PASS**.
+
+---
+
 ## Completion Gate
 
 The feature is complete only when all six tasks are checked, every command in Task 6 is green, the ten-row emulator matrix is recorded, the crash buffer is clean, and the branch contains no uncommitted production or test change.
 
-**Completion gate: PASS (2026-07-16).** Tasks 1-6 and all 47 implementation steps are checked; the required JVM/build and connected-instrumentation commands are green; all ten emulator rows are recorded as PASS; the final crash buffer is empty; and this verification pass leaves no uncommitted production or test change.
+**Completion gate: PASS (2026-07-16).** Tasks 1-6 and all 47 implementation steps are checked; the final-review manual/cancellation barriers are covered and green; the required JVM/build and connected-instrumentation commands are green; all ten emulator rows are recorded as PASS; the final crash buffer is empty; and the completed hardening pass leaves no uncommitted production or test change.

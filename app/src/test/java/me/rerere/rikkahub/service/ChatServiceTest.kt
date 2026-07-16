@@ -2,6 +2,7 @@ package me.rerere.rikkahub.service
 
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -11,6 +12,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -307,11 +309,175 @@ class ChatServiceTest {
                 generationJob = generationJob,
                 engine = engine,
                 speakerId = groupMemberA,
+                configuredLimit = 3,
             )
 
             assertEquals(true, handoff.shouldContinue)
             assertEquals(listOf(groupMemberB), handoff.value.groupRuntimeState.director.oneRoundRemainingMemberIds)
             assertSame(generationJob, session.getJob())
+        } finally {
+            generationJob.cancel()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `manual mode in continuation window blocks an already selected continuation`() = runBlocking {
+        val engine = GroupDirectorEngine()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(scope)
+        val generationJob = Job()
+        session.setJob(generationJob)
+
+        try {
+            session.withGroupDirectorLock {
+                session.markGroupReplyStartedLocked(generationJob)
+            }
+            val handoff = completeDirectorReply(
+                session = session,
+                generationJob = generationJob,
+                engine = engine,
+                speakerId = groupMemberA,
+                configuredLimit = 3,
+            )
+            assertEquals(true, handoff.shouldContinue)
+
+            val selection = session.withGroupDirectorLock {
+                val current = session.state.value
+                val manual = engine.reduce(
+                    state = current.groupRuntimeState.director,
+                    command = GroupDirectorCommand.SetMode(TurnTakingStrategy.MANUAL),
+                    context = GroupDirectorCommandContext(
+                        generationActive = session.isGroupReplyActiveLocked(),
+                        orderedEnabledMemberIds = listOf(groupMemberA, groupMemberB),
+                    ),
+                ).state
+                val selected = engine.applyCandidate(
+                    state = manual,
+                    normalCandidateId = groupMemberB,
+                    orderedCandidateMemberIds = listOf(groupMemberA, groupMemberB),
+                )
+                session.state.value = current.copy(
+                    groupRuntimeState = current.groupRuntimeState.copy(director = selected.state)
+                )
+                if (selected.memberId == null) {
+                    session.releaseGroupGenerationLocked(generationJob)
+                }
+                selected
+            }
+
+            assertEquals(null, selection.memberId)
+            assertEquals(GroupPlaybackState.PAUSED, selection.state.playbackState)
+            assertEquals(null, session.getJob())
+        } finally {
+            generationJob.cancel()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `pending pause cancellation persists paused state and releases generation`() = runBlocking {
+        val engine = GroupDirectorEngine()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(
+            scope = scope,
+            director = GroupDirectorState(playbackState = GroupPlaybackState.PAUSE_AFTER_CURRENT),
+        )
+        val persisted = CompletableDeferred<Unit>()
+        lateinit var generationJob: Job
+        generationJob = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                awaitCancellation()
+            } finally {
+                normalizeCancelledGroupGeneration(session, generationJob, engine) {
+                    session.state.value = it
+                    persisted.complete(Unit)
+                }
+            }
+        }
+        session.setJob(generationJob)
+        session.withGroupDirectorLock {
+            session.markGroupReplyStartedLocked(generationJob)
+        }
+
+        try {
+            generationJob.start()
+            generationJob.cancelAndJoin()
+
+            assertEquals(true, persisted.isCompleted)
+            assertEquals(true, generationJob.isCancelled)
+            assertEquals(GroupPlaybackState.PAUSED, session.state.value.groupRuntimeState.director.playbackState)
+            assertEquals(null, session.getJob())
+            session.withGroupDirectorLock {
+                assertEquals(false, session.isGroupReplyActiveLocked())
+            }
+        } finally {
+            generationJob.cancel()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `one round cancellation persists paused state with remainder`() = runBlocking {
+        val engine = GroupDirectorEngine()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(
+            scope = scope,
+            director = GroupDirectorState(
+                playbackState = GroupPlaybackState.RUNNING,
+                oneRoundActive = true,
+                oneRoundRemainingMemberIds = listOf(groupMemberB),
+            ),
+        )
+        val generationJob = Job()
+        session.setJob(generationJob)
+        session.withGroupDirectorLock {
+            session.markGroupReplyStartedLocked(generationJob)
+        }
+
+        try {
+            normalizeCancelledGroupGeneration(session, generationJob, engine) {
+                session.state.value = it
+            }
+
+            val director = session.state.value.groupRuntimeState.director
+            assertEquals(GroupPlaybackState.PAUSED, director.playbackState)
+            assertEquals(true, director.oneRoundActive)
+            assertEquals(listOf(groupMemberB), director.oneRoundRemainingMemberIds)
+            assertEquals(null, session.getJob())
+        } finally {
+            generationJob.cancel()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `moderator selection cancellation normalizes before a member becomes active`() = runBlocking {
+        val engine = GroupDirectorEngine()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(
+            scope = scope,
+            director = GroupDirectorState(
+                playbackState = GroupPlaybackState.RUNNING,
+                oneRoundActive = true,
+                oneRoundRemainingMemberIds = listOf(groupMemberA, groupMemberB),
+            ),
+        )
+        val generationJob = Job()
+        session.setJob(generationJob)
+
+        try {
+            session.withGroupDirectorLock {
+                assertEquals(false, session.isGroupReplyActiveLocked())
+            }
+            normalizeCancelledGroupGeneration(session, generationJob, engine) {
+                session.state.value = it
+            }
+
+            val director = session.state.value.groupRuntimeState.director
+            assertEquals(GroupPlaybackState.PAUSED, director.playbackState)
+            assertEquals(listOf(groupMemberA, groupMemberB), director.oneRoundRemainingMemberIds)
+            assertEquals(null, session.getJob())
         } finally {
             generationJob.cancel()
             scope.cancel()
@@ -342,6 +508,7 @@ class ChatServiceTest {
         generationJob: Job,
         engine: GroupDirectorEngine,
         speakerId: Uuid,
+        configuredLimit: Int = 1,
     ): GroupGenerationHandoffResult<Conversation> = session.completeGroupReplyHandoff(generationJob) {
         val current = session.state.value
         val director = engine.afterReply(current.groupRuntimeState.director, speakerId)
@@ -356,7 +523,7 @@ class ChatServiceTest {
                 effectiveStrategy = TurnTakingStrategy.AUTO_ROUND_ROBIN,
                 isAddressedTurn = false,
                 alreadySent = 1,
-                configuredLimit = 1,
+                configuredLimit = configuredLimit,
             ),
         )
     }

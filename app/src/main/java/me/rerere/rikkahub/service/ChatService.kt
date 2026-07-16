@@ -104,7 +104,6 @@ import me.rerere.rikkahub.service.group.GroupPlaybackState
 import me.rerere.rikkahub.service.group.GroupRuntimeStateUpdater
 import me.rerere.rikkahub.service.group.GroupSpeakerScorer
 import me.rerere.rikkahub.service.group.GroupSpeakingIntent
-import me.rerere.rikkahub.service.group.GroupTurnSelection
 import me.rerere.rikkahub.service.group.DynamicGroupContextResult
 import me.rerere.rikkahub.service.group.applyGroupApiRewrite
 import me.rerere.rikkahub.service.group.resolveSelectedGroupContextMessages
@@ -208,6 +207,23 @@ internal fun conversationAtGenerationStart(
 ): Conversation {
     require(initialConversation.id == resolvedConversation.id)
     return resolvedConversation.copy(chatSuggestions = emptyList())
+}
+
+internal suspend fun normalizeCancelledGroupGeneration(
+    session: ConversationSession,
+    generationJob: Job?,
+    engine: GroupDirectorEngine,
+    persist: suspend (Conversation) -> Unit,
+): Conversation = withContext(NonCancellable) {
+    session.completeGroupReplyHandoff(generationJob) {
+        val current = session.state.value
+        val normalizedDirector = engine.afterCancellation(current.groupRuntimeState.director)
+        val updated = current.copy(
+            groupRuntimeState = current.groupRuntimeState.copy(director = normalizedDirector)
+        )
+        persist(updated)
+        GroupGenerationHandoffResult(updated, shouldContinue = false)
+    }.value
 }
 
 class ChatService(
@@ -563,6 +579,8 @@ class ChatService(
                 }
 
                 _generationDoneFlow.emit(conversationId)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 e.printStackTrace()
                 addError(e, conversationId, title = context.getString(R.string.error_title_send_message))
@@ -605,6 +623,8 @@ class ChatService(
                 }
 
                 _generationDoneFlow.emit(conversationId)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 e.printStackTrace()
                 addError(e, conversationId, title = "Group message failed")
@@ -665,6 +685,8 @@ class ChatService(
                 finishInterruptedPendingTools(conversationId)
                 handleMessageComplete(conversationId, memberId = memberId, allowAutoChain = false)
                 _generationDoneFlow.emit(conversationId)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 e.printStackTrace()
                 addError(e, conversationId, title = "群组成员回复失败")
@@ -731,6 +753,13 @@ class ChatService(
                     handleMessageComplete(conversationId = conversationId, allowAutoChain = true)
                     _generationDoneFlow.emit(conversationId)
                 } catch (error: CancellationException) {
+                    normalizeCancelledGroupGeneration(
+                        session = session,
+                        generationJob = coroutineContext[Job],
+                        engine = groupDirectorEngine,
+                    ) { updated ->
+                        saveConversation(conversationId, updated)
+                    }
                     throw error
                 } catch (error: Exception) {
                     addError(error, conversationId, title = "Group director failed")
@@ -781,6 +810,8 @@ class ChatService(
                 }
 
                 _generationDoneFlow.emit(conversationId)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 addError(e, conversationId, title = context.getString(R.string.error_title_regenerate_message))
             }
@@ -844,6 +875,8 @@ class ChatService(
                 }
 
                 _generationDoneFlow.emit(conversationId)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 addError(e, conversationId, title = context.getString(R.string.error_title_tool_approval))
             }
@@ -1134,11 +1167,13 @@ class ChatService(
             }
         }.onFailure {
             if (it is CancellationException) {
-                if (groupAssistant.assistantType == AssistantType.GROUP && effectiveMemberId != null) {
-                    withContext(NonCancellable) {
-                        getOrCreateSession(conversationId).completeGroupReplyHandoff(generationJob) {
-                            GroupGenerationHandoffResult(Unit, shouldContinue = false)
-                        }
+                if (groupAssistant.assistantType == AssistantType.GROUP) {
+                    normalizeCancelledGroupGeneration(
+                        session = getOrCreateSession(conversationId),
+                        generationJob = generationJob,
+                        engine = groupDirectorEngine,
+                    ) { updated ->
+                        saveConversation(conversationId, updated)
                     }
                 }
                 throw it
@@ -1908,95 +1943,103 @@ class ChatService(
         generationJob: Job? = null,
     ): Uuid? {
         val session = getOrCreateSession(conversation.id)
-        return session.withGroupDirectorLock {
-            val current = session.state.value
-            val enabledIds = groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
-            val director = groupDirectorEngine.sanitize(
-                state = current.groupRuntimeState.director,
-                enabledMemberIds = enabledIds,
-                generationActive = true,
-            )
-            val eligibleIds = groupDirectorEngine.eligibleMemberIds(director, enabledIds)
-            val orderedEligible = normalizeGroupMemberQueue(current.groupMemberQueue, eligibleIds)
-            val effectiveStrategy = groupDirectorEngine.effectiveStrategy(
-                director,
-                groupAssistant.turnTakingStrategy,
-            )
+        return try {
+            session.withGroupDirectorLock {
+                val current = session.state.value
+                val enabledIds = groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
+                val director = groupDirectorEngine.sanitize(
+                    state = current.groupRuntimeState.director,
+                    enabledMemberIds = enabledIds,
+                    generationActive = true,
+                )
+                val eligibleIds = groupDirectorEngine.eligibleMemberIds(director, enabledIds)
+                val orderedEligible = normalizeGroupMemberQueue(current.groupMemberQueue, eligibleIds)
+                val effectiveStrategy = groupDirectorEngine.effectiveStrategy(
+                    director,
+                    groupAssistant.turnTakingStrategy,
+                )
 
-            val normalSelection = if (director.oneShotNextMemberId != null) {
-                null
-            } else {
-                when (effectiveStrategy) {
-                    TurnTakingStrategy.MANUAL -> {
-                        val memberId = current.activeGroupMemberId?.takeIf { it in orderedEligible }
-                            ?: orderedEligible.firstOrNull()
-                        memberId?.let {
-                            GroupTurnSelection(it, orderedEligible, orderedEligible.indexOf(it))
+                val normalSelection = if (director.oneShotNextMemberId != null) {
+                    null
+                } else {
+                    when (effectiveStrategy) {
+                        TurnTakingStrategy.MANUAL -> null
+                        TurnTakingStrategy.AUTO_ROUND_ROBIN -> nextRoundRobinSelection(
+                            persistedQueue = current.groupMemberQueue,
+                            persistedIndex = current.groupMemberQueueIndex,
+                            activeMemberId = current.activeGroupMemberId,
+                            enabledMemberIds = orderedEligible,
+                        )
+                        TurnTakingStrategy.AUTO_MODERATOR -> {
+                            val resolved = resolveNextSpeakerViaModerator(
+                                conversation = current,
+                                groupAssistant = groupAssistant,
+                                settings = settings,
+                                allowStop = allowModeratorStop || director.oneRoundActive,
+                                eligibleMemberIds = orderedEligible,
+                            )
+                            selectModeratorTurn(
+                                persistedQueue = current.groupMemberQueue,
+                                enabledMemberIds = orderedEligible,
+                                activeMemberId = current.activeGroupMemberId,
+                                resolvedMemberId = resolved,
+                                allowConsecutiveSameSpeaker =
+                                    groupAssistant.groupReplyOptions.allowConsecutiveSameSpeaker,
+                            )
                         }
                     }
-                    TurnTakingStrategy.AUTO_ROUND_ROBIN -> nextRoundRobinSelection(
-                        persistedQueue = current.groupMemberQueue,
-                        persistedIndex = current.groupMemberQueueIndex,
-                        activeMemberId = current.activeGroupMemberId,
-                        enabledMemberIds = orderedEligible,
-                    )
-                    TurnTakingStrategy.AUTO_MODERATOR -> {
-                        val resolved = resolveNextSpeakerViaModerator(
-                            conversation = current,
-                            groupAssistant = groupAssistant,
-                            settings = settings,
-                            allowStop = allowModeratorStop || director.oneRoundActive,
-                            eligibleMemberIds = orderedEligible,
-                        )
-                        selectModeratorTurn(
-                            persistedQueue = current.groupMemberQueue,
-                            enabledMemberIds = orderedEligible,
-                            activeMemberId = current.activeGroupMemberId,
-                            resolvedMemberId = resolved,
-                            allowConsecutiveSameSpeaker =
-                                groupAssistant.groupReplyOptions.allowConsecutiveSameSpeaker,
+                }
+
+                val selection = groupDirectorEngine.applyCandidate(
+                    state = director,
+                    normalCandidateId = normalSelection?.memberId,
+                    orderedCandidateMemberIds = normalSelection?.queue ?: orderedEligible,
+                )
+                val selectedId = selection.memberId
+                if (selectedId == null) {
+                    val stopped = if (
+                        selection.state.playbackState == GroupPlaybackState.PAUSED &&
+                        selection.status == GroupDirectorCommandStatus.APPLIED
+                    ) {
+                        selection.state
+                    } else {
+                        groupDirectorEngine.afterNoCandidate(
+                            state = selection.state,
+                            effectiveStrategy = effectiveStrategy,
                         )
                     }
+                    if (stopped != current.groupRuntimeState.director) {
+                        saveConversation(
+                            current.id,
+                            current.copy(
+                                groupRuntimeState = current.groupRuntimeState.copy(director = stopped)
+                            ),
+                        )
+                    }
+                    session.releaseGroupGenerationLocked(generationJob)
+                    return@withGroupDirectorLock null
                 }
-            }
 
-            val selection = groupDirectorEngine.applyCandidate(
-                state = director,
-                normalCandidateId = normalSelection?.memberId,
-                orderedCandidateMemberIds = normalSelection?.queue ?: orderedEligible,
-            )
-            val selectedId = selection.memberId
-            if (selectedId == null) {
-                val stopped = if (
-                    selection.state.playbackState == GroupPlaybackState.PAUSED &&
-                    selection.status == GroupDirectorCommandStatus.APPLIED
-                ) {
-                    selection.state
-                } else {
-                    groupDirectorEngine.afterNoCandidate(selection.state)
-                }
-                if (stopped != current.groupRuntimeState.director) {
-                    saveConversation(
-                        current.id,
-                        current.copy(
-                            groupRuntimeState = current.groupRuntimeState.copy(director = stopped)
-                        ),
-                    )
-                }
-                session.releaseGroupGenerationLocked(generationJob)
-                return@withGroupDirectorLock null
+                val committedQueue = normalSelection?.queue ?: orderedEligible
+                val committed = current.copy(
+                    activeGroupMemberId = selectedId,
+                    groupMemberQueue = committedQueue,
+                    groupMemberQueueIndex = committedQueue.indexOf(selectedId).coerceAtLeast(0),
+                    groupRuntimeState = current.groupRuntimeState.copy(director = selection.state),
+                )
+                saveConversation(current.id, committed)
+                session.markGroupReplyStartedLocked(generationJob)
+                selectedId
             }
-
-            val committedQueue = normalSelection?.queue ?: orderedEligible
-            val committed = current.copy(
-                activeGroupMemberId = selectedId,
-                groupMemberQueue = committedQueue,
-                groupMemberQueueIndex = committedQueue.indexOf(selectedId).coerceAtLeast(0),
-                groupRuntimeState = current.groupRuntimeState.copy(director = selection.state),
-            )
-            saveConversation(current.id, committed)
-            session.markGroupReplyStartedLocked(generationJob)
-            selectedId
+        } catch (error: CancellationException) {
+            normalizeCancelledGroupGeneration(
+                session = session,
+                generationJob = generationJob,
+                engine = groupDirectorEngine,
+            ) { updated ->
+                saveConversation(conversation.id, updated)
+            }
+            throw error
         }
     }
 

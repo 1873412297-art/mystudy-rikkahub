@@ -28,11 +28,9 @@ class Migration_26_27_Test {
 
     @Test
     fun migrate26To27_addsRuntimeStateWithEmptyObjectDefault() {
-        helper.createDatabase(databaseName, 26).close()
-
-        val db = helper.runMigrationsAndValidate(databaseName, 27, true, Migration_26_27)
+        val conversationId = Uuid.random().toString()
         val values = ContentValues().apply {
-            put("id", Uuid.random().toString())
+            put("id", conversationId)
             put("assistant_id", Uuid.random().toString())
             put("title", "Legacy group")
             put("nodes", "[]")
@@ -41,9 +39,16 @@ class Migration_26_27_Test {
             put("suggestions", "[]")
             put("is_pinned", 0)
         }
-        assertTrue(db.insert("ConversationEntity", SQLiteDatabase.CONFLICT_NONE, values) > 0)
+        helper.createDatabase(databaseName, 26).apply {
+            assertTrue(insert("ConversationEntity", SQLiteDatabase.CONFLICT_NONE, values) > 0)
+            close()
+        }
 
-        db.query("SELECT group_runtime_state FROM ConversationEntity").use { cursor ->
+        val db = helper.runMigrationsAndValidate(databaseName, 27, true, Migration_26_27)
+        db.query(
+            "SELECT group_runtime_state FROM ConversationEntity WHERE id = ?",
+            arrayOf(conversationId),
+        ).use { cursor ->
             assertTrue(cursor.moveToFirst())
             assertEquals("{}", cursor.getString(0))
         }
