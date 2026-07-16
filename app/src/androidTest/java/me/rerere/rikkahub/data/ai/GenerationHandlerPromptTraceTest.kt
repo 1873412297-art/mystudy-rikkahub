@@ -20,6 +20,7 @@ import me.rerere.ai.provider.ProviderManager
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.MessageChunk
+import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessageChoice
 import me.rerere.ai.ui.UIMessagePart
@@ -194,6 +195,85 @@ class GenerationHandlerPromptTraceTest {
         assertEquals(1, provider.callCount)
         assertEquals("plain", (output.last() as GenerationChunk.Messages).messages.last().toText())
         assertTrue(repository.observeConversation(conversationId).first().isEmpty())
+    }
+
+    @Test
+    fun blankToolPromptPreservesProviderBoundTrailingLineWithoutCreatingTraceSection() = runBlocking {
+        val conversationId = insertConversation()
+        val provider = RecordingOpenAIProvider(listOf(responseChunk("plain")))
+        providerManager.registerProvider("openai", provider)
+        val assistant = Assistant(systemPrompt = "S", tavernCardJson = "{}")
+        val blankPromptTool = Tool(
+            name = "blank_prompt_tool",
+            description = "fixture",
+            execute = { emptyList() },
+        )
+
+        handler(DefaultPromptTraceSessionFactory(repository)).generateText(
+            settings = Settings(providers = listOf(providerSetting)),
+            model = model,
+            messages = listOf(UIMessage.user("hello")),
+            assistant = assistant,
+            tools = listOf(blankPromptTool),
+            maxSteps = 1,
+            promptTraceSeed = seed(conversationId, assistant.id),
+        ).toList()
+
+        assertEquals("S\n", provider.capturedMessages.first().toText())
+        val record = repository.observeConversation(conversationId).first().single()
+            as PromptTraceReadResult.Available
+        assertTrue(record.record.payload.sections.none { it.kind == PromptTraceSectionKind.TOOL_PROMPT })
+    }
+
+    @Test
+    fun pendingToolResumeCreatesNoSessionAndFirstRealProviderCallUsesStepZero() = runBlocking {
+        val conversationId = insertConversation()
+        val provider = RecordingOpenAIProvider(listOf(responseChunk("after tool")))
+        providerManager.registerProvider("openai", provider)
+        val providerStepIndices = mutableListOf<Int>()
+        val delegate = DefaultPromptTraceSessionFactory(repository)
+        val recordingFactory = object : PromptTraceSessionFactory {
+            override fun create(
+                seed: PromptTraceSeed,
+                providerStepIndex: Int,
+                providerName: String?,
+            ): PromptTraceSession {
+                providerStepIndices += providerStepIndex
+                return delegate.create(seed, providerStepIndex, providerName)
+            }
+        }
+        val resumableToolMessage = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                UIMessagePart.Tool(
+                    toolCallId = "call-1",
+                    toolName = "fixture_tool",
+                    input = "{}",
+                    approvalState = ToolApprovalState.Approved,
+                ),
+            ),
+        )
+        val tool = Tool(
+            name = "fixture_tool",
+            description = "fixture",
+            execute = { listOf(UIMessagePart.Text("tool result")) },
+        )
+
+        handler(recordingFactory).generateText(
+            settings = Settings(providers = listOf(providerSetting)),
+            model = model,
+            messages = listOf(UIMessage.user("hello"), resumableToolMessage),
+            assistant = Assistant(),
+            tools = listOf(tool),
+            maxSteps = 2,
+            promptTraceSeed = seed(conversationId),
+        ).toList()
+
+        assertEquals(1, provider.callCount)
+        assertEquals(listOf(0), providerStepIndices)
+        val record = repository.observeConversation(conversationId).first().single()
+            as PromptTraceReadResult.Available
+        assertEquals(0, record.record.payload.metadata.providerStepIndex)
     }
 
     @Test

@@ -409,8 +409,8 @@ class GenerationHandler(
             assistantSystemPrompt
         }
         val memoryPrompt = if (assistant.enableMemory) buildMemoryPrompt(memories) else ""
-        val toolPrompts = tools.mapNotNull { tool ->
-            tool.systemPrompt(model, messages).takeIf { it.isNotBlank() }?.let { tool.name to it }
+        val toolPrompts = tools.map { tool ->
+            tool.name to tool.systemPrompt(model, messages)
         }
         val limitedMessages = messages.limitContext(assistant.contextMessageSize)
         val systemText = buildString {
@@ -458,7 +458,7 @@ class GenerationHandler(
                 )
             )
         }
-        toolPrompts.forEach { (name, text) ->
+        toolPrompts.filter { (_, text) -> text.isNotBlank() }.forEach { (name, text) ->
             promptTraceSession?.recordSection(
                 PromptTraceSection(
                     kind = PromptTraceSectionKind.TOOL_PROMPT,
