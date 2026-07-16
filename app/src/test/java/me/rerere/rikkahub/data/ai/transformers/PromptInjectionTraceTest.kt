@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.ai.transformers
 
+import kotlinx.coroutines.CancellationException
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.ai.trace.PromptInjectionMatchType
@@ -14,6 +15,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import kotlin.uuid.Uuid
 
@@ -50,6 +52,50 @@ class PromptInjectionTraceTest {
 
         assertEquals(withoutRecorder.messages, withThrowingRecorder.messages)
         assertEquals(1, recordAttempts)
+    }
+
+    @Test
+    fun `trace recorder cancellation is propagated`() {
+        val cancellation = CancellationException("cancel trace")
+
+        try {
+            transformMessagesWithTrace(
+                messages = listOf(UIMessage.user("hello")),
+                assistant = Assistant(),
+                modeInjections = emptyList(),
+                lorebooks = emptyList(),
+                promptTraceRecorder = object : PromptTraceRecorder {
+                    override fun recordInjectionHits(hits: List<PromptInjectionTrace>) {
+                        throw cancellation
+                    }
+                },
+            )
+            fail("Expected CancellationException")
+        } catch (actual: CancellationException) {
+            assertSame(cancellation, actual)
+        }
+    }
+
+    @Test
+    fun `fatal trace recorder error is propagated`() {
+        val fatal = AssertionError("fatal trace failure")
+
+        try {
+            transformMessagesWithTrace(
+                messages = listOf(UIMessage.user("hello")),
+                assistant = Assistant(),
+                modeInjections = emptyList(),
+                lorebooks = emptyList(),
+                promptTraceRecorder = object : PromptTraceRecorder {
+                    override fun recordInjectionHits(hits: List<PromptInjectionTrace>) {
+                        throw fatal
+                    }
+                },
+            )
+            fail("Expected AssertionError")
+        } catch (actual: AssertionError) {
+            assertSame(fatal, actual)
+        }
     }
 
     @Test
