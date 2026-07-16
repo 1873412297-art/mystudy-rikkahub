@@ -40,7 +40,6 @@ import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
-import me.rerere.ai.ui.canResumeToolExecution
 import me.rerere.ai.ui.finishPendingTools
 import me.rerere.ai.ui.finishReasoning
 import me.rerere.ai.ui.isEmptyInputMessage
@@ -116,7 +115,6 @@ import me.rerere.rikkahub.service.group.DynamicGroupContextResult
 import me.rerere.rikkahub.service.group.applyGroupApiRewrite
 import me.rerere.rikkahub.service.group.resolveSelectedGroupContextMessages
 import me.rerere.rikkahub.service.group.resolveAddressedMember
-import me.rerere.rikkahub.service.group.isGroupContinuationNudge
 import me.rerere.rikkahub.service.group.nextRoundRobinSelection
 import me.rerere.rikkahub.service.group.normalizeGroupMemberQueue
 import me.rerere.rikkahub.service.group.parseGroupModeratorDecision
@@ -427,8 +425,12 @@ class ChatService(
                 settings = settings,
                 assistant = assistant,
             )
+            val withoutNudges = if (assistant.assistantType == AssistantType.GROUP) {
+                renderedConversation.removeGroupContinuationNudgeNodes()
+            } else {
+                renderedConversation
+            }
             val cleanedConversation = if (assistant.assistantType == AssistantType.GROUP) {
-                val withoutNudges = renderedConversation.removeGroupContinuationNudgeNodes()
                 val enabledIds = assistant.groupMembers.filter { it.enabled }.map { it.id }
                 val restoredDirector = groupDirectorEngine.sanitize(
                     state = withoutNudges.groupRuntimeState.director,
@@ -442,8 +444,14 @@ class ChatService(
                 renderedConversation
             }
             updateConversation(conversationId, cleanedConversation)
-            if (cleanedConversation != renderedConversation) {
-                saveConversation(conversationId, cleanedConversation)
+            when {
+                withoutNudges != renderedConversation -> saveConversationAfterRemovingMessages(
+                    conversationId = conversationId,
+                    before = renderedConversation,
+                    after = cleanedConversation,
+                )
+
+                cleanedConversation != renderedConversation -> saveConversation(conversationId, cleanedConversation)
             }
         } else {
             // 新建对话, 并添加预设消息
@@ -1024,7 +1032,11 @@ class ChatService(
                     val rawConversation = session.state.value
                     val cleanedConversation = rawConversation.removeGroupContinuationNudgeNodes()
                     if (cleanedConversation != rawConversation) {
-                        saveConversation(conversationId, cleanedConversation)
+                        saveConversationAfterRemovingMessages(
+                            conversationId = conversationId,
+                            before = rawConversation,
+                            after = cleanedConversation,
+                        )
                     }
                     cleanedConversation
                 }
@@ -1344,52 +1356,16 @@ class ChatService(
 
     // ---- 检查无效消息 ----
 
-    private fun checkInvalidMessages(conversationId: Uuid) {
-        val conversation = getConversationFlow(conversationId).value
-        var messagesNodes = conversation.messageNodes
-
-        // 移除无效 tool (未执行的 Tool)
-        messagesNodes = messagesNodes.mapIndexed { _, node ->
-            // Check for Tool type with non-executed tools
-            val hasPendingTools = node.currentMessage.getTools().any { !it.isExecuted }
-
-            if (hasPendingTools) {
-                // Keep messages that are ready to resume, such as approved/denied/answered tools.
-                val hasResumableTool = node.currentMessage.getTools().any {
-                    !it.isExecuted && it.approvalState.canResumeToolExecution()
-                }
-                if (hasResumableTool) {
-                    return@mapIndexed node
-                }
-
-                // If all tools are executed, it's valid
-                val allToolsExecuted = node.currentMessage.getTools().all { it.isExecuted }
-                if (allToolsExecuted && node.currentMessage.getTools().isNotEmpty()) {
-                    return@mapIndexed node
-                }
-
-                // Remove messages that still have unresolved tool approvals.
-                return@mapIndexed node.copy(
-                    messages = node.messages.filter { it.id != node.currentMessage.id },
-                    selectIndex = node.selectIndex - 1
-                )
-            }
-            node
+    private suspend fun checkInvalidMessages(conversationId: Uuid) {
+        val before = getConversationFlow(conversationId).value
+        val after = before.removeInvalidUnresolvedToolMessages()
+        if (after != before) {
+            saveConversationAfterRemovingMessages(
+                conversationId = conversationId,
+                before = before,
+                after = after,
+            )
         }
-
-        // 更新index
-        messagesNodes = messagesNodes.map { node ->
-            if (node.messages.isNotEmpty() && node.selectIndex !in node.messages.indices) {
-                node.copy(selectIndex = 0)
-            } else {
-                node
-            }
-        }
-
-        // 移除无效消息
-        messagesNodes = messagesNodes.filter { it.messages.isNotEmpty() }
-
-        updateConversation(conversationId, conversation.copy(messageNodes = messagesNodes))
     }
 
     private fun cancelToolByUser(tool: UIMessagePart.Tool): UIMessagePart.Tool {
@@ -1994,27 +1970,6 @@ class ChatService(
         job.cancel()
         runCatching { job.join() }
         finishInterruptedPendingTools(conversationId)
-    }
-
-    private fun Conversation.removeGroupContinuationNudgeNodes(): Conversation {
-        var changed = false
-        val cleanedNodes = messageNodes.mapNotNull { node ->
-            val selectedMessageId = runCatching { node.currentMessage.id }.getOrNull()
-            val filteredMessages = node.messages.filterNot { message ->
-                message.toText().isGroupContinuationNudge()
-            }
-            if (filteredMessages.size != node.messages.size) changed = true
-            if (filteredMessages.isEmpty()) {
-                null
-            } else {
-                val selectedIndex = filteredMessages.indexOfFirst { it.id == selectedMessageId }
-                    .takeIf { it >= 0 }
-                    ?: node.selectIndex.coerceAtMost(filteredMessages.lastIndex)
-                node.copy(messages = filteredMessages, selectIndex = selectedIndex)
-            }
-        }
-        if (cleanedNodes.size != messageNodes.size) changed = true
-        return if (changed) copy(messageNodes = cleanedNodes) else this
     }
 
     // ---- 群组发言决策 ----

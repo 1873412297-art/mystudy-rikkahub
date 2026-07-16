@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.service
 
 import me.rerere.ai.ui.UIMessage
+import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.ai.trace.PromptTraceCleanup
 import me.rerere.rikkahub.data.ai.trace.removedMessageIds
 import me.rerere.rikkahub.data.ai.trace.removedMessageIdsAfter
@@ -11,6 +12,51 @@ import org.junit.Test
 import kotlin.uuid.Uuid
 
 class PromptTraceCleanupTest {
+    @Test
+    fun `invalid unresolved tool alternatives and emptied nodes are explicit removals`() {
+        val keptAlternative = UIMessage.assistant("kept")
+        val removedAlternative = unresolvedToolMessage("tool-alt")
+        val removedOnlyMessage = unresolvedToolMessage("tool-only")
+        val before = Conversation(
+            assistantId = Uuid.random(),
+            messageNodes = listOf(
+                MessageNode(messages = listOf(keptAlternative, removedAlternative), selectIndex = 1),
+                MessageNode.of(removedOnlyMessage),
+                MessageNode(messages = emptyList()),
+            ),
+        )
+
+        val after = before.removeInvalidUnresolvedToolMessages()
+
+        assertEquals(listOf(keptAlternative.id), after.messageNodes.single().messages.map { it.id })
+        assertEquals(
+            setOf(removedAlternative.id, removedOnlyMessage.id),
+            PromptTraceCleanup.RemovedMessages(before).removedMessageIdsAfter(after),
+        )
+    }
+
+    @Test
+    fun `continuation nudge filtering and emptied nodes are explicit removals`() {
+        val kept = UIMessage.assistant("kept")
+        val removedAlternative = UIMessage.user("请继续以[甲]身份回复，不要重复上文。")
+        val removedOnlyMessage = UIMessage.user("请继续以[乙]身份回复，不要重复上文。")
+        val before = Conversation(
+            assistantId = Uuid.random(),
+            messageNodes = listOf(
+                MessageNode(messages = listOf(kept, removedAlternative), selectIndex = 1),
+                MessageNode.of(removedOnlyMessage),
+            ),
+        )
+
+        val after = before.removeGroupContinuationNudgeNodes()
+
+        assertEquals(listOf(kept.id), after.messageNodes.single().messages.map { it.id })
+        assertEquals(
+            setOf(removedAlternative.id, removedOnlyMessage.id),
+            PromptTraceCleanup.RemovedMessages(before).removedMessageIdsAfter(after),
+        )
+    }
+
     @Test
     fun `ordinary stale metadata save never schedules cleanup for a newer response`() {
         val anchor = UIMessage.user("one")
@@ -77,4 +123,15 @@ class PromptTraceCleanupTest {
         assertEquals(setOf(altB.id), removedMessageIds(before, alternativeDeleted))
         assertEquals(setOf(tail.id), removedMessageIds(before, truncated))
     }
+
+    private fun unresolvedToolMessage(toolCallId: String) = UIMessage(
+        role = me.rerere.ai.core.MessageRole.ASSISTANT,
+        parts = listOf(
+            UIMessagePart.Tool(
+                toolCallId = toolCallId,
+                toolName = "fixture_tool",
+                input = "{}",
+            )
+        ),
+    )
 }
