@@ -16,6 +16,8 @@ import java.util.Base64
 object PromptTraceSanitizer {
     private const val TOOL_PREVIEW_LIMIT = 4 * 1024
     private const val ERROR_SUMMARY_LIMIT = 240
+    private const val MAX_DATA_URI_DECODE_CHARS = 1024 * 1024
+    private const val MAX_STRUCTURED_PARSE_CHARS = 256 * 1024
 
     private val json = Json { ignoreUnknownKeys = true }
     private val sensitiveKeys = setOf(
@@ -45,40 +47,14 @@ object PromptTraceSanitizer {
         "custombody",
         "providercustombody",
         "providerbody",
+        "secretkey",
+        "accesskeyid",
     )
-    private val embeddedDataUri = Regex("""(?i)data:[^\s"'<>]+""")
     private val networkUrl = Regex("""(?i)https?://[^\s"'<>]+""")
-    private val looseCredential = Regex(
-        pattern = """
-            (?ix)
-            ["']?
-            (
-                auth(?:orization)? |
-                cookies? |
-                pass(?:word|wd) |
-                credentials? |
-                custom[-_]?body |
-                (?:[a-z0-9]+[-_]?)?headers? |
-                (?:[a-z0-9]+[-_]?)?
-                (?:
-                    api[-_]?key |
-                    token |
-                    secret |
-                    private[-_]?key |
-                    signature
-                )
-            )
-            ["']?
-            \s*[:=]\s*
-            (?:
-                "(?:\\.|[^"])*" |
-                '(?:\\.|[^'])*' |
-                Bearer\s+[^\s,;]+ |
-                [^\s,;]+
-            )
-        """.trimIndent(),
+    private val looseKeyValue = Regex(
+        """(?i)(?<![A-Za-z0-9_-])["']?([A-Za-z][A-Za-z0-9_-]*)["']?\s*[:=]\s*""",
     )
-    private val standaloneBearer = Regex("""(?i)\bBearer\s+[^\s,;]+""")
+    private val standaloneAuthorization = Regex("""(?i)\b(?:Bearer|Basic)\s+[^\s,;]+""")
 
     fun sanitizeMessages(messages: List<UIMessage>): List<PromptTraceMessage> {
         return messages.mapIndexed { index, message ->
@@ -188,7 +164,7 @@ object PromptTraceSanitizer {
         declaredMime: String?,
     ): PromptTraceAttachment {
         if (rawUrl.startsWith("data:", ignoreCase = true)) {
-            val data = parseDataUri(rawUrl)
+            val data = parseDataUri(rawUrl, 0, rawUrl.length)
             return PromptTraceAttachment(
                 kind = kind,
                 displayName = displayName,
@@ -218,6 +194,7 @@ object PromptTraceSanitizer {
     }
 
     private fun redactStructuredText(text: String): String {
+        if (text.length > MAX_STRUCTURED_PARSE_CHARS) return text
         val parsed = runCatching { json.parseToJsonElement(text) }.getOrNull()
         return if (parsed == null) text else redactJson(parsed).toString()
     }
@@ -245,19 +222,56 @@ object PromptTraceSanitizer {
             normalized.endsWith("credential") ||
             normalized.endsWith("credentials") ||
             normalized.endsWith("signature") ||
-            normalized.endsWith("headers")
+            normalized.endsWith("headers") ||
+            normalized.endsWith("custombody") ||
+            normalized.endsWith("providerbody") ||
+            normalized.endsWith("secretkey") ||
+            normalized.endsWith("accesskeyid")
     }
 
     private fun redactLooseText(text: String): String {
-        val keyed = looseCredential.replace(text) { match ->
-            "${match.groupValues[1]}=[redacted]"
+        val result = StringBuilder(text.length.coerceAtMost(MAX_STRUCTURED_PARSE_CHARS))
+        var copiedUntil = 0
+        var searchFrom = 0
+        while (searchFrom < text.length) {
+            val match = looseKeyValue.find(text, searchFrom) ?: break
+            val key = match.groupValues[1]
+            if (!isSensitiveKey(key)) {
+                searchFrom = match.range.last + 1
+                continue
+            }
+            val valueStart = match.range.last + 1
+            val valueEnd = sensitiveValueEnd(
+                text = text,
+                valueStart = valueStart,
+                key = key,
+                headerStyle = match.value.contains(':'),
+            )
+            result.append(text, copiedUntil, match.range.first)
+            result.append(key).append("=[redacted]")
+            copiedUntil = valueEnd
+            searchFrom = valueEnd
         }
-        return standaloneBearer.replace(keyed, "Bearer [redacted]")
+        result.append(text, copiedUntil, text.length)
+        return standaloneAuthorization.replace(result.toString()) { match ->
+            match.value.substringBefore(' ') + " [redacted]"
+        }
     }
 
     private fun stripEmbeddedDataUris(text: String): String {
-        return embeddedDataUri.replace(text) { match ->
-            val data = parseDataUri(match.value)
+        val result = StringBuilder(text.length.coerceAtMost(MAX_STRUCTURED_PARSE_CHARS))
+        var copiedUntil = 0
+        var searchFrom = 0
+        while (searchFrom < text.length) {
+            val start = text.indexOf("data:", searchFrom, ignoreCase = true)
+            if (start < 0) break
+            val end = findDataUriEnd(text, start)
+            if (end <= start + 5) {
+                searchFrom = start + 5
+                continue
+            }
+            val data = parseDataUri(text, start, end)
+            result.append(text, copiedUntil, start)
             val prefix = buildString {
                 append("data:")
                 append(data.mimeType ?: "application/octet-stream")
@@ -267,8 +281,12 @@ object PromptTraceSanitizer {
             val details = data.bytes?.let { bytes ->
                 "[stripped bytes=${bytes.size} sha256=${sha256(bytes)}]"
             } ?: "[stripped]"
-            prefix + details
+            result.append(prefix).append(details)
+            copiedUntil = end
+            searchFrom = end
         }
+        result.append(text, copiedUntil, text.length)
+        return result.toString()
     }
 
     private fun stripNetworkUrls(text: String): String {
@@ -278,28 +296,51 @@ object PromptTraceSanitizer {
     private fun stripNetworkQuery(url: String): String {
         return runCatching {
             val uri = URI(url)
-            URI(uri.scheme, uri.authority, uri.path, null, null).toString()
+            if (uri.host != null) {
+                URI(uri.scheme, null, uri.host, uri.port, uri.path, null, null).toString()
+            } else {
+                val authority = uri.rawAuthority?.substringAfterLast('@')
+                URI(uri.scheme, authority, uri.path, null, null).toString()
+            }
         }.getOrElse {
-            url.substringBefore('?').substringBefore('#')
+            val withoutQuery = url.substringBefore('?').substringBefore('#')
+            val schemeEnd = withoutQuery.indexOf("://")
+            if (schemeEnd < 0) {
+                withoutQuery
+            } else {
+                val authorityStart = schemeEnd + 3
+                val pathStart = withoutQuery.indexOf('/', authorityStart).let {
+                    if (it < 0) withoutQuery.length else it
+                }
+                withoutQuery.substring(0, authorityStart) +
+                    withoutQuery.substring(authorityStart, pathStart).substringAfterLast('@') +
+                    withoutQuery.substring(pathStart)
+            }
         }
     }
 
-    private fun parseDataUri(uri: String): ParsedDataUri {
-        val header = uri.substringBefore(',')
-        val body = uri.substringAfter(',', "")
-        val mediaTypeAndParameters = header.drop(5)
+    private fun parseDataUri(source: String, start: Int, end: Int): ParsedDataUri {
+        val comma = source.indexOf(',', startIndex = start + 5).takeIf { it in (start + 5) until end }
+            ?: return ParsedDataUri(mimeType = null, isBase64 = false, bytes = null)
+        val mediaTypeAndParameters = source.substring(start + 5, comma)
         val mimeType = mediaTypeAndParameters.substringBefore(';').ifBlank { null }
         val isBase64 = mediaTypeAndParameters
             .split(';')
             .drop(1)
             .any { it.equals("base64", ignoreCase = true) }
-        val bytes = runCatching {
-            if (isBase64) {
-                Base64.getMimeDecoder().decode(body)
-            } else {
-                decodePercentEncoded(body)
-            }
-        }.getOrNull()
+        val bodyStart = comma + 1
+        val bodyLength = end - bodyStart
+        val bytes = if (bodyLength > MAX_DATA_URI_DECODE_CHARS) {
+            null
+        } else {
+            runCatching {
+                if (isBase64) {
+                    Base64.getMimeDecoder().decode(source.substring(bodyStart, end))
+                } else {
+                    decodePercentEncoded(source, bodyStart, end)
+                }
+            }.getOrNull()
+        }
         return ParsedDataUri(
             mimeType = mimeType,
             isBase64 = isBase64,
@@ -307,16 +348,45 @@ object PromptTraceSanitizer {
         )
     }
 
-    private fun decodePercentEncoded(value: String): ByteArray {
-        val output = ByteArrayOutputStream(value.length)
-        var plainStart = 0
-        var index = 0
-        while (index < value.length) {
-            if (value[index] == '%' && index + 2 < value.length) {
-                val decoded = value.substring(index + 1, index + 3).toIntOrNull(16)
+    private fun findDataUriEnd(text: String, start: Int): Int {
+        val comma = text.indexOf(',', startIndex = start + 5)
+        if (comma < 0) return start
+        val header = text.substring(start + 5, comma)
+        val isBase64 = header
+            .split(';')
+            .drop(1)
+            .any { it.equals("base64", ignoreCase = true) }
+        var index = comma + 1
+        var padded = false
+        while (index < text.length) {
+            val char = text[index]
+            val accepted = if (isBase64) {
+                when {
+                    char == '=' -> true
+                    char == '\r' || char == '\n' -> true
+                    padded -> false
+                    else -> char.isLetterOrDigit() || char == '+' || char == '/'
+                }
+            } else {
+                !char.isWhitespace() && char !in charArrayOf('"', '\'', '<', '>')
+            }
+            if (!accepted) break
+            if (char == '=') padded = true
+            index += 1
+        }
+        return index
+    }
+
+    private fun decodePercentEncoded(source: String, start: Int, end: Int): ByteArray {
+        val output = ByteArrayOutputStream(end - start)
+        var plainStart = start
+        var index = start
+        while (index < end) {
+            if (source[index] == '%' && index + 2 < end) {
+                val decoded = source.substring(index + 1, index + 3).toIntOrNull(16)
                 if (decoded != null) {
                     if (plainStart < index) {
-                        output.write(value.substring(plainStart, index).toByteArray())
+                        output.write(source.substring(plainStart, index).toByteArray())
                     }
                     output.write(decoded)
                     index += 3
@@ -326,10 +396,103 @@ object PromptTraceSanitizer {
             }
             index += 1
         }
-        if (plainStart < value.length) {
-            output.write(value.substring(plainStart).toByteArray())
+        if (plainStart < end) {
+            output.write(source.substring(plainStart, end).toByteArray())
         }
         return output.toByteArray()
+    }
+
+    private fun sensitiveValueEnd(
+        text: String,
+        valueStart: Int,
+        key: String,
+        headerStyle: Boolean,
+    ): Int {
+        if (valueStart >= text.length) return valueStart
+        val normalized = key.lowercase().filter(Char::isLetterOrDigit)
+        val first = text[valueStart]
+        return when {
+            first == '{' || first == '[' -> findBalancedEnd(text, valueStart, first)
+            first == '"' || first == '\'' -> findQuotedEnd(text, valueStart, first)
+            normalized.contains("authorization") || normalized == "auth" ->
+                findDelimitedValueEnd(text, valueStart)
+            normalized.contains("cookie") && headerStyle -> findLineEnd(text, valueStart)
+            normalized.contains("cookie") -> findDelimitedValueEnd(text, valueStart)
+            normalized.endsWith("headers") ||
+                normalized.endsWith("custombody") ||
+                normalized.endsWith("providerbody") -> findLineEnd(text, valueStart)
+            else -> {
+                var index = valueStart
+                while (index < text.length && !text[index].isWhitespace() &&
+                    text[index] !in charArrayOf(',', ';', '}')
+                ) {
+                    index += 1
+                }
+                index
+            }
+        }
+    }
+
+    private fun findDelimitedValueEnd(text: String, start: Int): Int {
+        var index = start
+        while (index < text.length && text[index] != '\r' && text[index] != '\n' &&
+            text[index] != ',' && text[index] != ';'
+        ) {
+            index += 1
+        }
+        return index
+    }
+
+    private fun findBalancedEnd(text: String, start: Int, opening: Char): Int {
+        val closing = if (opening == '{') '}' else ']'
+        var depth = 0
+        var quote: Char? = null
+        var escaped = false
+        var index = start
+        while (index < text.length) {
+            val char = text[index]
+            if (quote != null) {
+                when {
+                    escaped -> escaped = false
+                    char == '\\' -> escaped = true
+                    char == quote -> quote = null
+                }
+            } else {
+                when (char) {
+                    '"', '\'' -> quote = char
+                    opening -> depth += 1
+                    closing -> {
+                        depth -= 1
+                        if (depth == 0) return index + 1
+                    }
+                }
+            }
+            index += 1
+        }
+        return findLineEnd(text, start)
+    }
+
+    private fun findQuotedEnd(text: String, start: Int, quote: Char): Int {
+        var escaped = false
+        var index = start + 1
+        while (index < text.length) {
+            val char = text[index]
+            when {
+                escaped -> escaped = false
+                char == '\\' -> escaped = true
+                char == quote -> return index + 1
+            }
+            index += 1
+        }
+        return findLineEnd(text, start)
+    }
+
+    private fun findLineEnd(text: String, start: Int): Int {
+        var index = start
+        while (index < text.length && text[index] != '\r' && text[index] != '\n') {
+            index += 1
+        }
+        return index
     }
 
     private fun summarizeText(text: String): PromptTraceTextSummary {

@@ -176,4 +176,47 @@ class PromptTraceCopyFormatterTest {
             assertFalse("Copied text leaked $excluded: $copied", copied.contains(excluded))
         }
     }
+
+    @Test
+    fun `copy excludes wrapped data fragments loose credentials and network user info`() {
+        val message = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                UIMessagePart.Tool(
+                    toolCallId = "copy",
+                    toolName = "fetch",
+                    input = """
+                        Authorization: Basic dXNlcjpwYXNz
+                        Cookie: session=cookie-one; csrf=cookie-two
+                        tenantCustomBody={"secretKey":"body-secret","safe":"body-safe"}
+                        accessKeyId=access-id
+                        blob=data:image/png;base64,aGVs
+                        bG8=
+                        url=https://copy-user:copy-pass@example.com/a?token=url-secret#frag
+                    """.trimIndent(),
+                ),
+            ),
+        )
+        val copied = PromptTraceCopyFormatter.formatMessage(
+            PromptTraceSanitizer.sanitizeMessages(listOf(message)).single(),
+        )
+
+        assertTrue("Expected complete wrapped data stripping in $copied", copied.contains("[stripped bytes=5"))
+        assertTrue(copied.contains("https://example.com/a"))
+        listOf(
+            "aGVs",
+            "bG8=",
+            "dXNlcjpwYXNz",
+            "cookie-one",
+            "cookie-two",
+            "body-secret",
+            "body-safe",
+            "access-id",
+            "copy-user",
+            "copy-pass",
+            "url-secret",
+        ).forEach { excluded ->
+            assertFalse("Copied text leaked $excluded: $copied", copied.contains(excluded))
+        }
+    }
 }
