@@ -220,6 +220,8 @@
         import markdownItTaskLists from 'https://esm.sh/markdown-it-task-lists@2.1.1';
 
         import katex from 'https://esm.sh/katex@0.16.8';
+        // mhchem 扩展: 支持 \ce{} 等化学公式语法
+        import 'https://esm.sh/katex@0.16.8/dist/contrib/mhchem.mjs';
         import hljs from 'https://esm.sh/highlight.js@11.9.0';
         import mermaid from 'https://esm.sh/mermaid@11';
         import { Base64 } from 'https://esm.sh/js-base64@3.7.5';
@@ -247,7 +249,9 @@
         });
 
         // Add plugins
-        md.use(vscodemarkdownItKatex);
+        // 传入已加载 mhchem 扩展的 katex 实例, 否则插件会使用其内部自带的另一个 katex 实例,
+        // 导致 \ce 等 mhchem 语法无法识别 (Undefined control sequence: \ce)
+        md.use(vscodemarkdownItKatex, { katex });
 
         md.use(markdownItTaskLists, {
             enabled: true,
@@ -489,15 +493,13 @@ ${htmlContent}
         // Convert \( ... \) to $ ... $ for LaTeX inline math
         markdownContent = markdownContent.replace(/\\\(([\s\S]*?)\\\)/g, '$$$1$$');
 
-        // SillyTavern 角色卡常见的 <status!>...</status!> 状态栏（标签名带"!"是非法 HTML，
-        // 浏览器解析不了；DOMPurify 也会丢弃）。我们把它转成 <div class="status-block">，
-        // 并且把内部每行行首的「中/英标签:」加上 <span class="status-label"> 着色。
+        // SillyTavern status blocks use non-standard tags such as <status!>.
+        // Normalize them into styled HTML blocks before markdown rendering.
         markdownContent = markdownContent.replace(
             /<(status!?|status_block)>([\s\S]*?)(?:<\/\1>|$)/gi,
             (match, tagName, inner) => {
                 const lines = inner.split('\n').map(line => {
-                    // 匹配 "标签: 内容" — 标签可以是中文/英文/数字，长度 1-10
-                    const m = line.match(/^(\s*)([一-龥A-Za-z0-9_]{1,10})([:：])\s*(.*)$/);
+                    const m = line.match(/^(\s*)([\u4e00-\u9fa5A-Za-z0-9_]{1,10})([:：])\s*(.*)$/);
                     if (m) {
                         const [, lead, label, sep, content] = m;
                         return `${lead}<span class="status-label">${label}${sep}</span>${content}`;
@@ -507,7 +509,6 @@ ${htmlContent}
                 return `\n\n<div class="status-block">${lines.join('\n')}</div>\n\n`;
             }
         );
-
         // Bare JSON Patch arrays are also rendered as compact status blocks.
         markdownContent = transformJsonPatchBlocks(markdownContent);
 

@@ -52,4 +52,3 @@ class TavernRuntimeModelsTest {
         assertTrue(encoded.contains(""""message":"Method is not available""""))
     }
 }
-

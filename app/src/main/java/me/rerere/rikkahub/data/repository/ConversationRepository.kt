@@ -22,6 +22,7 @@ import me.rerere.rikkahub.data.db.entity.MessageNodeEntity
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
+import me.rerere.rikkahub.service.group.GroupRuntimeState
 import me.rerere.rikkahub.utils.JsonInstant
 import java.time.Instant
 import kotlin.uuid.Uuid
@@ -73,6 +74,32 @@ class ConversationRepository(
         }
     }
 
+    fun getUnfiledConversationsOfAssistantPaging(assistantId: Uuid): Flow<PagingData<Conversation>> = Pager(
+        config = PagingConfig(
+            pageSize = PAGE_SIZE,
+            initialLoadSize = INITIAL_LOAD_SIZE,
+            enablePlaceholders = false
+        ),
+        pagingSourceFactory = { conversationDAO.getUnfiledConversationsOfAssistantPaging(assistantId.toString()) }
+    ).flow.map { pagingData ->
+        pagingData.map { entity ->
+            conversationSummaryToConversation(entity)
+        }
+    }
+
+    fun getConversationsOfFolderPaging(folderId: Uuid): Flow<PagingData<Conversation>> = Pager(
+        config = PagingConfig(
+            pageSize = PAGE_SIZE,
+            initialLoadSize = INITIAL_LOAD_SIZE,
+            enablePlaceholders = false
+        ),
+        pagingSourceFactory = { conversationDAO.getConversationsOfFolderPaging(folderId.toString()) }
+    ).flow.map { pagingData ->
+        pagingData.map { entity ->
+            conversationSummaryToConversation(entity)
+        }
+    }
+
     suspend fun getConversationsOfAssistantPage(
         assistantId: Uuid,
         offset: Int,
@@ -114,6 +141,56 @@ class ConversationRepository(
             assistantId = assistantId.toString(),
             searchText = titleKeyword
         )
+        return try {
+            when (
+                val result = pagingSource.load(
+                    PagingSource.LoadParams.Refresh(
+                        key = if (offset == 0) null else offset,
+                        loadSize = limit,
+                        placeholdersEnabled = false
+                    )
+                )
+            ) {
+                is PagingSource.LoadResult.Page -> ConversationPageResult(
+                    items = result.data.map { entity ->
+                        conversationSummaryToConversation(entity)
+                    },
+                    nextOffset = result.nextKey
+                )
+
+                is PagingSource.LoadResult.Error -> throw result.throwable
+                is PagingSource.LoadResult.Invalid -> ConversationPageResult(emptyList(), null)
+            }
+        } finally {
+            pagingSource.invalidate()
+        }
+    }
+
+    suspend fun getUnfiledConversationsOfAssistantPage(
+        assistantId: Uuid,
+        offset: Int,
+        limit: Int,
+    ): ConversationPageResult = loadConversationPage(
+        conversationDAO.getUnfiledConversationsOfAssistantPaging(assistantId.toString()),
+        offset,
+        limit,
+    )
+
+    suspend fun getConversationsOfFolderPage(
+        folderId: Uuid,
+        offset: Int,
+        limit: Int,
+    ): ConversationPageResult = loadConversationPage(
+        conversationDAO.getConversationsOfFolderPaging(folderId.toString()),
+        offset,
+        limit,
+    )
+
+    private suspend fun loadConversationPage(
+        pagingSource: PagingSource<Int, LightConversationEntity>,
+        offset: Int,
+        limit: Int,
+    ): ConversationPageResult {
         return try {
             when (
                 val result = pagingSource.load(
@@ -203,6 +280,10 @@ class ConversationRepository(
         return conversationDAO.existsById(uuid.toString())
     }
 
+    suspend fun countConversations(): Int {
+        return conversationDAO.countAll()
+    }
+
     suspend fun insertConversation(conversation: Conversation) {
         database.withTransaction {
             conversationDAO.insert(
@@ -266,55 +347,13 @@ class ConversationRepository(
         }
     }
 
-    fun conversationToConversationEntity(conversation: Conversation): ConversationEntity {
-        require(conversation.messageNodes.none { it.messages.any { message -> message.hasBase64Part() } })
-        return ConversationEntity(
-            id = conversation.id.toString(),
-            title = conversation.title,
-            nodes = "[]",  // nodes 现在存储在单独的表中
-            createAt = conversation.createAt.toEpochMilli(),
-            updateAt = conversation.updateAt.toEpochMilli(),
-            assistantId = conversation.assistantId.toString(),
-            chatSuggestions = JsonInstant.encodeToString(conversation.chatSuggestions),
-            isPinned = conversation.isPinned,
-            customSystemPrompt = conversation.customSystemPrompt ?: "",
-            modeInjectionIds = JsonInstant.encodeToString(conversation.modeInjectionIds),
-            lorebookIds = JsonInstant.encodeToString(conversation.lorebookIds),
-            workspaceCwd = conversation.workspaceCwd ?: "",
-            statusVariables = JsonInstant.encodeToString(conversation.statusVariables),
-            activeGroupMemberId = conversation.activeGroupMemberId?.toString() ?: "",
-            groupMemberQueue = JsonInstant.encodeToString(conversation.groupMemberQueue),
-            groupMemberQueueIndex = conversation.groupMemberQueueIndex,
-        )
-    }
+    fun conversationToConversationEntity(conversation: Conversation): ConversationEntity =
+        conversationToEntity(conversation)
 
     fun conversationEntityToConversation(
         conversationEntity: ConversationEntity,
         messageNodes: List<MessageNode>
-    ): Conversation {
-        return Conversation(
-            id = Uuid.parse(conversationEntity.id),
-            title = conversationEntity.title,
-            messageNodes = messageNodes.filter { it.messages.isNotEmpty() },
-            createAt = Instant.ofEpochMilli(conversationEntity.createAt),
-            updateAt = Instant.ofEpochMilli(conversationEntity.updateAt),
-            assistantId = Uuid.parse(conversationEntity.assistantId),
-            chatSuggestions = JsonInstant.decodeFromString(conversationEntity.chatSuggestions),
-            isPinned = conversationEntity.isPinned,
-            customSystemPrompt = conversationEntity.customSystemPrompt.ifEmpty { null },
-            modeInjectionIds = JsonInstant.decodeFromString(conversationEntity.modeInjectionIds),
-            lorebookIds = JsonInstant.decodeFromString(conversationEntity.lorebookIds),
-            workspaceCwd = conversationEntity.workspaceCwd.ifEmpty { null },
-            statusVariables = runCatching {
-                JsonInstant.decodeFromString<kotlinx.serialization.json.JsonObject>(conversationEntity.statusVariables)
-            }.getOrDefault(kotlinx.serialization.json.JsonObject(emptyMap())),
-            activeGroupMemberId = conversationEntity.activeGroupMemberId.ifEmpty { null }?.let { Uuid.parse(it) },
-            groupMemberQueue = runCatching {
-                JsonInstant.decodeFromString<List<Uuid>>(conversationEntity.groupMemberQueue)
-            }.getOrDefault(emptyList()),
-            groupMemberQueueIndex = conversationEntity.groupMemberQueueIndex,
-        )
-    }
+    ): Conversation = conversationFromEntity(conversationEntity, messageNodes)
 
     fun getPinnedConversations(): Flow<List<Conversation>> {
         return conversationDAO
@@ -333,6 +372,16 @@ class ConversationRepository(
         )
     }
 
+    /**
+     * 单列更新会话的文件夹归属，folderId 为 null 表示移出文件夹（未归类）。
+     */
+    suspend fun updateConversationFolderId(conversationId: Uuid, folderId: Uuid?) {
+        conversationDAO.updateFolderId(
+            id = conversationId.toString(),
+            folderId = folderId?.toString() ?: ""
+        )
+    }
+
     private fun conversationSummaryToConversation(entity: LightConversationEntity): Conversation {
         return Conversation(
             id = Uuid.parse(entity.id),
@@ -342,6 +391,7 @@ class ConversationRepository(
             createAt = Instant.ofEpochMilli(entity.createAt),
             updateAt = Instant.ofEpochMilli(entity.updateAt),
             messageNodes = emptyList(),
+            folderId = entity.folderId.ifEmpty { null }?.let { Uuid.parse(it) },
         )
     }
 
@@ -400,6 +450,62 @@ class ConversationRepository(
     }
 }
 
+internal fun conversationToEntity(conversation: Conversation): ConversationEntity {
+    require(conversation.messageNodes.none { node ->
+        node.messages.any { message -> message.hasBase64Part() }
+    })
+    return ConversationEntity(
+        id = conversation.id.toString(),
+        title = conversation.title,
+        nodes = "[]",
+        createAt = conversation.createAt.toEpochMilli(),
+        updateAt = conversation.updateAt.toEpochMilli(),
+        assistantId = conversation.assistantId.toString(),
+        chatSuggestions = JsonInstant.encodeToString(conversation.chatSuggestions),
+        isPinned = conversation.isPinned,
+        customSystemPrompt = conversation.customSystemPrompt ?: "",
+        modeInjectionIds = JsonInstant.encodeToString(conversation.modeInjectionIds),
+        lorebookIds = JsonInstant.encodeToString(conversation.lorebookIds),
+        workspaceCwd = conversation.workspaceCwd ?: "",
+        folderId = conversation.folderId?.toString() ?: "",
+        statusVariables = JsonInstant.encodeToString(conversation.statusVariables),
+        groupRuntimeState = JsonInstant.encodeToString(conversation.groupRuntimeState),
+        activeGroupMemberId = conversation.activeGroupMemberId?.toString() ?: "",
+        groupMemberQueue = JsonInstant.encodeToString(conversation.groupMemberQueue),
+        groupMemberQueueIndex = conversation.groupMemberQueueIndex,
+    )
+}
+
+internal fun conversationFromEntity(
+    entity: ConversationEntity,
+    messageNodes: List<MessageNode>,
+): Conversation = Conversation(
+    id = Uuid.parse(entity.id),
+    title = entity.title,
+    messageNodes = messageNodes.filter { it.messages.isNotEmpty() },
+    createAt = Instant.ofEpochMilli(entity.createAt),
+    updateAt = Instant.ofEpochMilli(entity.updateAt),
+    assistantId = Uuid.parse(entity.assistantId),
+    chatSuggestions = JsonInstant.decodeFromString(entity.chatSuggestions),
+    isPinned = entity.isPinned,
+    customSystemPrompt = entity.customSystemPrompt.ifEmpty { null },
+    modeInjectionIds = JsonInstant.decodeFromString(entity.modeInjectionIds),
+    lorebookIds = JsonInstant.decodeFromString(entity.lorebookIds),
+    workspaceCwd = entity.workspaceCwd.ifEmpty { null },
+    folderId = entity.folderId.ifEmpty { null }?.let { Uuid.parse(it) },
+    statusVariables = runCatching {
+        JsonInstant.decodeFromString<kotlinx.serialization.json.JsonObject>(entity.statusVariables)
+    }.getOrDefault(kotlinx.serialization.json.JsonObject(emptyMap())),
+    groupRuntimeState = runCatching {
+        JsonInstant.decodeFromString<GroupRuntimeState>(entity.groupRuntimeState)
+    }.getOrDefault(GroupRuntimeState()),
+    activeGroupMemberId = entity.activeGroupMemberId.ifEmpty { null }?.let { Uuid.parse(it) },
+    groupMemberQueue = runCatching {
+        JsonInstant.decodeFromString<List<Uuid>>(entity.groupMemberQueue)
+    }.getOrDefault(emptyList()),
+    groupMemberQueueIndex = entity.groupMemberQueueIndex,
+)
+
 /**
  * 轻量级的会话查询结果，不包含 nodes 和 suggestions 字段
  */
@@ -410,6 +516,7 @@ data class LightConversationEntity(
     val isPinned: Boolean,
     val createAt: Long,
     val updateAt: Long,
+    val folderId: String = "",
 )
 
 data class ConversationPageResult(

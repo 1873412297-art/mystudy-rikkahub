@@ -21,4 +21,3 @@ class StableMessageHtmlRendererTest {
         assertTrue(html.contains("hello"))
     }
 }
-

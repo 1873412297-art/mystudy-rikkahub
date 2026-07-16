@@ -22,4 +22,3 @@ class StableMessageDomModelsTest {
         assertEquals(listOf("s1", "s2"), message.segments.map { it.id })
     }
 }
-

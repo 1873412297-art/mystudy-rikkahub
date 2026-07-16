@@ -66,4 +66,3 @@ internal fun buildTavernRuntimeScript(): String = """
   window.TH = window.TH || api;
 })();
 """.trimIndent()
-

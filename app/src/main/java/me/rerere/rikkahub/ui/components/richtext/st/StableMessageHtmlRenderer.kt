@@ -78,4 +78,3 @@ internal fun buildStableMessageHtml(message: StableDomMessage): String {
         </html>
     """.trimIndent()
 }
-

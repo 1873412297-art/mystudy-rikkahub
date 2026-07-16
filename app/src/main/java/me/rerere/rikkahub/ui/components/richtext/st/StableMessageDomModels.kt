@@ -25,4 +25,3 @@ internal data class StableDomMessage(
     val segments: List<StableDomSegment>,
     val streaming: Boolean,
 )
-

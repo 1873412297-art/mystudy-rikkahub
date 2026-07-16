@@ -34,7 +34,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -87,7 +90,6 @@ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantRequestPage
 import me.rerere.rikkahub.ui.pages.backup.BackupPage
 import me.rerere.rikkahub.ui.pages.chat.ChatPage
 import me.rerere.rikkahub.ui.pages.debug.DebugPage
-import me.rerere.rikkahub.ui.pages.developer.DeveloperPage
 import me.rerere.rikkahub.ui.pages.extensions.ExtensionsPage
 import me.rerere.rikkahub.ui.pages.extensions.PromptPage
 import me.rerere.rikkahub.ui.pages.extensions.QuickMessagesPage
@@ -130,6 +132,7 @@ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantGroupMembersPage
 import me.rerere.rikkahub.ui.theme.LocalDarkMode
 import me.rerere.rikkahub.ui.theme.RikkahubTheme
 import me.rerere.rikkahub.utils.CrashHandler
+import me.rerere.rikkahub.utils.openUsageAccessSettings
 import okhttp3.OkHttpClient
 import org.koin.android.ext.android.inject
 import org.koin.compose.koinInject
@@ -192,10 +195,12 @@ class RouteActivity : ComponentActivity() {
                     ImageLoader.Builder(context)
                         .crossfade(true)
                         .components {
-                            add(OkHttpNetworkFetcherFactory(
-                                callFactory = { okHttpClient },
-                                cacheStrategy = { CacheControlCacheStrategy() },
-                            ))
+                            add(
+                                OkHttpNetworkFetcherFactory(
+                                    callFactory = { okHttpClient },
+                                    cacheStrategy = { CacheControlCacheStrategy() },
+                                )
+                            )
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                                 add(AnimatedImageDecoder.Factory())
                             } else {
@@ -248,8 +253,10 @@ class RouteActivity : ComponentActivity() {
         // Navigate to the chat screen if a conversation ID is provided
         intent.getStringExtra("conversationId")?.let { text ->
             navStack?.add(Screen.Chat(text))
-        }    }
+        }
+    }
 
+    @OptIn(ExperimentalComposeUiApi::class)
     @Composable
     fun AppRoutes() {
         val toastState = rememberToasterState()
@@ -261,6 +268,10 @@ class RouteActivity : ComponentActivity() {
             eventBus.events.collect { event ->
                 when (event) {
                     is AppEvent.Speak -> tts.speak(event.text)
+                    is AppEvent.OpenUsageAccessSettings -> this@RouteActivity.openUsageAccessSettings()
+                    is AppEvent.McpOAuthCallback -> Unit // 由 McpManager 消费
+                    is AppEvent.ChatGenerationUpdate -> Unit // 由 ChatNotificationManager 消费
+                    is AppEvent.ChatGenerationEnded -> Unit // 由 ChatNotificationManager 消费
                 }
             }
         }
@@ -303,6 +314,7 @@ class RouteActivity : ComponentActivity() {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .semantics { testTagsAsResourceId = true }
                         .background(MaterialTheme.colorScheme.background)
                 ) {
                     NavDisplay(
@@ -331,7 +343,7 @@ class RouteActivity : ComponentActivity() {
                         entryProvider = entryProvider {
                             entry<Screen.Chat>(
                                 metadata = NavDisplay.transitionSpec { fadeIn() togetherWith fadeOut() }
-                                        + NavDisplay.popTransitionSpec { fadeIn() togetherWith fadeOut() }
+                                    + NavDisplay.popTransitionSpec { fadeIn() togetherWith fadeOut() }
                             ) { key ->
                                 ChatPage(
                                     id = Uuid.parse(key.id),
@@ -501,10 +513,6 @@ class RouteActivity : ComponentActivity() {
 
                             entry<Screen.SettingWeb> {
                                 SettingWebPage()
-                            }
-
-                            entry<Screen.Developer> {
-                                DeveloperPage()
                             }
 
                             entry<Screen.Debug> {
@@ -728,9 +736,6 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object SettingWeb : Screen
-
-    @Serializable
-    data object Developer : Screen
 
     @Serializable
     data object Debug : Screen

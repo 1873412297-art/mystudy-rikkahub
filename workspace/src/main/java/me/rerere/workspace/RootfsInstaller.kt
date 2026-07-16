@@ -179,6 +179,7 @@ class RootfsInstaller(
 
     private fun createSymlink(root: File, target: File, linkName: String) {
         if (linkName.isBlank()) return
+        var fallbackSource: File? = null
         val linkTarget = if (File(linkName).isAbsolute) {
             File(linkName)
         } else {
@@ -187,10 +188,29 @@ class RootfsInstaller(
             require(resolved.path == rootFile.path || resolved.path.startsWith(rootFile.path + File.separator)) {
                 "Symlink escapes rootfs: ${target.name}"
             }
+            fallbackSource = resolved
             (target.parentFile ?: root).toPath().relativize(resolved.toPath()).toFile()
         }
         target.delete()
-        Files.createSymbolicLink(target.toPath(), linkTarget.toPath())
+        runCatching {
+            Files.createSymbolicLink(target.toPath(), linkTarget.toPath())
+        }.recoverCatching { error ->
+            if (error !is IOException &&
+                error !is UnsupportedOperationException &&
+                error !is SecurityException
+            ) {
+                throw error
+            }
+            val source = fallbackSource
+            if (source != null && source.isFile) {
+                source.copyTo(target, overwrite = true)
+                target.setReadable(source.canRead(), false)
+                target.setWritable(source.canWrite(), true)
+                target.setExecutable(source.canExecute(), false)
+            } else {
+                throw error
+            }
+        }.getOrThrow()
     }
 
     private fun createHardLink(root: File, target: File, linkName: String) {

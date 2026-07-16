@@ -14,4 +14,3 @@ internal class TavernRuntimeEventBus {
 
     fun recent(): List<Pair<String, JsonElement?>> = history.toList()
 }
-

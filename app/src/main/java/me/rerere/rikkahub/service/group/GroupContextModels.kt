@@ -9,6 +9,7 @@ import kotlinx.serialization.encoding.Encoder
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.GroupContextOptions
+import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import kotlin.uuid.Uuid
 
 @Serializable
@@ -21,7 +22,26 @@ data class GroupRuntimeState(
     val activeAddressedMemberId: Uuid? = null,
     val activeAddressedTurnId: Uuid? = null,
     val lastResolverDebug: GroupResolverDebugState? = null,
+    val director: GroupDirectorState = GroupDirectorState(),
 )
+
+@Serializable
+data class GroupDirectorState(
+    val modeOverride: TurnTakingStrategy? = null,
+    val playbackState: GroupPlaybackState = GroupPlaybackState.RUNNING,
+    val oneShotNextMemberId: Uuid? = null,
+    val oneShotReturnToPaused: Boolean = false,
+    val oneRoundActive: Boolean = false,
+    val oneRoundRemainingMemberIds: List<Uuid> = emptyList(),
+    val skipNextRequested: Boolean = false,
+)
+
+@Serializable
+enum class GroupPlaybackState {
+    RUNNING,
+    PAUSE_AFTER_CURRENT,
+    PAUSED,
+}
 
 @Serializable
 data class GroupRelationshipKey(

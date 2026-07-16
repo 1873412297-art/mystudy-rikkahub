@@ -31,11 +31,10 @@ data class Conversation(
     val lorebookIds: Set<Uuid> = emptySet(),
     // Absolute path inside the workspace rootfs
     val workspaceCwd: String? = null,
-    // 状态变量系统：会话级 JSON 状态对象，由 LLM 通过 status block 增量 patch
+    // 所属文件夹（助手内分组），null 表示未归入任何文件夹
+    val folderId: Uuid? = null,
     val statusVariables: JsonObject = JsonObject(emptyMap()),
-    // 群组助手运行时状态：私有备注、关系矩阵、场景摘要等持久化玩法状态
     val groupRuntimeState: GroupRuntimeState = GroupRuntimeState(),
-    // 群组助手运行时状态：当前发言成员、本轮发言队列、队列内位置
     val activeGroupMemberId: Uuid? = null,
     val groupMemberQueue: List<Uuid> = emptyList(),
     val groupMemberQueueIndex: Int = 0,
@@ -98,13 +97,6 @@ data class Conversation(
         )
     }
 
-    /**
-     * 按消息 ID（而非数组下标）合并 chunk 流。
-     * - 已存在 ID 的 message → 原地更新（流式 chunk）
-     * - 全新 ID → 追加为新 MessageNode（并行成员回复时用）
-     *
-     * 用下标合并会造成多个成员并行流式时互相覆盖，所以这里改成按 ID 匹配。
-     */
     fun mergeMessages(messages: List<UIMessage>): Conversation {
         val newNodes = this.messageNodes.toMutableList()
         messages.forEach { message ->
@@ -114,13 +106,13 @@ data class Conversation(
             if (nodeIndex >= 0) {
                 val node = newNodes[nodeIndex]
                 val newMessages = node.messages.toMutableList()
-                val msgIdx = newMessages.indexOfFirst { it.id == message.id }
-                if (msgIdx >= 0) {
-                    newMessages[msgIdx] = message
+                val messageIndex = newMessages.indexOfFirst { it.id == message.id }
+                if (messageIndex >= 0) {
+                    newMessages[messageIndex] = message
                 }
                 newNodes[nodeIndex] = node.copy(
                     messages = newMessages,
-                    selectIndex = msgIdx.coerceAtLeast(0)
+                    selectIndex = messageIndex.coerceAtLeast(0)
                 )
             } else {
                 newNodes.add(message.toMessageNode())

@@ -1,3 +1,5 @@
+import org.apache.tools.ant.taskdefs.condition.Os
+
 plugins {
     alias(libs.plugins.android.library)
 }
@@ -10,16 +12,10 @@ val buildWebUi = tasks.register<Exec>("buildWebUi") {
     description = "Build web-ui and copy its static output into the web module resources."
 
     workingDir = webUiDir.asFile
-    val hasZsh = runCatching {
-        ProcessBuilder("which", "zsh").start().waitFor() == 0
-    }.getOrDefault(false)
-    val isWindows = System.getProperty("os.name").contains("Windows", ignoreCase = true)
-    if (isWindows) {
-        commandLine("cmd", "/c", "pnpm", "run", "build")
-    } else if (hasZsh) {
-        commandLine("zsh", "-ic", "pnpm run build")
-    } else {
-        commandLine("pnpm", "run", "build")
+    when {
+        Os.isFamily(Os.FAMILY_MAC) -> commandLine("zsh", "-ic", "pnpm run build")
+        Os.isFamily(Os.FAMILY_WINDOWS) -> commandLine("cmd", "/c", "pnpm.cmd run build")
+        else -> commandLine("pnpm", "run", "build")
     }
 
     inputs.files(

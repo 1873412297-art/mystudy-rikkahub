@@ -14,10 +14,12 @@ import androidx.lifecycle.viewModelScope
 import com.google.firebase.analytics.FirebaseAnalytics
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -41,6 +43,8 @@ import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FavoriteRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.service.group.GroupDirectorCommand
+import me.rerere.rikkahub.service.group.GroupDirectorCommandStatus
 import me.rerere.rikkahub.service.group.sanitizeManualSelection
 import me.rerere.rikkahub.service.group.toggleManualSelection
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
@@ -147,6 +151,20 @@ class ChatVM(
     fun triggerMember(memberId: Uuid) {
         viewModelScope.launch {
             chatService.triggerMemberReply(_conversationId, memberId)
+        }
+    }
+
+    private val _groupDirectorNotices = MutableSharedFlow<GroupDirectorCommandStatus>(
+        extraBufferCapacity = 1,
+    )
+    val groupDirectorNotices = _groupDirectorNotices.asSharedFlow()
+
+    fun applyGroupDirectorCommand(command: GroupDirectorCommand) {
+        viewModelScope.launch {
+            val result = chatService.applyGroupDirectorCommand(_conversationId, command)
+            if (result.status != GroupDirectorCommandStatus.APPLIED) {
+                _groupDirectorNotices.emit(result.status)
+            }
         }
     }
 
@@ -355,7 +373,11 @@ class ChatVM(
     fun moveConversationToAssistant(conversation: Conversation, targetAssistantId: Uuid) {
         viewModelScope.launch {
             val conversationFull = conversationRepo.getConversationById(conversation.id) ?: return@launch
-            val updatedConversation = conversationFull.copy(assistantId = targetAssistantId)
+            // 文件夹是助手内分组，切换助手后原文件夹在新助手下不可见，需清空归属避免会话丢失
+            val updatedConversation = conversationFull.copy(
+                assistantId = targetAssistantId,
+                folderId = null,
+            )
             if (conversation.id == _conversationId) {
                 chatService.saveConversation(_conversationId, updatedConversation)
                 settingsStore.updateAssistant(targetAssistantId)
