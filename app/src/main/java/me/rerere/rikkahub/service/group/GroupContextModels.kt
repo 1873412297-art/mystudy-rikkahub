@@ -169,4 +169,5 @@ data class GroupContextBuildInput(
 data class GroupContextBuildResult(
     val messages: List<UIMessage>,
     val debugSections: List<String>,
+    val syntheticMessageId: Uuid? = null,
 )

@@ -277,6 +277,39 @@ class GenerationHandlerPromptTraceTest {
     }
 
     @Test
+    fun toolDrivenProviderCallsCreateConsecutiveTraceStepsFromOneSeed() = runBlocking {
+        val conversationId = insertConversation()
+        val provider = SequencedOpenAIProvider(
+            calls = listOf(
+                listOf(toolCallChunk()),
+                listOf(responseChunk("done")),
+            ),
+        )
+        providerManager.registerProvider("openai", provider)
+        val tool = Tool(
+            name = "fixture_tool",
+            description = "fixture",
+            execute = { listOf(UIMessagePart.Text("tool result")) },
+        )
+
+        handler(DefaultPromptTraceSessionFactory(repository)).generateText(
+            settings = Settings(providers = listOf(providerSetting)),
+            model = model,
+            messages = listOf(UIMessage.user("hello")),
+            assistant = Assistant(streamOutput = true),
+            tools = listOf(tool),
+            maxSteps = 2,
+            promptTraceSeed = seed(conversationId),
+        ).toList()
+
+        assertEquals(2, provider.callCount)
+        val records = repository.observeConversation(conversationId).first()
+            .map { it as PromptTraceReadResult.Available }
+        assertEquals(setOf(0, 1), records.map { it.record.payload.metadata.providerStepIndex }.toSet())
+        assertTrue(records.all { it.record.payload.metadata.status == PromptTraceStatus.COMPLETED })
+    }
+
+    @Test
     fun providerFailureMarksTraceFailedAndRethrowsOriginalFailure() = runBlocking {
         val conversationId = insertConversation()
         val failure = IllegalStateException("provider failed")
@@ -447,6 +480,28 @@ class GenerationHandlerPromptTraceTest {
         usage = usage,
     )
 
+    private fun toolCallChunk() = MessageChunk(
+        id = Uuid.random().toString(),
+        model = model.modelId,
+        choices = listOf(
+            UIMessageChoice(
+                index = 0,
+                delta = UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    parts = listOf(
+                        UIMessagePart.Tool(
+                            toolCallId = "call-1",
+                            toolName = "fixture_tool",
+                            input = "{}",
+                        )
+                    ),
+                ),
+                message = null,
+                finishReason = null,
+            )
+        ),
+    )
+
     private class RecordingOpenAIProvider(
         private val chunks: List<MessageChunk> = emptyList(),
         private val failure: Throwable? = null,
@@ -479,6 +534,33 @@ class GenerationHandlerPromptTraceTest {
         private fun recordCall(messages: List<UIMessage>) {
             callCount++
             capturedMessages = messages
+        }
+    }
+
+    private class SequencedOpenAIProvider(
+        private val calls: List<List<MessageChunk>>,
+    ) : Provider<ProviderSetting.OpenAI> {
+        var callCount: Int = 0
+
+        override suspend fun listModels(providerSetting: ProviderSetting.OpenAI): List<Model> = emptyList()
+
+        override suspend fun generateText(
+            providerSetting: ProviderSetting.OpenAI,
+            messages: List<UIMessage>,
+            params: TextGenerationParams,
+        ): MessageChunk = nextCall().last()
+
+        override suspend fun streamText(
+            providerSetting: ProviderSetting.OpenAI,
+            messages: List<UIMessage>,
+            params: TextGenerationParams,
+        ): Flow<MessageChunk> = flow {
+            nextCall().forEach { emit(it) }
+        }
+
+        private fun nextCall(): List<MessageChunk> {
+            val index = callCount++
+            return calls[index]
         }
     }
 
