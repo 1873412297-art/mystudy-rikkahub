@@ -64,14 +64,16 @@ class GroupContextBuilder {
             }
         }.trim()
 
-        val messages = if (system.isBlank()) {
+        val syntheticMessage = system.takeIf { it.isNotBlank() }?.let(UIMessage::system)
+        val messages = if (syntheticMessage == null) {
             input.visibleMessages
         } else {
-            listOf(UIMessage.system(system)) + input.visibleMessages
+            listOf(syntheticMessage) + input.visibleMessages
         }
         return GroupContextBuildResult(
             messages = messages,
             debugSections = if (system.isBlank()) emptyList() else listOf(system),
+            syntheticMessageId = syntheticMessage?.id,
         )
     }
 }

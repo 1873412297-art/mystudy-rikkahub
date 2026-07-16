@@ -49,6 +49,10 @@ import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.GenerationChunk
 import me.rerere.rikkahub.data.ai.GenerationHandler
+import me.rerere.rikkahub.data.ai.trace.PromptTraceSectionKind
+import me.rerere.rikkahub.data.ai.trace.PromptTraceSourceHint
+import me.rerere.rikkahub.data.ai.trace.buildPromptTraceSeed
+import me.rerere.rikkahub.data.ai.trace.removedMessageIds
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.tools.createConversationTools
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
@@ -92,6 +96,7 @@ import me.rerere.rikkahub.data.model.toMessageNode
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
+import me.rerere.rikkahub.data.repository.PromptTraceRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.group.GroupContextBuildInput
 import me.rerere.rikkahub.service.group.GroupContextBuilder
@@ -260,6 +265,7 @@ class ChatService(
     private val appEventBus: AppEventBus,
     private val settingsStore: SettingsStore,
     private val conversationRepo: ConversationRepository,
+    private val promptTraceRepository: PromptTraceRepository,
     private val memoryRepository: MemoryRepository,
     private val generationHandler: GenerationHandler,
     private val templateTransformer: TemplateTransformer,
@@ -1048,7 +1054,7 @@ class ChatService(
                         ?: "Manual or existing turn-taking selected this speaker.",
                 )
             }
-            val layeredMessages = if (
+            val groupContextBuildResult = if (
                 effectiveMemberId != null &&
                 groupAssistant.assistantType == AssistantType.GROUP &&
                 groupAssistant.groupContextOptions.enableLayeredContext
@@ -1062,12 +1068,37 @@ class ChatService(
                         contextOptions = groupAssistant.groupContextOptions,
                         speakingIntent = speakingIntent,
                     )
-                ).messages
+                )
             } else {
-                visibleMessages
+                null
             }
+            val layeredMessages = groupContextBuildResult?.messages ?: visibleMessages
+            val sourceHints = groupContextBuildResult?.syntheticMessageId?.let { messageId ->
+                listOf(
+                    PromptTraceSourceHint(
+                        messageId = messageId,
+                        kind = PromptTraceSectionKind.GROUP_LAYERED_CONTEXT,
+                        label = "Group layered context",
+                    )
+                )
+            }.orEmpty()
             val originalMessageIds = layeredMessages.map { it.id }.toSet()
             val messagesForGeneration = layeredMessages.applyGroupApiRewrite(groupAssistant, effectiveMemberId)
+            val memberName = effectiveMemberId
+                ?.let { id -> groupAssistant.groupMembers.find { it.id == id } }
+                ?.displayName
+                ?.takeIf { it.isNotBlank() }
+            val promptTraceSeed = buildPromptTraceSeed(
+                conversationId = conversationId,
+                conversationAssistant = groupAssistant,
+                generatingAssistant = assistant,
+                model = model,
+                visibleMessages = visibleMessages,
+                allAssistants = settings.assistants,
+                speakerMemberId = effectiveMemberId,
+                speakerName = memberName,
+                sourceHints = sourceHints,
+            )
 
             // start generating
             val session = getOrCreateSession(conversationId)
@@ -1081,6 +1112,9 @@ class ChatService(
                 conversationModeInjectionIds = conversation.modeInjectionIds,
                 conversationLorebookIds = conversation.lorebookIds,
                 workspaceCwd = conversation.workspaceCwd,
+                conversationId = conversationId,
+                memberId = effectiveMemberId,
+                promptTraceSeed = promptTraceSeed,
                 memories = if (assistant.useGlobalMemory) {
                     memoryRepository.getGlobalMemories()
                 } else {
@@ -1170,8 +1204,6 @@ class ChatService(
                     is GenerationChunk.Messages -> {
                         // 群组对话：给每个 chunk message 打当前发言成员的 memberId + name
                         val stampedMessages = if (effectiveMemberId != null) {
-                            val member = groupAssistant.groupMembers.find { it.id == effectiveMemberId }
-                            val memberName = member?.displayName?.takeIf { it.isNotBlank() }
                             chunk.messages.toStorableGroupGeneratedMessages(
                                 originalMessageIds = originalMessageIds,
                                 effectiveMemberId = effectiveMemberId,
@@ -1642,13 +1674,26 @@ class ChatService(
             return // 新会话且为空时不保存
         }
 
+        val previous = getConversationFlow(conversationId).value
         val updatedConversation = conversation.copy()
+        val removedIds = if (previous.id == updatedConversation.id) {
+            removedMessageIds(previous, updatedConversation)
+        } else {
+            emptySet()
+        }
         updateConversation(conversationId, updatedConversation)
 
         if (!exists) {
             conversationRepo.insertConversation(updatedConversation)
         } else {
             conversationRepo.updateConversation(updatedConversation)
+        }
+        if (removedIds.isNotEmpty()) {
+            runCatching {
+                promptTraceRepository.deleteForRemovedMessages(conversationId, removedIds)
+            }.onFailure { error ->
+                Log.w(TAG, "Prompt trace cleanup failed", error)
+            }
         }
     }
 

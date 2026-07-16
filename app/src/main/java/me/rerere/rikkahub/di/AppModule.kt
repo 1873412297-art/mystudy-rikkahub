@@ -95,6 +95,7 @@ val appModule = module {
             appEventBus = get(),
             settingsStore = get(),
             conversationRepo = get(),
+            promptTraceRepository = get(),
             memoryRepository = get(),
             generationHandler = get(),
             templateTransformer = get(),

@@ -51,6 +51,7 @@ class GroupContextBuilderTest {
         assertTrue(system.contains("Scene: 众人夜谈。"))
         assertTrue(system.contains("Speaking intent: hide_secret"))
         assertEquals("你们怎么看？", result.messages.last().toText())
+        assertEquals(result.messages.first().id, result.syntheticMessageId)
     }
 
     @Test
