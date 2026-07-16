@@ -76,7 +76,7 @@
 - Consumes: existing `Conversation.groupRuntimeState: GroupRuntimeState` and `JsonInstant`.
 - Produces: `ConversationEntity.groupRuntimeState: String`, `Migration_26_27`, `conversationToEntity(Conversation)`, and `conversationFromEntity(ConversationEntity, List<MessageNode>)`.
 
-- [ ] **Step 1: Write failing JVM mapping tests**
+- [x] **Step 1: Write failing JVM mapping tests**
 
 Create `ConversationRuntimeStateMappingTest.kt` with exact round-trip and malformed-input cases:
 
@@ -124,7 +124,7 @@ class ConversationRuntimeStateMappingTest {
 }
 ```
 
-- [ ] **Step 2: Run the mapping test and confirm the missing mapper contract**
+- [x] **Step 2: Run the mapping test and confirm the missing mapper contract**
 
 Run:
 
@@ -134,7 +134,7 @@ Run:
 
 Expected: compilation fails because `conversationToEntity`, `conversationFromEntity`, and `ConversationEntity.groupRuntimeState` do not exist.
 
-- [ ] **Step 3: Add the entity column and pure mapping functions**
+- [x] **Step 3: Add the entity column and pure mapping functions**
 
 Insert the new field after `statusVariables` in `ConversationEntity.kt`:
 
@@ -221,7 +221,7 @@ Add this import to `ConversationRepository.kt`:
 import me.rerere.rikkahub.service.group.GroupRuntimeState
 ```
 
-- [ ] **Step 4: Run the mapping tests and all repository-adjacent JVM tests**
+- [x] **Step 4: Run the mapping tests and all repository-adjacent JVM tests**
 
 Run:
 
@@ -231,7 +231,7 @@ Run:
 
 Expected: `BUILD SUCCESSFUL`, two tests pass.
 
-- [ ] **Step 5: Write the failing 26-to-27 migration test**
+- [x] **Step 5: Write the failing 26-to-27 migration test**
 
 Create `Migration_26_27_Test.kt`:
 
@@ -290,7 +290,7 @@ class Migration_26_27_Test {
 }
 ```
 
-- [ ] **Step 6: Run the migration test and confirm version 27 is absent**
+- [x] **Step 6: Run the migration test and confirm version 27 is absent**
 
 Run:
 
@@ -300,7 +300,7 @@ Run:
 
 Expected: compilation fails because `Migration_26_27` and schema version 27 do not exist.
 
-- [ ] **Step 7: Implement and register the additive migration**
+- [x] **Step 7: Implement and register the additive migration**
 
 Create `Migration_26_27.kt`:
 
@@ -356,7 +356,7 @@ import me.rerere.rikkahub.data.db.migrations.Migration_26_27
 )
 ```
 
-- [ ] **Step 8: Generate schema 27 and run persistence verification**
+- [x] **Step 8: Generate schema 27 and run persistence verification**
 
 Run:
 
@@ -367,7 +367,7 @@ Run:
 
 Expected: both commands report `BUILD SUCCESSFUL`; `app/schemas/me.rerere.rikkahub.data.db.AppDatabase/27.json` contains `group_runtime_state` with default `'{}'`.
 
-- [ ] **Step 9: Commit the persistence slice**
+- [x] **Step 9: Commit the persistence slice**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/data/db app/src/main/java/me/rerere/rikkahub/data/repository/ConversationRepository.kt app/src/main/java/me/rerere/rikkahub/di/DataSourceModule.kt app/src/test/java/me/rerere/rikkahub/data/repository app/src/androidTest/java/me/rerere/rikkahub/data/db/migrations/Migration_26_27_Test.kt app/schemas/me.rerere.rikkahub.data.db.AppDatabase/27.json
@@ -389,7 +389,7 @@ git commit -m "fix: persist group runtime state"
 - Consumes: `TurnTakingStrategy`, `normalizeGroupMemberQueue`, and enabled member IDs in stable order.
 - Produces: `GroupDirectorState`, `GroupPlaybackState`, `GroupDirectorCommand`, `GroupDirectorCommandResult`, `GroupDirectorCommandStatus`, `GroupDirectorSelectionResult`, and `GroupDirectorEngine`.
 
-- [ ] **Step 1: Extend runtime serialization tests before adding the model**
+- [x] **Step 1: Extend runtime serialization tests before adding the model**
 
 Add these tests to `GroupRuntimeStateTest.kt`:
 
@@ -449,7 +449,7 @@ Add `memberA` to that test class and import the director types and `TurnTakingSt
 private val memberA = Uuid.parse("00000000-0000-0000-0000-000000000001")
 ```
 
-- [ ] **Step 2: Create failing engine tests for every approved transition**
+- [x] **Step 2: Create failing engine tests for every approved transition**
 
 Create `GroupDirectorEngineTest.kt` with these fixtures and assertions:
 
@@ -628,7 +628,7 @@ class GroupDirectorEngineTest {
 }
 ```
 
-- [ ] **Step 3: Run the focused tests and confirm domain types are missing**
+- [x] **Step 3: Run the focused tests and confirm domain types are missing**
 
 Run:
 
@@ -638,7 +638,7 @@ Run:
 
 Expected: compilation fails on the new director types.
 
-- [ ] **Step 4: Add serializable director state to `GroupRuntimeState`**
+- [x] **Step 4: Add serializable director state to `GroupRuntimeState`**
 
 Add this property to `GroupRuntimeState`:
 
@@ -672,7 +672,7 @@ enum class GroupPlaybackState {
 }
 ```
 
-- [ ] **Step 5: Implement the pure engine with fixed command/result contracts**
+- [x] **Step 5: Implement the pure engine with fixed command/result contracts**
 
 Create `GroupDirectorEngine.kt`:
 
@@ -943,7 +943,7 @@ class GroupDirectorEngine {
 }
 ```
 
-- [ ] **Step 6: Run all director, runtime, and scheduler tests**
+- [x] **Step 6: Run all director, runtime, and scheduler tests**
 
 Run:
 
@@ -953,7 +953,7 @@ Run:
 
 Expected: `BUILD SUCCESSFUL`; all new and existing group scheduler tests pass.
 
-- [ ] **Step 7: Commit the pure domain slice**
+- [x] **Step 7: Commit the pure domain slice**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/service/group/GroupContextModels.kt app/src/main/java/me/rerere/rikkahub/service/group/GroupDirectorEngine.kt app/src/test/java/me/rerere/rikkahub/service/group/GroupRuntimeStateTest.kt app/src/test/java/me/rerere/rikkahub/service/group/GroupDirectorEngineTest.kt app/src/test/java/me/rerere/rikkahub/data/repository/ConversationRuntimeStateMappingTest.kt
@@ -974,7 +974,7 @@ git commit -m "feat: add group director state machine"
 - Consumes: every Task 2 director type and existing scheduler functions.
 - Produces: `ChatService.applyGroupDirectorCommand(Uuid, GroupDirectorCommand): GroupDirectorCommandResult`, conversation restoration sanitization, atomic selection consumption, and director-aware continuation.
 
-- [ ] **Step 1: Add failing service-boundary regression assertions**
+- [x] **Step 1: Add failing service-boundary regression assertions**
 
 Extend `ChatServiceTest.kt` so generation-start copies prove that director state survives selection and streaming setup:
 
@@ -1024,7 +1024,7 @@ fun `active one round continues past ordinary cap while members remain`() {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests before service edits**
+- [x] **Step 2: Run the focused tests before service edits**
 
 Run:
 
@@ -1034,7 +1034,7 @@ Run:
 
 Expected: the new assertions pass against the pure code; this establishes the service-preservation baseline before orchestration changes.
 
-- [ ] **Step 3: Add a per-session state lock**
+- [x] **Step 3: Add a per-session state lock**
 
 Add imports and the lock API to `ConversationSession.kt`:
 
@@ -1052,7 +1052,7 @@ suspend fun <T> withGroupDirectorLock(block: suspend () -> T): T =
 
 The lock is held for state snapshots/commits, the single moderator selection call, streaming message merges, and persistence. It is never held across the selected member's streamed reply.
 
-- [ ] **Step 4: Add the command entry point and lazy generation starter**
+- [x] **Step 4: Add the command entry point and lazy generation starter**
 
 Keep the existing `CancellationException` import and add these imports to `ChatService.kt`:
 
@@ -1139,7 +1139,7 @@ private suspend fun startGroupDirectorGeneration(conversationId: Uuid) {
 }
 ```
 
-- [ ] **Step 5: Sanitize restored director state without auto-starting work**
+- [x] **Step 5: Sanitize restored director state without auto-starting work**
 
 Replace the group branch in `initializeConversation` with this exact normalization:
 
@@ -1171,7 +1171,7 @@ if (cleanedConversation != renderedConversation) {
 
 This persists `PAUSE_AFTER_CURRENT -> PAUSED` and leaves a restored round paused until an explicit `ContinueOneRound` command.
 
-- [ ] **Step 6: Make group speaker selection an atomic director commit**
+- [x] **Step 6: Make group speaker selection an atomic director commit**
 
 Replace `resolveNextSpeaker` with the following implementation. It calls the moderator at most once and commits the chosen speaker, queue cursor, consumed one-shot, and consumed skip in one save:
 
@@ -1299,7 +1299,7 @@ val localScores = GroupSpeakerScorer().score(
 ).filter { it.memberId in eligibleSet }
 ```
 
-- [ ] **Step 7: Prevent streaming chunks from overwriting a concurrent director command**
+- [x] **Step 7: Prevent streaming chunks from overwriting a concurrent director command**
 
 In the `GenerationChunk.Messages` branch, replace the read/merge/write trio with a locked merge:
 
@@ -1328,7 +1328,7 @@ val updatedConversation = session.withGroupDirectorLock {
 }
 ```
 
-- [ ] **Step 8: Apply post-reply director state and replace the old auto-chain condition**
+- [x] **Step 8: Apply post-reply director state and replace the old auto-chain condition**
 
 In `onSuccess`, replace the current runtime-state update with this locked latest-state update:
 
@@ -1393,7 +1393,7 @@ Remove the old duplicate `saveConversation(conversationId, conversationAfterRunt
 }
 ```
 
-- [ ] **Step 9: Pause explicit director runs after provider failure and preserve cancellation**
+- [x] **Step 9: Pause explicit director runs after provider failure and preserve cancellation**
 
 At the beginning of the existing `onFailure` block, add:
 
@@ -1418,7 +1418,7 @@ if (groupAssistant.assistantType == AssistantType.GROUP && effectiveMemberId != 
 
 Keep the existing error notification and logging after this block.
 
-- [ ] **Step 10: Compile and run all service/group regressions**
+- [x] **Step 10: Compile and run all service/group regressions**
 
 Run:
 
@@ -1429,7 +1429,7 @@ Run:
 
 Expected: both commands report `BUILD SUCCESSFUL`; existing group transport, context, scheduler, and runtime tests remain green.
 
-- [ ] **Step 11: Commit the orchestration slice**
+- [x] **Step 11: Commit the orchestration slice**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/service/ConversationSession.kt app/src/main/java/me/rerere/rikkahub/service/ChatService.kt app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt app/src/test/java/me/rerere/rikkahub/service/group/GroupDirectorEngineTest.kt
@@ -1449,7 +1449,7 @@ git commit -m "feat: orchestrate group director commands"
 - Consumes: persisted director state, group assistant members, `Settings`, and generation activity.
 - Produces: `GroupDirectorUiState`, `GroupDirectorMemberUi`, `buildGroupDirectorUiState`, `ChatVM.applyGroupDirectorCommand`, and `ChatVM.groupDirectorNotices`.
 
-- [ ] **Step 1: Write failing UI-state mapper tests**
+- [x] **Step 1: Write failing UI-state mapper tests**
 
 Create `GroupDirectorUiStateTest.kt`:
 
@@ -1518,7 +1518,7 @@ class GroupDirectorUiStateTest {
 }
 ```
 
-- [ ] **Step 2: Run the mapper test and confirm the UI model is absent**
+- [x] **Step 2: Run the mapper test and confirm the UI model is absent**
 
 Run:
 
@@ -1528,7 +1528,7 @@ Run:
 
 Expected: compilation fails because the mapper types do not exist.
 
-- [ ] **Step 3: Implement the pure UI mapper**
+- [x] **Step 3: Implement the pure UI mapper**
 
 Create `GroupDirectorUiState.kt`:
 
@@ -1604,7 +1604,7 @@ internal fun buildGroupDirectorUiState(
 }
 ```
 
-- [ ] **Step 4: Add command forwarding and typed notices to `ChatVM`**
+- [x] **Step 4: Add command forwarding and typed notices to `ChatVM`**
 
 Add imports:
 
@@ -1633,7 +1633,7 @@ fun applyGroupDirectorCommand(command: GroupDirectorCommand) {
 }
 ```
 
-- [ ] **Step 5: Run mapper tests and compile the ViewModel bridge**
+- [x] **Step 5: Run mapper tests and compile the ViewModel bridge**
 
 Run:
 
@@ -1644,7 +1644,7 @@ Run:
 
 Expected: both commands report `BUILD SUCCESSFUL`.
 
-- [ ] **Step 6: Commit the UI-state slice**
+- [x] **Step 6: Commit the UI-state slice**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/ui/pages/chat/GroupDirectorUiState.kt app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt app/src/test/java/me/rerere/rikkahub/ui/pages/chat/GroupDirectorUiStateTest.kt
@@ -1666,7 +1666,7 @@ git commit -m "feat: expose group director ui state"
 - Consumes: Task 4 UI state and `ChatVM.applyGroupDirectorCommand`.
 - Produces: group-only `GroupDirectorFab`, `GroupDirectorSheet`, resource-backed action labels, and effective-manual integration with `GroupMemberSelector`.
 
-- [ ] **Step 1: Add string resources before the composables**
+- [x] **Step 1: Add string resources before the composables**
 
 Append these base resources before `</resources>` in `values/strings.xml`:
 
@@ -1714,7 +1714,7 @@ Append these translations before `</resources>` in `values-zh/strings.xml`:
 <string name="group_director_not_group">当前会话不是群聊</string>
 ```
 
-- [ ] **Step 2: Write failing Compose tests for the visible contract**
+- [x] **Step 2: Write failing Compose tests for the visible contract**
 
 Create `GroupDirectorControlsTest.kt`:
 
@@ -1821,7 +1821,7 @@ class GroupDirectorControlsTest {
 }
 ```
 
-- [ ] **Step 3: Run the Compose test and confirm the controls are absent**
+- [x] **Step 3: Run the Compose test and confirm the controls are absent**
 
 Run:
 
@@ -1831,7 +1831,7 @@ Run:
 
 Expected: compilation fails because `GroupDirectorFab` and `GroupDirectorSheetContent` do not exist.
 
-- [ ] **Step 4: Implement the themed FAB and bottom-sheet content**
+- [x] **Step 4: Implement the themed FAB and bottom-sheet content**
 
 Create `GroupDirectorControls.kt` with the following public composables and no fixed colors:
 
@@ -2055,7 +2055,7 @@ fun GroupDirectorSheetContent(
 }
 ```
 
-- [ ] **Step 5: Integrate the controls into `ChatPage` and use the effective mode**
+- [x] **Step 5: Integrate the controls into `ChatPage` and use the effective mode**
 
 At the start of `ChatPageContent`, derive the group assistant and state once:
 
@@ -2127,7 +2127,7 @@ if (showDirectorSheet && directorUiState != null) {
 
 Reuse the existing `LocalContext` import and add imports for `GroupDirectorCommandStatus` and the new controls. Keep the existing `ChatInput`, send/cancel affordance, and manual `GroupMemberSelector` layout intact.
 
-- [ ] **Step 6: Run Compose tests, resource validation, and Kotlin compilation**
+- [x] **Step 6: Run Compose tests, resource validation, and Kotlin compilation**
 
 Run:
 
@@ -2138,7 +2138,7 @@ Run:
 
 Expected: both commands report `BUILD SUCCESSFUL`; FAB accessibility, paused-round action, and command dispatch tests pass.
 
-- [ ] **Step 7: Commit the original-style UI slice**
+- [x] **Step 7: Commit the original-style UI slice**
 
 ```powershell
 git add app/src/main/java/me/rerere/rikkahub/ui/pages/chat/GroupDirectorControls.kt app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt app/src/main/res/values/strings.xml app/src/main/res/values-zh/strings.xml app/src/androidTest/java/me/rerere/rikkahub/ui/pages/chat/GroupDirectorControlsTest.kt
@@ -2260,7 +2260,7 @@ Verified on `emulator-5554` (Android 15 / API 35) on 2026-07-16. Full evidence a
 - Connected instrumentation: **PASS** — `BUILD SUCCESSFUL`; app instrumentation 13 tests, 0 failures/errors/skips.
 - Migration 26-to-27: **PASS** — focused migration instrumentation 1/1.
 - Director FAB and original visual style: **PASS** — themed non-overlapping FAB plus Material 3 sheet/handle/actions/modes/three avatars verified by UI tree and screenshot.
-- Graceful pause: **PASS** — successful four-chunk stream completed after `说完暂停`; UI/Room returned paused and no next automatic request started.
+- Graceful pause: **PASS** — the review rerun used a delayed four-chunk stream; `21-pending-status.xml/png` captured the complete in-flight status `本条回复结束后暂停`, `22-complete-paused.xml/png` captured the completed `已暂停` state, `22-request-count.txt` recorded one request/one completion/zero extra request, and `23-room-final.json` recorded `playbackState=PAUSED`.
 - One-round and moderator STOP: **PASS** — one round produced `QA B`, `QA Member`, and `Q AA` exactly once then paused; moderator UUID -> member -> `STOP` produced no remaining auto reply.
 - Skip-next and single-member notice: **PASS** — skip was consumed and a following valid member completed a successful reply; one-member `暂无其他角色` notice remains screenshot-confirmed.
 - One-shot nomination: **PASS** — paused nomination produced exactly one successful `QA B` stream and returned to paused with no pending one-shot.
@@ -2277,4 +2277,4 @@ Task 6 is complete: every required command is green, all ten emulator smoke rows
 
 The feature is complete only when all six tasks are checked, every command in Task 6 is green, the ten-row emulator matrix is recorded, the crash buffer is clean, and the branch contains no uncommitted production or test change.
 
-**Completion gate: PASS (2026-07-16).** Task 6 steps 1-7 are checked; the required JVM/build and connected-instrumentation commands are green; all ten emulator rows are recorded as PASS; the final crash buffer is empty; and this verification pass leaves no uncommitted production or test change.
+**Completion gate: PASS (2026-07-16).** Tasks 1-6 and all 47 implementation steps are checked; the required JVM/build and connected-instrumentation commands are green; all ten emulator rows are recorded as PASS; the final crash buffer is empty; and this verification pass leaves no uncommitted production or test change.

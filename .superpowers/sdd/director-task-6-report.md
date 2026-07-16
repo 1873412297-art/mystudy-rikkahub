@@ -61,7 +61,7 @@ The installed app initially had no conversations and no three-member group. With
 
 1. **PASS — group FAB placement and style.** `30-ui-group-new-chat.xml/png` shows the themed director FAB with accessibility label `打开群聊导演台`. FAB bounds `[891,1743][1038,1890]` do not overlap send bounds `[925,2180][1051,2306]` or the input/member controls.
 2. **PASS — director sheet visual contract.** `31-ui-director-sheet.xml` and `39-ui-moderator-paused.png` show the Material 3 drag handle, `导演台` title, playback status, pause/continue/skip actions, segmented manual/round-robin/moderator modes, and all three member avatars in the current light theme.
-3. **PASS — graceful pause during a successful reply.** With the local mock streaming four SSE chunks, `说完暂停` was tapped while the successful `Q AA` reply was active. The stream completed, the sheet returned to `已暂停`, Room recorded `playbackState=PAUSED`, and no additional request followed (`mock-unblock/15-autopause2.log`, `15-autopause2-requests.jsonl`, `15-ui-final-summary.txt`, `15-db-after-autopause.jsonl`).
+3. **PASS — graceful pause during a successful reply.** The review-fix rerun used the deterministic fixture with four SSE chunks delayed by five seconds each. In a saved three-member round-robin conversation, a normal auto reply was started, `当前角色说完后暂停` was applied while the first reply was still streaming, and `mock-unblock-reviewfix/21-pending-status.xml/png` captured the complete pending label `本条回复结束后暂停` before stream completion. After completion, `22-complete-paused.xml/png` captured `已暂停`; `22-request-count.txt` recorded `REQUEST_COUNT=1`, `STREAM_DONE_COUNT=1`, and `ZERO_EXTRA_REQUEST=True`; and `23-room-final.json` recorded `playbackState=PAUSED`, `oneRoundActive=false`, and no pending one-shot.
 4. **PASS — continue one round.** From paused round-robin state, `继续一轮` produced exactly three successful member streams in snapshot order: `QA B`, `QA Member`, then `Q AA`. Each snapshot member appeared once, no duplicate request followed, and Room ended with `playbackState=PAUSED`, `oneRoundActive=false`, and an empty remainder (`mock-unblock/16-one-round-requests.jsonl`, `16-ui-one-round-final-summary.txt`, `16-db-after-one-round.json`).
 5. **PASS — moderator early STOP.** The deterministic moderator first returned the UUID for `QA Member`; that member completed one streamed reply; the second moderator call returned `STOP`. No remaining member request followed and the sheet/Room state was paused (`mock-unblock/17-moderator-stop-requests.jsonl`, `17-ui-moderator-stop-final-summary.txt`, `17-db-after-moderator-stop.json`).
 6. **PASS — skip-next and single-member notice.** In a persisted paused three-member conversation, Room first recorded `skipNextRequested=true` with no active member and an empty persisted queue, making the normalized first candidate `QA Member`. `继续一轮` then consumed the skip and the following member `Q AA` completed exactly one successful stream before the requested pause. Final Room state recorded active `Q AA`, queue index 1, `skipNextRequested=false`, and paused playback (`mock-unblock/21-skip-pending-db.json`, `21-skip-verified-requests.jsonl`, `21-skip-verified-final.xml`, `21-skip-final-db.json`). On `Solo Group`, tapping skip displayed `暂无其他角色`, captured in `50b-ui-solo-group-skip-notice.png`.
@@ -80,6 +80,20 @@ The five initially provider-blocked rows were rerun against a deterministic loca
 - Configuration method: a reversible debug-app DataStore snapshot replacement after `adb shell input text` proved unreliable for the URL. The original file was also retained on-device as `settings.preferences_pb.task6-pre-mock`.
 - Restore verification: original and restored SHA-256 both `044858f075bf06306e299b516620230ef0f4f0cb45edd2ed1d9a80652c79c58a`, `match=True` (`mock-unblock/22-final-restore.txt`).
 - Cleanup: the pre-mock DataStore was restored, the mock server was stopped, and the debug app was relaunched successfully.
+
+### Review-fix graceful-pause evidence
+
+- Focused evidence directory: `.superpowers/sdd/task6-evidence/mock-unblock-reviewfix/`.
+- `21-pending-status.xml/png` and `21-pending-status-summary.txt`: in-flight sheet with the exact status `本条回复结束后暂停`.
+- `21-pending-requests-at-capture.jsonl`: request/chunk audit copied while the pending status was visible.
+- `22-complete-paused.xml/png` and `22-complete-paused-summary.txt`: completed sheet with `已暂停`.
+- `22-final-requests.jsonl` and `22-request-count.txt`: exactly one member request, one stream completion, and zero extra request.
+- `23-room-final.json`: persisted `auto_round_robin` mode with `playbackState=PAUSED` and `oneRoundActive=false`.
+- `24-server-stop.txt`: no listener remained on port 18080.
+- `24-settings-restore-before-launch.txt`: the original DataStore was restored byte-for-byte before relaunch.
+- `26-final-settings-restore.txt`: because the installed 2.4.1 build normally rewrote the older 2.3.0 settings payload during startup, the original bytes were reapplied after launch and verified with matching SHA-256 `A2A85EAA912E43305C8B7E2316F24ADEC6C445792D90749B51DA46C3E7D049C3`.
+- `28-final-settings-recheck.txt`: the same byte-for-byte DataStore hash still matched after the focused Gradle compile completed.
+- `26-final-focus.txt` and `26-final-crash.txt`: `RouteActivity` remained focused and the crash buffer was empty.
 
 ## Final crash-buffer verification
 
@@ -113,8 +127,9 @@ adb -s emulator-5554 logcat -d -b crash
 - Instrumentation results were checked in generated XML, not inferred only from Gradle exit status.
 - APK was installed with `-r`; app data was never cleared.
 - All taps used UI-tree bounds. Each claim above points to a UI dump, screenshot, Room snapshot, instrumentation XML, or filtered log.
-- No production source, test source, Android resource, build output, or local configuration is staged by this verification task.
+- No production or test logic, build output, or local configuration is staged by this verification task; the review fix stages only the requested two-space indentation for the existing `group_director_*` resource lines plus documentation updates.
 - Successful-output rows were rerun against an auditable deterministic fixture and are supported by request/chunk logs plus UI/Room evidence.
+- The graceful-pause review rerun now includes the previously missing full pending-status UI tree before completion.
 - Temporary mock configuration was restored byte-for-byte and the local server was stopped.
 
 ## Concerns
@@ -122,3 +137,10 @@ adb -s emulator-5554 logcat -d -b crash
 1. The user's configured RikkaHub Auto endpoint returned HTTP 402 during the first pass; the deterministic local provider removed that external dependency for the five successful-output smoke rows.
 2. The mock implements only the OpenAI-compatible surface required by this verification and was not added to production sources.
 3. No blocking Task 6 concern remains.
+
+## Review-fix validation
+
+- All 40 previously unchecked step boxes in Tasks 1-5 are now checked; together with Task 6, the plan records all 47 implementation steps complete.
+- Only the newly added `group_director_*` resource lines were changed from four-space to the repository's two-space XML indentation.
+- `.\gradlew.bat :app:compileDebugKotlin -x :web:buildWebUi --console=plain`: `BUILD SUCCESSFUL` in 4m 38s; 96 actionable tasks, 5 executed and 91 up-to-date (`mock-unblock-reviewfix/27-compile-debug-kotlin.log`).
+- `git diff --check`: clean.
