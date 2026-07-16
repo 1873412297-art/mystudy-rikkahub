@@ -450,10 +450,12 @@ class ChatServiceTest {
             scope = scope,
             director = GroupDirectorState(playbackState = GroupPlaybackState.PAUSE_AFTER_CURRENT),
         )
+        val started = CompletableDeferred<Unit>()
         val persisted = CompletableDeferred<Unit>()
         lateinit var generationJob: Job
         generationJob = scope.launch(start = CoroutineStart.LAZY) {
             try {
+                started.complete(Unit)
                 awaitCancellation()
             } finally {
                 normalizeCancelledGroupGeneration(session, generationJob, engine) {
@@ -469,6 +471,7 @@ class ChatServiceTest {
 
         try {
             generationJob.start()
+            started.await()
             generationJob.cancelAndJoin()
 
             assertEquals(true, persisted.isCompleted)
@@ -524,6 +527,63 @@ class ChatServiceTest {
             session.withGroupDirectorLock {
                 assertEquals(true, session.isGroupReplyActiveLocked())
             }
+        } finally {
+            oldJob.cancel()
+            successorJob.cancel()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `superseded cancellation during split ownership clears only stale reply marker`() = runBlocking {
+        val engine = GroupDirectorEngine()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(scope)
+        val oldJob = Job()
+        val successorJob = Job()
+        val successorDirector = GroupDirectorState(
+            playbackState = GroupPlaybackState.RUNNING,
+            oneShotNextMemberId = groupMemberB,
+            skipNextRequested = true,
+        )
+        val persistCount = AtomicInteger()
+
+        try {
+            session.setJob(oldJob)
+            session.withGroupDirectorLock {
+                session.markGroupReplyStartedLocked(oldJob)
+            }
+            session.setJob(successorJob)
+            session.withGroupDirectorLock {
+                val current = session.state.value
+                session.state.value = current.copy(
+                    groupRuntimeState = current.groupRuntimeState.copy(director = successorDirector)
+                )
+            }
+
+            val firstResult = normalizeCancelledGroupGeneration(session, oldJob, engine) {
+                persistCount.incrementAndGet()
+                session.state.value = it
+            }
+
+            assertEquals(successorDirector, firstResult.groupRuntimeState.director)
+            assertEquals(successorDirector, session.state.value.groupRuntimeState.director)
+            assertEquals(0, persistCount.get())
+            assertSame(successorJob, session.getJob())
+
+            session.withGroupDirectorLock {
+                assertEquals(false, session.isGroupReplyActiveLocked())
+                session.releaseGroupGenerationLocked(successorJob)
+            }
+            val secondResult = normalizeCancelledGroupGeneration(session, oldJob, engine) {
+                persistCount.incrementAndGet()
+                session.state.value = it
+            }
+
+            assertEquals(successorDirector, secondResult.groupRuntimeState.director)
+            assertEquals(successorDirector, session.state.value.groupRuntimeState.director)
+            assertEquals(0, persistCount.get())
+            assertEquals(null, session.getJob())
         } finally {
             oldJob.cancel()
             successorJob.cancel()

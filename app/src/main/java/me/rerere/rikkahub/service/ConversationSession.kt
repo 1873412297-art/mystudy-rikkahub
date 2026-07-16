@@ -89,10 +89,17 @@ class ConversationSession(
         staleValue: () -> T,
         block: suspend () -> T,
     ): T = groupDirectorMutex.withLock {
-        val ownsGenerationOrReply = job != null && (
-            _generationJob.value === job || groupReplyActiveJob === job
-        )
+        val currentGenerationJob = _generationJob.value
+        // A successor installs its generation job before it marks the reply phase.
+        val ownsGenerationOrReply = job != null && if (currentGenerationJob != null) {
+            currentGenerationJob === job
+        } else {
+            groupReplyActiveJob === job
+        }
         if (!ownsGenerationOrReply) {
+            if (groupReplyActiveJob === job) {
+                groupReplyActiveJob = null
+            }
             return@withLock staleValue()
         }
         try {

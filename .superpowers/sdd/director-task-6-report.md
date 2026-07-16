@@ -164,10 +164,12 @@ adb -s emulator-5554 logcat -d -b crash
 ## Final stale-cancellation ownership fix
 
 - A late cancellation from a superseded generation now enters a dedicated atomic cancellation handoff under the session director mutex.
-- The handoff first verifies that the cancelled job still owns the current generation or reply phase. A stale job returns the current conversation unchanged, does not call persistence, and does not release the successor job or reply phase.
+- The handoff gives the current generation job priority over a leftover reply marker. If a successor has installed its job but has not yet marked its reply phase, the old cancellation is stale; it returns the current conversation unchanged, performs no persistence, preserves the successor job/director, and clears only the old reply marker.
+- When no current generation job exists, the reply marker can still establish ownership for cancellation during the current job's completion window.
 - A current owner still normalizes the director to paused, persists the result, releases its job/reply phase, and allows the original `CancellationException` to propagate.
 - TDD red evidence: `superseded cancellation preserves successor director and ownership` initially failed because the stale job cleared the successor one-shot/skip state and invoked persistence.
+- Split-ownership red evidence: `superseded cancellation during split ownership clears only stale reply marker` initially failed because the old reply marker overrode the successor generation job.
 - Final validation:
-  - `ChatServiceTest` plus all `service.group.*`: 93 tests, 0 failures/errors/skips.
+  - `ChatServiceTest` plus all `service.group.*`: 94 tests, 0 failures/errors/skips.
   - `:app:compileDebugKotlin`: PASS.
   - `git diff --check`: clean.

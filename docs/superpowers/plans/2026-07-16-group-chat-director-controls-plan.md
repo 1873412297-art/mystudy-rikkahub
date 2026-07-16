@@ -2284,7 +2284,7 @@ The final branch review identified two orchestration barriers and one migration-
 Validation:
 
 - Focused red/green cycles: missing `afterCancellation`, missing cancellation handoff normalization, and missing manual no-candidate normalization each failed before implementation.
-- `:app:testDebugUnitTest` filtered to `ChatServiceTest` and `service.group.*`: **PASS**, 93 tests, 0 failures/errors/skips.
+- `:app:testDebugUnitTest` filtered to `ChatServiceTest` and `service.group.*`: **PASS**, 94 tests, 0 failures/errors/skips.
 - Focused `Migration_26_27_Test` on `emulator-5554`: **PASS**, 1 test.
 - `:app:compileDebugKotlin -x :web:buildWebUi`: **PASS**.
 - `git diff --check`: **PASS**.
@@ -2297,12 +2297,14 @@ The release re-review found one last supersession race: a cancelled old generati
 
 - Cancellation normalization verifies that its job still owns the current generation or reply phase before reading, transforming, or persisting director state.
 - A stale job returns the current conversation unchanged, performs zero persistence, and leaves the successor job/reply phase plus its one-shot and skip commands intact.
+- The current generation job has priority over a leftover reply marker: during the window after a successor installs its job but before it marks a reply phase, an old cancellation clears only its stale reply marker and preserves all successor state.
+- If no current generation job exists, the reply marker still establishes ownership for a current cancellation completing its non-cancellable normalization handoff.
 - A current-owner cancellation still normalizes and persists `PAUSED`, releases its own job/reply phase, and the caller rethrows the original `CancellationException`.
-- The focused regression test failed before the fix and passes afterward.
+- Both the fully handed-off and split-ownership regression tests failed before their fixes and pass afterward.
 
 Validation:
 
-- `:app:testDebugUnitTest` filtered to `ChatServiceTest` and `service.group.*`: **PASS**, 93 tests, 0 failures/errors/skips.
+- `:app:testDebugUnitTest` filtered to `ChatServiceTest` and `service.group.*`: **PASS**, 94 tests, 0 failures/errors/skips.
 - `:app:compileDebugKotlin`: **PASS**.
 - `git diff --check`: **PASS**.
 
@@ -2312,4 +2314,4 @@ Validation:
 
 The feature is complete only when all six tasks are checked, every command in Task 6 is green, the ten-row emulator matrix is recorded, the crash buffer is clean, and the branch contains no uncommitted production or test change.
 
-**Completion gate: PASS (2026-07-17).** Tasks 1-6 and all 47 implementation steps are checked; the final-review manual/cancellation barriers and stale-cancellation ownership guard are covered and green; the required JVM/build and connected-instrumentation commands are green; all ten emulator rows are recorded as PASS; the final crash buffer is empty; and the completed hardening pass leaves no uncommitted production or test change.
+**Completion gate: PASS (2026-07-17).** Tasks 1-6 and all 47 implementation steps are checked; the final-review manual/cancellation barriers, stale-cancellation ownership guard, and split-ownership priority window are covered and green; the required JVM/build and connected-instrumentation commands are green; all ten emulator rows are recorded as PASS; the final crash buffer is empty; and the completed hardening pass leaves no uncommitted production or test change.
