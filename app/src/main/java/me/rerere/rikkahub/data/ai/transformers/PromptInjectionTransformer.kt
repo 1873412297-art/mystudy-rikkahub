@@ -7,6 +7,7 @@ import me.rerere.rikkahub.data.ai.trace.PromptInjectionMatch
 import me.rerere.rikkahub.data.ai.trace.PromptInjectionMatchType
 import me.rerere.rikkahub.data.ai.trace.PromptInjectionSourceType
 import me.rerere.rikkahub.data.ai.trace.PromptInjectionTrace
+import me.rerere.rikkahub.data.ai.trace.PromptTraceRecorder
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.InjectionPosition
 import me.rerere.rikkahub.data.model.Lorebook
@@ -39,7 +40,7 @@ private data class OrderedPromptInjection(
 
 private data class PromptInjectionApplicationResult(
     val messages: List<UIMessage>,
-    val targetMessageIds: Map<Int, Uuid>,
+    val targetMessages: Map<Int, UIMessage>,
 )
 
 /**
@@ -59,8 +60,8 @@ object PromptInjectionTransformer : InputMessageTransformer {
             lorebooks = ctx.settings.lorebooks,
             conversationModeInjectionIds = ctx.conversationModeInjectionIds,
             conversationLorebookIds = ctx.conversationLorebookIds,
+            promptTraceRecorder = ctx.promptTraceSession,
         )
-        ctx.promptTraceSession?.recordInjectionHits(result.applied.map { it.toTrace() })
         return result.messages
     }
 }
@@ -110,6 +111,7 @@ internal fun transformMessagesWithTrace(
     lorebooks: List<Lorebook>,
     conversationModeInjectionIds: Set<Uuid> = emptySet(),
     conversationLorebookIds: Set<Uuid> = emptySet(),
+    promptTraceRecorder: PromptTraceRecorder? = null,
 ): PromptInjectionTransformResult {
     val collected = collectInjectionMatches(
         messages = messages,
@@ -120,29 +122,30 @@ internal fun transformMessagesWithTrace(
         conversationLorebookIds = conversationLorebookIds,
     )
 
-    if (collected.isEmpty()) {
-        return PromptInjectionTransformResult(messages, emptyList())
-    }
-
-    val ordered = collected
-        .sortedByDescending { it.injection.priority }
-        .mapIndexed { index, item -> OrderedPromptInjection(index, item) }
-    val application = applyCollectedInjections(
-        messages = messages,
-        byPosition = ordered.groupBy { it.collected.injection.position },
-    )
-    val finalIndexes = application.messages
-        .withIndex()
-        .associate { (index, message) -> message.id to index }
-    val applied = ordered.map { item ->
-        val targetMessageId = application.targetMessageIds[item.order]
-        AppliedPromptInjection(
-            collected = item.collected,
-            targetMessageId = targetMessageId,
-            targetMessageIndex = targetMessageId?.let(finalIndexes::get),
+    val result = if (collected.isEmpty()) {
+        PromptInjectionTransformResult(messages, emptyList())
+    } else {
+        val ordered = collected
+            .sortedByDescending { it.injection.priority }
+            .mapIndexed { index, item -> OrderedPromptInjection(index, item) }
+        val application = applyCollectedInjections(
+            messages = messages,
+            byPosition = ordered.groupBy { it.collected.injection.position },
         )
+        val applied = ordered.mapNotNull { item ->
+            val targetMessage = application.targetMessages[item.order] ?: return@mapNotNull null
+            AppliedPromptInjection(
+                collected = item.collected,
+                targetMessageId = targetMessage.id,
+                targetMessageIndex = application.messages.indexOfFirst { it === targetMessage },
+            )
+        }
+        PromptInjectionTransformResult(application.messages, applied)
     }
-    return PromptInjectionTransformResult(application.messages, applied)
+    runCatching {
+        promptTraceRecorder?.recordInjectionHits(result.applied.map { it.toTrace() })
+    }
+    return result
 }
 
 /**
@@ -277,7 +280,7 @@ private fun applyCollectedInjections(
     byPosition: Map<InjectionPosition, List<OrderedPromptInjection>>,
 ): PromptInjectionApplicationResult {
     val result = messages.toMutableList()
-    val targetMessageIds = mutableMapOf<Int, Uuid>()
+    val targetMessages = mutableMapOf<Int, UIMessage>()
 
     // 找到系统消息的索引（通常是第一条）
     val systemIndex = result.indexOfFirst { it.role == MessageRole.SYSTEM }
@@ -310,9 +313,11 @@ private fun applyCollectedInjections(
             result[systemIndex] = systemMessage.copy(
                 parts = listOf(UIMessagePart.Text(newText))
             )
-            (beforeItems + afterItems).forEach { item ->
-                targetMessageIds[item.order] = result[systemIndex].id
-            }
+            (beforeItems + afterItems)
+                .filter { it.collected.injection.content.isNotEmpty() }
+                .forEach { item ->
+                    targetMessages[item.order] = result[systemIndex]
+                }
         }
     } else {
         // 没有系统消息时，创建一个新的系统消息
@@ -334,9 +339,9 @@ private fun applyCollectedInjections(
         if (combinedContent.isNotEmpty()) {
             val message = UIMessage.system(combinedContent)
             result.add(0, message)
-            (beforeItems + afterItems).forEach { item ->
-                targetMessageIds[item.order] = message.id
-            }
+            (beforeItems + afterItems)
+                .filter { it.collected.injection.content.isNotEmpty() }
+                .forEach { item -> targetMessages[item.order] = message }
         }
     }
 
@@ -349,7 +354,7 @@ private fun applyCollectedInjections(
         insertIndex = findSafeInsertIndex(result, insertIndex)
         createMergedInjectionMessagesWithTargets(topInjections).forEach { merged ->
             result.add(insertIndex, merged.message)
-            merged.items.forEach { item -> targetMessageIds[item.order] = merged.message.id }
+            merged.items.forEach { item -> targetMessages[item.order] = merged.message }
             insertIndex++
         }
     }
@@ -361,7 +366,7 @@ private fun applyCollectedInjections(
         insertIndex = findSafeInsertIndex(result, insertIndex)
         createMergedInjectionMessagesWithTargets(bottomInjections).forEach { merged ->
             result.add(insertIndex, merged.message)
-            merged.items.forEach { item -> targetMessageIds[item.order] = merged.message.id }
+            merged.items.forEach { item -> targetMessages[item.order] = merged.message }
             insertIndex++
         }
     }
@@ -379,13 +384,13 @@ private fun applyCollectedInjections(
             insertIndex = findSafeInsertIndex(result, insertIndex)
             createMergedInjectionMessagesWithTargets(injections).forEach { merged ->
                 result.add(insertIndex, merged.message)
-                merged.items.forEach { item -> targetMessageIds[item.order] = merged.message.id }
+                merged.items.forEach { item -> targetMessages[item.order] = merged.message }
                 insertIndex++
             }
         }
     }
 
-    return PromptInjectionApplicationResult(result, targetMessageIds)
+    return PromptInjectionApplicationResult(result, targetMessages)
 }
 
 /**
