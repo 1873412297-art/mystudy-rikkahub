@@ -2277,14 +2277,14 @@ Task 6 is complete: every required command is green, all ten emulator smoke rows
 
 The final branch review identified two orchestration barriers and one migration-test gap. They were closed on 2026-07-16 without changing the original Material 3 UI:
 
-- **Manual barrier: PASS** — switching to manual during an active reply now records `PAUSE_AFTER_CURRENT`; the current reply finishes, then automatic chaining stops. If a one-round run is active, its remaining snapshot is retained in `PAUSED` state for explicit `继续一轮`. Manual mode no longer supplies an automatic speaker candidate, including the completion-window case where the previous handoff had already approved continuation.
+- **Manual barrier: PASS** — switching to manual during an active reply now records `PAUSE_AFTER_CURRENT`; the current reply finishes, then automatic chaining stops. If a one-round run is active, its remaining snapshot is retained in `PAUSED` state. An explicit `继续一轮` may use round-robin selection to finish that retained snapshot even while the conversation mode remains manual; ordinary manual chaining still supplies no automatic speaker candidate, including the completion-window case where the previous handoff had already approved continuation.
 - **Cancellation normalization: PASS** — cancellation during member streaming, pending pause, one-round generation, or moderator selection before a member is committed now persists `PAUSED`, releases the generation/reply phase, retains an unfinished round remainder, clears transient one-shot/skip commands, and rethrows `CancellationException`.
 - **Legacy-row migration coverage: PASS** — the 26-to-27 instrumentation test now inserts a valid version-26 conversation before migration and verifies that the existing row receives `group_runtime_state='{}'`.
 
 Validation:
 
 - Focused red/green cycles: missing `afterCancellation`, missing cancellation handoff normalization, and missing manual no-candidate normalization each failed before implementation.
-- `:app:testDebugUnitTest` filtered to `ChatServiceTest` and `service.group.*`: **PASS**, 90 tests, 0 failures/errors.
+- `:app:testDebugUnitTest` filtered to `ChatServiceTest` and `service.group.*`: **PASS**, 92 tests, 0 failures/errors.
 - Focused `Migration_26_27_Test` on `emulator-5554`: **PASS**, 1 test.
 - `:app:compileDebugKotlin -x :web:buildWebUi`: **PASS**.
 - `git diff --check`: **PASS**.

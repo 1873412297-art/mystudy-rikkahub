@@ -100,10 +100,12 @@ import me.rerere.rikkahub.service.group.GroupDirectorCommandContext
 import me.rerere.rikkahub.service.group.GroupDirectorCommandResult
 import me.rerere.rikkahub.service.group.GroupDirectorCommandStatus
 import me.rerere.rikkahub.service.group.GroupDirectorEngine
+import me.rerere.rikkahub.service.group.GroupDirectorState
 import me.rerere.rikkahub.service.group.GroupPlaybackState
 import me.rerere.rikkahub.service.group.GroupRuntimeStateUpdater
 import me.rerere.rikkahub.service.group.GroupSpeakerScorer
 import me.rerere.rikkahub.service.group.GroupSpeakingIntent
+import me.rerere.rikkahub.service.group.GroupTurnSelection
 import me.rerere.rikkahub.service.group.DynamicGroupContextResult
 import me.rerere.rikkahub.service.group.applyGroupApiRewrite
 import me.rerere.rikkahub.service.group.resolveSelectedGroupContextMessages
@@ -224,6 +226,29 @@ internal suspend fun normalizeCancelledGroupGeneration(
         persist(updated)
         GroupGenerationHandoffResult(updated, shouldContinue = false)
     }.value
+}
+
+internal fun resolveLocalGroupTurnSelection(
+    director: GroupDirectorState,
+    effectiveStrategy: TurnTakingStrategy,
+    persistedQueue: List<Uuid>,
+    persistedIndex: Int,
+    activeMemberId: Uuid?,
+    orderedEligibleMemberIds: List<Uuid>,
+): GroupTurnSelection? {
+    val mayAutoSelect = effectiveStrategy == TurnTakingStrategy.AUTO_ROUND_ROBIN ||
+        (
+            effectiveStrategy == TurnTakingStrategy.MANUAL &&
+                director.oneRoundActive &&
+                director.playbackState == GroupPlaybackState.RUNNING
+            )
+    if (!mayAutoSelect) return null
+    return nextRoundRobinSelection(
+        persistedQueue = persistedQueue,
+        persistedIndex = persistedIndex,
+        activeMemberId = activeMemberId,
+        enabledMemberIds = orderedEligibleMemberIds,
+    )
 }
 
 class ChatService(
@@ -1963,12 +1988,14 @@ class ChatService(
                     null
                 } else {
                     when (effectiveStrategy) {
-                        TurnTakingStrategy.MANUAL -> null
-                        TurnTakingStrategy.AUTO_ROUND_ROBIN -> nextRoundRobinSelection(
+                        TurnTakingStrategy.MANUAL,
+                        TurnTakingStrategy.AUTO_ROUND_ROBIN -> resolveLocalGroupTurnSelection(
+                            director = director,
+                            effectiveStrategy = effectiveStrategy,
                             persistedQueue = current.groupMemberQueue,
                             persistedIndex = current.groupMemberQueueIndex,
                             activeMemberId = current.activeGroupMemberId,
-                            enabledMemberIds = orderedEligible,
+                            orderedEligibleMemberIds = orderedEligible,
                         )
                         TurnTakingStrategy.AUTO_MODERATOR -> {
                             val resolved = resolveNextSpeakerViaModerator(

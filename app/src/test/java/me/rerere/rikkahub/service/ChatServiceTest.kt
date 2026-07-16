@@ -376,6 +376,73 @@ class ChatServiceTest {
     }
 
     @Test
+    fun `retained round explicitly resumed in manual mode selects and completes remainder`() {
+        val engine = GroupDirectorEngine()
+        val switchedToManual = engine.reduce(
+            state = GroupDirectorState(
+                playbackState = GroupPlaybackState.RUNNING,
+                oneRoundActive = true,
+                oneRoundRemainingMemberIds = listOf(groupMemberA, groupMemberB),
+            ),
+            command = GroupDirectorCommand.SetMode(TurnTakingStrategy.MANUAL),
+            context = GroupDirectorCommandContext(
+                generationActive = true,
+                orderedEnabledMemberIds = listOf(groupMemberA, groupMemberB),
+            ),
+        ).state
+        val pausedWithRemainder = engine.afterReply(switchedToManual, groupMemberA)
+        val resumed = engine.reduce(
+            state = pausedWithRemainder,
+            command = GroupDirectorCommand.ContinueOneRound,
+            context = GroupDirectorCommandContext(
+                generationActive = false,
+                orderedEnabledMemberIds = listOf(groupMemberA, groupMemberB),
+            ),
+        )
+
+        val normalSelection = resolveLocalGroupTurnSelection(
+            director = resumed.state,
+            effectiveStrategy = TurnTakingStrategy.MANUAL,
+            persistedQueue = listOf(groupMemberA, groupMemberB),
+            persistedIndex = 0,
+            activeMemberId = groupMemberA,
+            orderedEligibleMemberIds = listOf(groupMemberB),
+        )
+        val selected = engine.applyCandidate(
+            state = resumed.state,
+            normalCandidateId = normalSelection?.memberId,
+            orderedCandidateMemberIds = normalSelection?.queue ?: listOf(groupMemberB),
+        )
+        val completed = engine.afterReply(selected.state, groupMemberB)
+
+        assertEquals(GroupPlaybackState.PAUSED, pausedWithRemainder.playbackState)
+        assertEquals(listOf(groupMemberB), pausedWithRemainder.oneRoundRemainingMemberIds)
+        assertEquals(true, resumed.shouldStartGeneration)
+        assertEquals(GroupPlaybackState.RUNNING, resumed.state.playbackState)
+        assertEquals(groupMemberB, selected.memberId)
+        assertEquals(false, completed.oneRoundActive)
+        assertEquals(emptyList<Uuid>(), completed.oneRoundRemainingMemberIds)
+        assertEquals(GroupPlaybackState.PAUSED, completed.playbackState)
+    }
+
+    @Test
+    fun `ordinary manual mode still has no local automatic candidate`() {
+        val selection = resolveLocalGroupTurnSelection(
+            director = GroupDirectorState(
+                modeOverride = TurnTakingStrategy.MANUAL,
+                playbackState = GroupPlaybackState.RUNNING,
+            ),
+            effectiveStrategy = TurnTakingStrategy.MANUAL,
+            persistedQueue = listOf(groupMemberA, groupMemberB),
+            persistedIndex = 0,
+            activeMemberId = groupMemberA,
+            orderedEligibleMemberIds = listOf(groupMemberA, groupMemberB),
+        )
+
+        assertEquals(null, selection)
+    }
+
+    @Test
     fun `pending pause cancellation persists paused state and releases generation`() = runBlocking {
         val engine = GroupDirectorEngine()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
