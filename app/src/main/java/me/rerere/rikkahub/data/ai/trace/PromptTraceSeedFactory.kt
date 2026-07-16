@@ -46,3 +46,16 @@ fun removedMessageIds(before: Conversation, after: Conversation): Set<Uuid> {
         .mapTo(mutableSetOf()) { message -> message.id }
     return beforeIds - afterIds
 }
+
+sealed interface PromptTraceCleanup {
+    data object None : PromptTraceCleanup
+
+    data class RemovedMessages(
+        val before: Conversation,
+    ) : PromptTraceCleanup
+}
+
+fun PromptTraceCleanup.removedMessageIdsAfter(after: Conversation): Set<Uuid> = when (this) {
+    PromptTraceCleanup.None -> emptySet()
+    is PromptTraceCleanup.RemovedMessages -> removedMessageIds(before, after)
+}
