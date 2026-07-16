@@ -86,6 +86,34 @@ class PromptTraceDAOTest {
     }
 
     @Test
+    fun finalizeAndPrune_isAtomicAndPreservesTheFirstTerminalState() = runBlocking {
+        val conversationId = "conversation-finalize"
+        insertConversation(conversationId)
+        (1..21).forEach { dao.insert(trace(conversationId, it).copy(status = "PREPARED")) }
+
+        dao.finalizeAndPrune(
+            traceId = "trace-21",
+            status = "COMPLETED",
+            errorSummary = null,
+            updatedAt = 100L,
+            keep = 20,
+        )
+        dao.finalizeAndPrune(
+            traceId = "trace-21",
+            status = "FAILED",
+            errorSummary = "late",
+            updatedAt = 200L,
+            keep = 20,
+        )
+
+        assertNull(dao.getById("trace-1"))
+        val terminal = requireNotNull(dao.getById("trace-21"))
+        assertEquals("COMPLETED", terminal.status)
+        assertNull(terminal.errorSummary)
+        assertEquals(100L, terminal.updatedAt)
+    }
+
+    @Test
     fun deletingConversation_cascadesToTraces() = runBlocking {
         val conversationId = "conversation-cascade"
         insertConversation(conversationId)

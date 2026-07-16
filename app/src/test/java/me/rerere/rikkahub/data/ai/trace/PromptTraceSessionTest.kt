@@ -1,7 +1,13 @@
 package me.rerere.rikkahub.data.ai.trace
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.rerere.ai.core.MessageRole
@@ -14,9 +20,86 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.uuid.Uuid
 
 class PromptTraceSessionTest {
+    @Test
+    fun `concurrent observations serialize binding before newer token update`() = runBlocking {
+        val store = BlockingStreamingStore()
+        val input = UIMessage.user("hello")
+        val response = UIMessage.assistant("hi")
+        val session = session(store)
+        session.prepare(listOf(input))
+
+        val first = async(Dispatchers.Default) {
+            session.observeProviderMessages(listOf(input, response.copy(usage = TokenUsage(promptTokens = 12))))
+        }
+        withTimeout(5_000) { store.streamingStarted.await() }
+        val second = async(Dispatchers.Default) {
+            session.observeProviderMessages(listOf(input, response.copy(usage = TokenUsage(promptTokens = 19))))
+        }
+        delay(100)
+        assertFalse(second.isCompleted)
+
+        store.releaseStreaming.complete(Unit)
+        first.await()
+        second.await()
+
+        assertEquals(listOf("PREPARED", "STREAMING:12", "TOKENS:19"), store.events.toList())
+    }
+
+    @Test
+    fun `completion waits for in flight observation persistence`() = runBlocking {
+        val store = BlockingStreamingStore()
+        val input = UIMessage.user("hello")
+        val response = UIMessage.assistant("hi")
+        val session = session(store)
+        session.prepare(listOf(input))
+
+        val observing = async(Dispatchers.Default) {
+            session.observeProviderMessages(listOf(input, response))
+        }
+        withTimeout(5_000) { store.streamingStarted.await() }
+        val completing = async(Dispatchers.Default) { session.complete() }
+        delay(100)
+        assertFalse(completing.isCompleted)
+
+        store.releaseStreaming.complete(Unit)
+        observing.await()
+        completing.await()
+
+        assertEquals(listOf("PREPARED", "STREAMING:null", "COMPLETED"), store.events.toList())
+    }
+
+    @Test
+    fun `prepare freeze waits for an in flight non suspending recorder`() = runBlocking {
+        val store = SignallingTraceStore()
+        val input = UIMessage.user("hello")
+        val enteredRecorder = CountDownLatch(1)
+        val releaseRecorder = CountDownLatch(1)
+        val messages = BlockingMessageList(input, enteredRecorder, releaseRecorder)
+        val session = session(store)
+
+        val recording = async(Dispatchers.Default) { session.recordInputMessages(messages) }
+        assertTrue(enteredRecorder.await(5, TimeUnit.SECONDS))
+        val preparing = async(Dispatchers.Default) { session.prepare(listOf(input)) }
+        val insertedBeforeRecorderFinished = try {
+            withTimeoutOrNull(200) {
+                store.inserted.await()
+                true
+            } ?: false
+        } finally {
+            releaseRecorder.countDown()
+        }
+        recording.await()
+        preparing.await()
+
+        assertFalse(insertedBeforeRecorderFinished)
+        assertEquals("hello", store.payload?.sections?.single()?.text)
+    }
+
     @Test
     fun `session progresses prepared streaming completed and keeps authoritative prompt usage`() = runBlocking {
         val store = RecordingTraceStore()
@@ -140,6 +223,64 @@ class PromptTraceSessionTest {
     }
 
     @Test
+    fun `store errors propagate instead of being treated as observability failures`() = runBlocking {
+        val failure = AssertionError("fatal trace failure")
+        val session = session(ErrorTraceStore(failure))
+
+        try {
+            session.prepare(listOf(UIMessage.user("hello")))
+            fail("Expected AssertionError")
+        } catch (actual: AssertionError) {
+            assertSame(failure, actual)
+        }
+    }
+
+    @Test
+    fun `failed response binding retries the same observation`() = runBlocking {
+        val store = FailOnceBindingStore()
+        val input = UIMessage.user("hello")
+        val response = UIMessage.assistant("hi").copy(usage = TokenUsage(promptTokens = 12))
+        val session = session(store)
+        session.prepare(listOf(input))
+
+        session.observeProviderMessages(listOf(input, response))
+        session.observeProviderMessages(listOf(input, response))
+
+        assertEquals(2, store.bindingAttempts)
+        assertEquals(response.id, store.responseMessageId)
+    }
+
+    @Test
+    fun `failed terminal persistence retries the same terminal event`() = runBlocking {
+        val store = FailOnceTerminalStore()
+        val session = session(store)
+        session.prepare(listOf(UIMessage.user("hello")))
+
+        session.complete()
+        session.complete()
+
+        assertEquals(2, store.terminalAttempts)
+        assertEquals(PromptTraceStatus.COMPLETED, store.persistedStatus)
+    }
+
+    @Test
+    fun `usage updates only follow the initially bound response id`() = runBlocking {
+        val store = RecordingTraceStore()
+        val input = UIMessage.user("hello")
+        val bound = UIMessage.assistant("first").copy(usage = TokenUsage(promptTokens = 12))
+        val unrelated = UIMessage.assistant("second").copy(usage = TokenUsage(promptTokens = 99))
+        val session = session(store)
+        session.prepare(listOf(input))
+
+        session.observeProviderMessages(listOf(input, bound))
+        session.observeProviderMessages(listOf(input, bound, unrelated))
+
+        assertEquals(bound.id, store.responseMessageId)
+        assertEquals(12, store.actualPromptTokens)
+        assertFalse(store.events.contains("TOKENS:99"))
+    }
+
+    @Test
     fun `store cancellation remains observable`() = runBlocking {
         val cancellation = CancellationException("stop")
         val session = session(CancellingTraceStore(cancellation))
@@ -250,4 +391,97 @@ private class CancellingTraceStore(
     override suspend fun updateActualPromptTokens(traceId: Uuid, actualPromptTokens: Int): Unit = throw cancellation
     override suspend fun markTerminal(traceId: Uuid, status: PromptTraceStatus, errorSummary: String?): Unit =
         throw cancellation
+}
+
+private class BlockingStreamingStore : PromptTraceStore {
+    val streamingStarted = CompletableDeferred<Unit>()
+    val releaseStreaming = CompletableDeferred<Unit>()
+    val events = java.util.Collections.synchronizedList(mutableListOf<String>())
+
+    override suspend fun insertPrepared(traceId: Uuid, payload: PromptTracePayload) {
+        events += "PREPARED"
+    }
+
+    override suspend fun markStreaming(traceId: Uuid, responseMessageId: Uuid, actualPromptTokens: Int?) {
+        streamingStarted.complete(Unit)
+        releaseStreaming.await()
+        events += "STREAMING:${actualPromptTokens ?: "null"}"
+    }
+
+    override suspend fun updateActualPromptTokens(traceId: Uuid, actualPromptTokens: Int) {
+        events += "TOKENS:$actualPromptTokens"
+    }
+
+    override suspend fun markTerminal(traceId: Uuid, status: PromptTraceStatus, errorSummary: String?) {
+        events += status.name
+    }
+}
+
+private class SignallingTraceStore : PromptTraceStore {
+    val inserted = CompletableDeferred<Unit>()
+    var payload: PromptTracePayload? = null
+
+    override suspend fun insertPrepared(traceId: Uuid, payload: PromptTracePayload) {
+        this.payload = payload
+        inserted.complete(Unit)
+    }
+
+    override suspend fun markStreaming(traceId: Uuid, responseMessageId: Uuid, actualPromptTokens: Int?) = Unit
+    override suspend fun updateActualPromptTokens(traceId: Uuid, actualPromptTokens: Int) = Unit
+    override suspend fun markTerminal(traceId: Uuid, status: PromptTraceStatus, errorSummary: String?) = Unit
+}
+
+private class BlockingMessageList(
+    private val message: UIMessage,
+    private val entered: CountDownLatch,
+    private val release: CountDownLatch,
+) : AbstractList<UIMessage>() {
+    override val size: Int = 1
+
+    override fun get(index: Int): UIMessage {
+        require(index == 0)
+        entered.countDown()
+        check(release.await(5, TimeUnit.SECONDS))
+        return message
+    }
+}
+
+private class ErrorTraceStore(
+    private val failure: AssertionError,
+) : PromptTraceStore {
+    override suspend fun insertPrepared(traceId: Uuid, payload: PromptTracePayload): Unit = throw failure
+    override suspend fun markStreaming(traceId: Uuid, responseMessageId: Uuid, actualPromptTokens: Int?) = Unit
+    override suspend fun updateActualPromptTokens(traceId: Uuid, actualPromptTokens: Int) = Unit
+    override suspend fun markTerminal(traceId: Uuid, status: PromptTraceStatus, errorSummary: String?) = Unit
+}
+
+private class FailOnceBindingStore : PromptTraceStore {
+    var bindingAttempts = 0
+    var responseMessageId: Uuid? = null
+
+    override suspend fun insertPrepared(traceId: Uuid, payload: PromptTracePayload) = Unit
+
+    override suspend fun markStreaming(traceId: Uuid, responseMessageId: Uuid, actualPromptTokens: Int?) {
+        bindingAttempts++
+        if (bindingAttempts == 1) throw IllegalStateException("first binding failed")
+        this.responseMessageId = responseMessageId
+    }
+
+    override suspend fun updateActualPromptTokens(traceId: Uuid, actualPromptTokens: Int) = Unit
+    override suspend fun markTerminal(traceId: Uuid, status: PromptTraceStatus, errorSummary: String?) = Unit
+}
+
+private class FailOnceTerminalStore : PromptTraceStore {
+    var terminalAttempts = 0
+    var persistedStatus: PromptTraceStatus? = null
+
+    override suspend fun insertPrepared(traceId: Uuid, payload: PromptTracePayload) = Unit
+    override suspend fun markStreaming(traceId: Uuid, responseMessageId: Uuid, actualPromptTokens: Int?) = Unit
+    override suspend fun updateActualPromptTokens(traceId: Uuid, actualPromptTokens: Int) = Unit
+
+    override suspend fun markTerminal(traceId: Uuid, status: PromptTraceStatus, errorSummary: String?) {
+        terminalAttempts++
+        if (terminalAttempts == 1) throw IllegalStateException("first terminal failed")
+        persistedStatus = status
+    }
 }

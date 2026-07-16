@@ -24,7 +24,7 @@ class PromptTraceRepository(
 
     fun observeConversation(conversationId: Uuid): Flow<List<PromptTraceReadResult>> {
         return dao.observeByConversation(conversationId.toString()).map { rows ->
-            rows.map(::decode)
+            rows.mapNotNull(::decode)
         }
     }
 
@@ -78,18 +78,17 @@ class PromptTraceRepository(
     }
 
     override suspend fun markTerminal(traceId: Uuid, status: PromptTraceStatus, errorSummary: String?) {
-        val row = dao.getById(traceId.toString())
-        dao.markTerminal(
+        dao.finalizeAndPrune(
             traceId = traceId.toString(),
             status = status.name,
             errorSummary = errorSummary,
             updatedAt = System.currentTimeMillis(),
+            keep = RETENTION_LIMIT,
         )
-        row?.let { dao.pruneConversation(it.conversationId, RETENTION_LIMIT) }
     }
 
-    private fun decode(entity: PromptTraceEntity): PromptTraceReadResult {
-        val traceId = Uuid.parse(entity.id)
+    private fun decode(entity: PromptTraceEntity): PromptTraceReadResult? {
+        val traceId = runCatching { Uuid.parse(entity.id) }.getOrNull() ?: return null
         return runCatching {
             val payload = json.decodeFromString<PromptTracePayload>(entity.payloadJson)
             val metadata = payload.metadata.copy(
@@ -109,7 +108,9 @@ class PromptTraceRepository(
             PromptTraceReadResult.Unavailable(
                 traceId = traceId,
                 createdAtEpochMs = entity.createdAt,
-                responseMessageId = entity.responseMessageId?.let { value -> runCatching { Uuid.parse(value) }.getOrNull() },
+                responseMessageId = entity.responseMessageId?.let { value ->
+                    runCatching { Uuid.parse(value) }.getOrNull()
+                },
                 status = runCatching { PromptTraceStatus.valueOf(entity.status) }
                     .getOrDefault(PromptTraceStatus.FAILED),
                 errorSummary = entity.errorSummary,

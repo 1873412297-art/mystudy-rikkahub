@@ -33,6 +33,7 @@ interface PromptTraceDAO {
             actual_prompt_tokens = COALESCE(:actualPromptTokens, actual_prompt_tokens),
             updated_at = :updatedAt
         WHERE id = :traceId
+          AND status NOT IN ('COMPLETED', 'CANCELLED', 'FAILED')
         """
     )
     suspend fun markStreaming(
@@ -48,6 +49,7 @@ interface PromptTraceDAO {
         SET actual_prompt_tokens = :actualPromptTokens,
             updated_at = :updatedAt
         WHERE id = :traceId
+          AND status NOT IN ('COMPLETED', 'CANCELLED', 'FAILED')
         """
     )
     suspend fun updateActualPromptTokens(traceId: String, actualPromptTokens: Int, updatedAt: Long)
@@ -59,6 +61,7 @@ interface PromptTraceDAO {
             error_summary = :errorSummary,
             updated_at = :updatedAt
         WHERE id = :traceId
+          AND status NOT IN ('COMPLETED', 'CANCELLED', 'FAILED')
         """
     )
     suspend fun markTerminal(traceId: String, status: String, errorSummary: String?, updatedAt: Long)
@@ -99,5 +102,18 @@ interface PromptTraceDAO {
     suspend fun insertAndPrune(entity: PromptTraceEntity, keep: Int = 20) {
         insert(entity)
         pruneConversation(entity.conversationId, keep)
+    }
+
+    @Transaction
+    suspend fun finalizeAndPrune(
+        traceId: String,
+        status: String,
+        errorSummary: String?,
+        updatedAt: Long,
+        keep: Int = 20,
+    ) {
+        val row = getById(traceId)
+        markTerminal(traceId, status, errorSummary, updatedAt)
+        row?.let { pruneConversation(it.conversationId, keep) }
     }
 }
