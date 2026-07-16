@@ -4,6 +4,8 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.ai.trace.PromptInjectionMatchType
 import me.rerere.rikkahub.data.ai.trace.PromptInjectionSourceType
+import me.rerere.rikkahub.data.ai.trace.PromptInjectionTrace
+import me.rerere.rikkahub.data.ai.trace.PromptTraceRecorder
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.InjectionPosition
 import me.rerere.rikkahub.data.model.Lorebook
@@ -16,6 +18,40 @@ import org.junit.Test
 import kotlin.uuid.Uuid
 
 class PromptInjectionTraceTest {
+    @Test
+    fun `throwing trace recorder does not change transformer output`() {
+        val injection = PromptInjection.ModeInjection(
+            content = "after",
+            position = InjectionPosition.AFTER_SYSTEM_PROMPT,
+        )
+        val assistant = Assistant(modeInjectionIds = setOf(injection.id))
+        val messages = listOf(UIMessage.system("system"), UIMessage.user("hello"))
+        var recordAttempts = 0
+        val withoutRecorder = transformMessagesWithTrace(
+            messages = messages,
+            assistant = assistant,
+            modeInjections = listOf(injection),
+            lorebooks = emptyList(),
+            promptTraceRecorder = null,
+        )
+
+        val withThrowingRecorder = transformMessagesWithTrace(
+            messages = messages,
+            assistant = assistant,
+            modeInjections = listOf(injection),
+            lorebooks = emptyList(),
+            promptTraceRecorder = object : PromptTraceRecorder {
+                override fun recordInjectionHits(hits: List<PromptInjectionTrace>) {
+                    recordAttempts++
+                    throw IllegalStateException("trace storage failed")
+                }
+            },
+        )
+
+        assertEquals(withoutRecorder.messages, withThrowingRecorder.messages)
+        assertEquals(1, recordAttempts)
+    }
+
     @Test
     fun `keyword match drives output and trace from one evaluation`() {
         val lorebookId = Uuid.random()
@@ -173,6 +209,79 @@ class PromptInjectionTraceTest {
         assertEquals(listOf(constant.id), result.applied.map { it.collected.injection.id })
         assertEquals(PromptInjectionMatchType.CONSTANT, result.applied.single().collected.match?.type)
         assertEquals(emptyList<String>(), result.applied.single().collected.match?.matchedTerms)
+    }
+
+    @Test
+    fun `empty system injections are omitted from applied provenance`() {
+        val emptyBefore = PromptInjection.ModeInjection(
+            name = "空 before",
+            position = InjectionPosition.BEFORE_SYSTEM_PROMPT,
+            content = "",
+        )
+        val nonEmptyAfter = PromptInjection.ModeInjection(
+            name = "非空 after",
+            position = InjectionPosition.AFTER_SYSTEM_PROMPT,
+            content = "after",
+        )
+        var recordedHits: List<PromptInjectionTrace> = emptyList()
+
+        val result = transformMessagesWithTrace(
+            messages = listOf(UIMessage.user("hello")),
+            assistant = Assistant(modeInjectionIds = setOf(emptyBefore.id, nonEmptyAfter.id)),
+            modeInjections = listOf(emptyBefore, nonEmptyAfter),
+            lorebooks = emptyList(),
+            promptTraceRecorder = object : PromptTraceRecorder {
+                override fun recordInjectionHits(hits: List<PromptInjectionTrace>) {
+                    recordedHits = hits
+                }
+            },
+        )
+
+        assertEquals(listOf("after", "hello"), result.messages.map { it.toText() })
+        assertEquals(listOf(nonEmptyAfter.id), result.applied.map { it.collected.injection.id })
+        assertEquals(listOf(nonEmptyAfter.id), recordedHits.map { it.injectionId })
+        assertEquals(result.messages[0].id, result.applied.single().targetMessageId)
+        assertEquals(0, result.applied.single().targetMessageIndex)
+    }
+
+    @Test
+    fun `empty system injection with no output has no applied provenance`() {
+        val emptyAfter = PromptInjection.ModeInjection(
+            position = InjectionPosition.AFTER_SYSTEM_PROMPT,
+            content = "",
+        )
+        val messages = listOf(UIMessage.system("system"), UIMessage.user("hello"))
+
+        val result = transformMessagesWithTrace(
+            messages = messages,
+            assistant = Assistant(modeInjectionIds = setOf(emptyAfter.id)),
+            modeInjections = listOf(emptyAfter),
+            lorebooks = emptyList(),
+        )
+
+        assertEquals(messages, result.messages)
+        assertTrue(result.applied.isEmpty())
+    }
+
+    @Test
+    fun `duplicate message ids do not change the exact target index`() {
+        val duplicateId = Uuid.random()
+        val system = UIMessage.system("system").copy(id = duplicateId)
+        val user = UIMessage.user("hello").copy(id = duplicateId)
+        val injection = PromptInjection.ModeInjection(
+            position = InjectionPosition.AFTER_SYSTEM_PROMPT,
+            content = "after",
+        )
+
+        val result = transformMessagesWithTrace(
+            messages = listOf(system, user),
+            assistant = Assistant(modeInjectionIds = setOf(injection.id)),
+            modeInjections = listOf(injection),
+            lorebooks = emptyList(),
+        )
+
+        assertEquals(duplicateId, result.applied.single().targetMessageId)
+        assertEquals(0, result.applied.single().targetMessageIndex)
     }
 
     @Test
