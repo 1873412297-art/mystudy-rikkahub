@@ -1117,6 +1117,63 @@ class PromptInjectionTransformerTest {
         assertEquals(1, result.size)
         assertEquals(id1, result[0].id)
     }
+
+    @Test
+    fun `trace wrapper should preserve legacy transform message text roles and order`() {
+        val modeId = Uuid.random()
+        val lorebookId = Uuid.random()
+        val mode = createModeInjection(
+            id = modeId,
+            priority = 3,
+            position = InjectionPosition.TOP_OF_CHAT,
+            role = MessageRole.ASSISTANT,
+            content = "Mode",
+        )
+        val lorebookEntry = createRegexInjection(
+            priority = 8,
+            position = InjectionPosition.AFTER_SYSTEM_PROMPT,
+            content = "Lore",
+            keywords = listOf("trigger"),
+        )
+        val messages = listOf(
+            UIMessage.system("System"),
+            UIMessage.user("trigger"),
+            UIMessage.assistant("Response"),
+        )
+        val assistant = createAssistant(
+            modeInjectionIds = setOf(modeId),
+            lorebookIds = setOf(lorebookId),
+        )
+        val lorebooks = listOf(createLorebook(id = lorebookId, entries = listOf(lorebookEntry)))
+
+        val expected = listOf(
+            MessageRole.SYSTEM to "System\nLore",
+            MessageRole.ASSISTANT to "Mode",
+            MessageRole.USER to "trigger",
+            MessageRole.ASSISTANT to "Response",
+        )
+        val compatibilityResult = transformMessages(
+            messages = messages,
+            assistant = assistant,
+            modeInjections = listOf(mode),
+            lorebooks = lorebooks,
+        )
+        val tracedResult = transformMessagesWithTrace(
+            messages = messages,
+            assistant = assistant,
+            modeInjections = listOf(mode),
+            lorebooks = lorebooks,
+        )
+
+        assertEquals(
+            expected,
+            compatibilityResult.map { it.role to getMessageText(it) },
+        )
+        assertEquals(
+            expected,
+            tracedResult.messages.map { it.role to getMessageText(it) },
+        )
+    }
     // endregion
 
     // region applyInjections tests
