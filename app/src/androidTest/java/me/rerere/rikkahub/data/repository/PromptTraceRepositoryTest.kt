@@ -80,6 +80,18 @@ class PromptTraceRepositoryTest {
     }
 
     @Test
+    fun malformedTraceUuidDoesNotInterruptConversationObservation() = runBlocking {
+        val conversationId = insertConversation(Uuid.random().toString())
+        val validId = Uuid.random()
+        dao.insert(traceEntity(validId.toString(), conversationId, createdAt = 1L))
+        dao.insert(traceEntity("not-a-uuid", conversationId, createdAt = 2L))
+
+        val results = repository.observeConversation(Uuid.parse(conversationId)).first()
+
+        assertEquals(listOf(validId), results.map { it.traceId })
+    }
+
+    @Test
     fun lifecycleColumnsOverridePayloadMetadataAndActualTokens() = runBlocking {
         val conversationId = insertConversation(Uuid.random().toString())
         val traceId = Uuid.random()
@@ -105,6 +117,24 @@ class PromptTraceRepositoryTest {
         assertEquals(responseId, metadata.responseMessageId)
         assertEquals(42, metadata.actualPromptTokens)
         assertTrue(requireNotNull(metadata.finishedAtEpochMs) >= metadata.startedAtEpochMs)
+        assertNull(available.record.errorSummary)
+    }
+
+    @Test
+    fun terminalRowCannotBeOverwrittenByLateStreamingOrAnotherTerminalEvent() = runBlocking {
+        val conversationId = insertConversation(Uuid.random().toString())
+        val traceId = Uuid.random()
+        repository.insertPrepared(traceId, payload(conversationId))
+        repository.markTerminal(traceId, PromptTraceStatus.COMPLETED, null)
+
+        repository.markStreaming(traceId, Uuid.random(), 77)
+        repository.markTerminal(traceId, PromptTraceStatus.FAILED, "late failure")
+
+        val available = repository.observeConversation(Uuid.parse(conversationId)).first().single()
+            as PromptTraceReadResult.Available
+        assertEquals(PromptTraceStatus.COMPLETED, available.record.payload.metadata.status)
+        assertNull(available.record.payload.metadata.responseMessageId)
+        assertNull(available.record.payload.metadata.actualPromptTokens)
         assertNull(available.record.errorSummary)
     }
 
