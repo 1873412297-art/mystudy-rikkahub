@@ -128,6 +128,7 @@ import me.rerere.rikkahub.ui.pages.translator.TranslatorPage
 import me.rerere.rikkahub.ui.pages.webview.WebViewPage
 import me.rerere.rikkahub.ui.pages.tavern.TavernCardEditorPage
 import me.rerere.rikkahub.ui.pages.tavern.TavernCardViewerPage
+import me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsolePage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantGroupMembersPage
 import me.rerere.rikkahub.ui.theme.LocalDarkMode
 import me.rerere.rikkahub.ui.theme.RikkahubTheme
@@ -437,6 +438,10 @@ class RouteActivity : ComponentActivity() {
                                 TavernCardEditorPage(assistantId = key.assistantId)
                             }
 
+                            entry<Screen.TavernPromptConsole> { key ->
+                                TavernPromptConsolePage(conversationId = key.conversationId)
+                            }
+
                             entry<Screen.AssistantGroupMembers> { key ->
                                 AssistantGroupMembersPage(key.id)
                             }
@@ -679,6 +684,9 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data class TavernCardEditor(val assistantId: String) : Screen
+
+    @Serializable
+    data class TavernPromptConsole(val conversationId: String) : Screen
 
     @Serializable
     data class AssistantGroupMembers(val id: String) : Screen

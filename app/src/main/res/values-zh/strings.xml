@@ -1294,5 +1294,29 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="group_director_invalid_member">该角色已不可用</string>
   <string name="group_director_no_alternative">暂无其他角色</string>
   <string name="group_director_not_group">当前会话不是群聊</string>
+  <string name="tavern_prompt_console_title">酒馆控制台</string>
+  <string name="tavern_prompt_console_open">打开酒馆控制台</string>
+  <string name="tavern_prompt_console_overview">概览</string>
+  <string name="tavern_prompt_console_hits">命中</string>
+  <string name="tavern_prompt_console_messages">发送消息</string>
+  <string name="tavern_prompt_console_preview">预览</string>
+  <string name="tavern_prompt_console_actual_tokens">实际提示词 Token</string>
+  <string name="tavern_prompt_console_not_provided">未提供</string>
+  <string name="tavern_prompt_console_approx">约 %1$d</string>
+  <string name="tavern_prompt_console_no_traces">本会话还没有提示词记录</string>
+  <string name="tavern_prompt_console_branch_missing">当前回复分支没有记录，正在显示最新一次调用。</string>
+  <string name="tavern_prompt_console_payload_unavailable">记录内容解析异常</string>
+  <string name="tavern_prompt_console_cancelled">在创建回复分支前已取消</string>
+  <string name="tavern_prompt_console_preview_a2">草稿预览将在 A2 开放</string>
+  <string name="tavern_prompt_console_preview_a2_body">A1 中此页签不会运行转换器，也不会创建记录。</string>
+  <string name="tavern_prompt_console_clear">清空本会话记录</string>
+  <string name="tavern_prompt_console_clear_title">清空提示词记录？</string>
+  <string name="tavern_prompt_console_clear_body">聊天消息会保留，只删除本会话的诊断记录。</string>
+  <string name="tavern_prompt_console_copy_all">复制完整记录</string>
+  <string name="tavern_prompt_console_copy_message">复制消息</string>
+  <string name="tavern_prompt_console_copied">已复制</string>
+  <string name="tavern_prompt_console_estimate_notice">分段估算可能与提供商用量不同，因为协议开销、工具、缓存和多模态输入由提供商计算。</string>
+  <string name="tavern_prompt_console_trace_selector">选择模型调用</string>
+  <string name="tavern_prompt_console_no_hits">没有模式或世界书命中</string>
 </resources>
 

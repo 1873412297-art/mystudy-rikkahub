@@ -1,5 +1,5 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
   <string name="about_page_github">Github</string>
   <string name="about_page_license">License</string>
   <string name="about_page_system">System</string>
@@ -1323,4 +1323,28 @@
   <string name="group_director_invalid_member">That member is no longer available</string>
   <string name="group_director_no_alternative">No other member is available</string>
   <string name="group_director_not_group">This conversation is not a group chat</string>
+  <string name="tavern_prompt_console_title">Tavern console</string>
+  <string name="tavern_prompt_console_open">Open Tavern console</string>
+  <string name="tavern_prompt_console_overview">Overview</string>
+  <string name="tavern_prompt_console_hits">Hits</string>
+  <string name="tavern_prompt_console_messages">Sent messages</string>
+  <string name="tavern_prompt_console_preview">Preview</string>
+  <string name="tavern_prompt_console_actual_tokens">Actual prompt tokens</string>
+  <string name="tavern_prompt_console_not_provided">Not provided</string>
+  <string name="tavern_prompt_console_approx">Approx. %1$d</string>
+  <string name="tavern_prompt_console_no_traces">No prompt traces yet</string>
+  <string name="tavern_prompt_console_branch_missing">The selected reply branch has no trace; showing the newest available call.</string>
+  <string name="tavern_prompt_console_payload_unavailable">Trace payload unavailable</string>
+  <string name="tavern_prompt_console_cancelled">Cancelled before a response branch was created</string>
+  <string name="tavern_prompt_console_preview_a2">Draft preview arrives in A2</string>
+  <string name="tavern_prompt_console_preview_a2_body">This tab does not run transformers or create a trace in A1.</string>
+  <string name="tavern_prompt_console_clear">Clear this conversation’s traces</string>
+  <string name="tavern_prompt_console_clear_title">Clear prompt traces?</string>
+  <string name="tavern_prompt_console_clear_body">Chat messages are kept. Only diagnostics for this conversation are deleted.</string>
+  <string name="tavern_prompt_console_copy_all">Copy full trace</string>
+  <string name="tavern_prompt_console_copy_message">Copy message</string>
+  <string name="tavern_prompt_console_copied">Copied</string>
+  <string name="tavern_prompt_console_estimate_notice">Approximate section counts may differ from provider usage because protocol overhead, tools, caching, and multimodal input are provider-specific.</string>
+  <string name="tavern_prompt_console_trace_selector">Select provider call</string>
+  <string name="tavern_prompt_console_no_hits">No mode or lorebook hits</string>
 </resources>
