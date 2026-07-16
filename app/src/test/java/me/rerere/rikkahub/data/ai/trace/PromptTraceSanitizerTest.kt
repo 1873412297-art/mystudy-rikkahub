@@ -287,10 +287,134 @@ class PromptTraceSanitizerTest {
         assertTrue(persisted.contains("[redacted]"))
         assertTrue(persisted.contains("[stripped"))
         assertTrue(persisted.contains("weather"))
-        assertTrue(persisted.contains("ok=true"))
+        assertTrue("Expected safe output in $persisted", persisted.contains("ok=true"))
         assertEquals("https://example.com/output.png", tool.outputAttachments[0].uri)
         assertNull(tool.outputAttachments[1].uri)
         assertEquals(5L, tool.outputAttachments[1].byteLength)
+    }
+
+    @Test
+    fun `wrapped base64 data uri is fully consumed in diagnostic and error text`() {
+        val wrapped = "data:image/png;base64,aGVs\r\nbG8="
+        val tool = PromptTraceSanitizer.sanitizeMessages(
+            listOf(
+                UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    parts = listOf(
+                        UIMessagePart.Tool(
+                            toolCallId = "wrapped",
+                            toolName = "inspect",
+                            input = "before $wrapped after",
+                        ),
+                    ),
+                ),
+            ),
+        ).single().parts.single() as PromptTracePart.Tool
+        val error = PromptTraceSanitizer.sanitizeError(
+            IllegalStateException("failed $wrapped tail"),
+        )
+
+        assertTrue(tool.input.preview.contains("[stripped bytes=5"))
+        assertTrue(error.contains("[stripped bytes=5"))
+        listOf("aGVs", "bG8=").forEach { fragment ->
+            assertFalse(tool.input.preview.contains(fragment))
+            assertFalse(error.contains(fragment))
+        }
+        assertTrue(tool.input.preview.endsWith(" after"))
+        assertTrue(error.endsWith(" tail"))
+    }
+
+    @Test
+    fun `loose credentials balanced custom body and network user info are excluded`() {
+        val input = """
+            Authorization: Basic dXNlcjpwYXNz
+            Cookie: session=cookie-one; csrf=cookie-two; prefs=cookie-three
+            tenantCustomBody={"safe":"body-safe","nested":{"secretKey":"body-secret"}}
+            secretKey=loose-secret
+            accessKeyId=loose-access
+            url=https://net-user:net-pass@example.com/path?token=url-secret#frag
+            next=visible
+        """.trimIndent()
+        val tool = PromptTraceSanitizer.sanitizeMessages(
+            listOf(
+                UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    parts = listOf(
+                        UIMessagePart.Tool(
+                            toolCallId = "credentials",
+                            toolName = "fetch",
+                            input = input,
+                        ),
+                        UIMessagePart.Image(
+                            "https://image-user:image-pass@example.com/a.png?token=image-secret#frag",
+                        ),
+                    ),
+                ),
+            ),
+        ).single()
+        val diagnostic = (tool.parts[0] as PromptTracePart.Tool).input.preview
+        val attachment = (tool.parts[1] as PromptTracePart.Attachment).value
+
+        listOf(
+            "dXNlcjpwYXNz",
+            "cookie-one",
+            "cookie-two",
+            "cookie-three",
+            "body-safe",
+            "body-secret",
+            "loose-secret",
+            "loose-access",
+            "net-user",
+            "net-pass",
+            "url-secret",
+            "image-user",
+            "image-pass",
+            "image-secret",
+        ).forEach { excluded ->
+            assertFalse("Persisted trace leaked $excluded: $diagnostic / $attachment", diagnostic.contains(excluded))
+            assertFalse("Attachment leaked $excluded: $attachment", attachment.toString().contains(excluded))
+        }
+        assertTrue(diagnostic.contains("Authorization=[redacted]"))
+        assertTrue(diagnostic.contains("Cookie=[redacted]"))
+        assertTrue(diagnostic.contains("tenantCustomBody=[redacted]"))
+        assertTrue(diagnostic.contains("secretKey=[redacted]"))
+        assertTrue(diagnostic.contains("accessKeyId=[redacted]"))
+        assertTrue(diagnostic.contains("url=https://example.com/path"))
+        assertTrue(diagnostic.contains("next=visible"))
+        assertEquals("https://example.com/a.png", attachment.uri)
+    }
+
+    @Test
+    fun `oversized data uri drops body without decoding metadata`() {
+        val oversizedBody = "A".repeat(2 * 1024 * 1024)
+        val oversizedUri = "data:application/octet-stream;base64,$oversizedBody"
+        val message = UIMessage(
+            role = MessageRole.USER,
+            parts = listOf(
+                UIMessagePart.Document(
+                    url = oversizedUri,
+                    fileName = "large.bin",
+                    mime = "application/octet-stream",
+                ),
+                UIMessagePart.Tool(
+                    toolCallId = "large",
+                    toolName = "inspect",
+                    input = "payload=$oversizedUri tail=kept",
+                ),
+            ),
+        )
+
+        val parts = PromptTraceSanitizer.sanitizeMessages(listOf(message)).single().parts
+        val attachment = (parts[0] as PromptTracePart.Attachment).value
+        val tool = parts[1] as PromptTracePart.Tool
+
+        assertNull(attachment.uri)
+        assertEquals("application/octet-stream", attachment.mimeType)
+        assertNull(attachment.byteLength)
+        assertNull(attachment.sha256)
+        assertTrue(tool.input.preview.contains("[stripped]"))
+        assertTrue(tool.input.preview.endsWith(" tail=kept"))
+        assertFalse(tool.input.preview.contains("AAAA"))
     }
 
     @Test
@@ -335,7 +459,7 @@ class PromptTraceSanitizerTest {
 
         assertTrue(sanitized.length <= 240)
         assertTrue(sanitized.contains("[redacted]"))
-        assertTrue(sanitized.contains("[stripped"))
+        assertTrue("Expected stripped data URI in $sanitized", sanitized.contains("[stripped"))
         assertTrue(sanitized.contains("https://example.com/failure"))
         assertFalse(sanitized.contains("bearer-value"))
         assertFalse(sanitized.contains("token-value"))
