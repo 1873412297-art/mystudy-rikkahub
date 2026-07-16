@@ -219,4 +219,36 @@ class PromptTraceCopyFormatterTest {
             assertFalse("Copied text leaked $excluded: $copied", copied.contains(excluded))
         }
     }
+
+    @Test
+    fun `copy excludes structured and loose set cookie values`() {
+        val message = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                UIMessagePart.Tool(
+                    toolCallId = "copy-cookies",
+                    toolName = "fetch",
+                    input = """{"Set-Cookie":"session=copy-structured","ok":true}""",
+                    output = listOf(
+                        UIMessagePart.Text(
+                            """
+                                Set-Cookies: csrf=copy-loose; prefs=copy-second
+                                next=visible
+                            """.trimIndent(),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val copied = PromptTraceCopyFormatter.formatMessage(
+            PromptTraceSanitizer.sanitizeMessages(listOf(message)).single(),
+        )
+
+        assertTrue(copied.contains("Set-Cookie"))
+        assertTrue(copied.contains("Set-Cookies=[redacted]"))
+        assertTrue(copied.contains("next=visible"))
+        listOf("copy-structured", "copy-loose", "copy-second").forEach { excluded ->
+            assertFalse("Copied text leaked $excluded: $copied", copied.contains(excluded))
+        }
+    }
 }

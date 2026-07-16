@@ -26,6 +26,8 @@ object PromptTraceSanitizer {
         "cookie",
         "cookies",
         "cookiejar",
+        "setcookie",
+        "setcookies",
         "password",
         "passwd",
         "secret",
@@ -296,12 +298,8 @@ object PromptTraceSanitizer {
     private fun stripNetworkQuery(url: String): String {
         return runCatching {
             val uri = URI(url)
-            if (uri.host != null) {
-                URI(uri.scheme, null, uri.host, uri.port, uri.path, null, null).toString()
-            } else {
-                val authority = uri.rawAuthority?.substringAfterLast('@')
-                URI(uri.scheme, authority, uri.path, null, null).toString()
-            }
+            val authority = requireNotNull(uri.rawAuthority).substringAfterLast('@')
+            "${uri.scheme}://$authority${uri.rawPath.orEmpty()}"
         }.getOrElse {
             val withoutQuery = url.substringBefore('?').substringBefore('#')
             val schemeEnd = withoutQuery.indexOf("://")

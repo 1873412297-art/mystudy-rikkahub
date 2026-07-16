@@ -385,6 +385,111 @@ class PromptTraceSanitizerTest {
     }
 
     @Test
+    fun `structured json set cookie keys are redacted`() {
+        val tool = PromptTraceSanitizer.sanitizeMessages(
+            listOf(
+                UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    parts = listOf(
+                        UIMessagePart.Tool(
+                            toolCallId = "structured-cookies",
+                            toolName = "fetch",
+                            input = """
+                                {
+                                  "Set-Cookie":"session=structured-one; Path=/",
+                                  "Set-Cookies":["csrf=structured-two","prefs=structured-three"],
+                                  "ok":true
+                                }
+                            """.trimIndent(),
+                        ),
+                    ),
+                ),
+            ),
+        ).single().parts.single() as PromptTracePart.Tool
+        val persisted = tool.input.preview
+
+        assertTrue("Expected Set-Cookie redaction in $persisted", persisted.contains("Set-Cookie=[redacted]"))
+        assertTrue("Expected Set-Cookies redaction in $persisted", persisted.contains("Set-Cookies=[redacted]"))
+        assertTrue(persisted.contains("\"ok\":true"))
+        listOf("structured-one", "structured-two", "structured-three").forEach { excluded ->
+            assertFalse("Structured trace leaked $excluded: $persisted", persisted.contains(excluded))
+        }
+    }
+
+    @Test
+    fun `loose set cookie headers are redacted through line end`() {
+        val tool = PromptTraceSanitizer.sanitizeMessages(
+            listOf(
+                UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    parts = listOf(
+                        UIMessagePart.Tool(
+                            toolCallId = "loose-cookies",
+                            toolName = "fetch",
+                            input = """
+                                Set-Cookie: session=loose-one; Path=/; HttpOnly
+                                Set-Cookies: csrf=loose-two; prefs=loose-three
+                                next=visible
+                            """.trimIndent(),
+                        ),
+                    ),
+                ),
+            ),
+        ).single().parts.single() as PromptTracePart.Tool
+        val persisted = tool.input.preview
+
+        assertTrue(persisted.contains("Set-Cookie=[redacted]"))
+        assertTrue(persisted.contains("Set-Cookies=[redacted]"))
+        assertTrue(persisted.contains("next=visible"))
+        listOf("loose-one", "loose-two", "loose-three", "HttpOnly").forEach { excluded ->
+            assertFalse("Loose trace leaked $excluded: $persisted", persisted.contains(excluded))
+        }
+    }
+
+    @Test
+    fun `network sanitization preserves raw percent encoded path`() {
+        val rawPath = "/a%2Fb/%3F/%23/%25"
+        val networkUrl = "https://path-user:path-pass@example.com$rawPath?token=url-secret#frag"
+        val message = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                UIMessagePart.Image(networkUrl),
+                UIMessagePart.Tool(
+                    toolCallId = "encoded-path",
+                    toolName = "fetch",
+                    input = "url=$networkUrl",
+                ),
+            ),
+        )
+
+        val parts = PromptTraceSanitizer.sanitizeMessages(listOf(message)).single().parts
+        val attachment = (parts[0] as PromptTracePart.Attachment).value
+        val diagnostic = (parts[1] as PromptTracePart.Tool).input.preview
+
+        assertEquals("https://example.com$rawPath", attachment.uri)
+        assertEquals("url=https://example.com$rawPath", diagnostic)
+        listOf(
+            "/a/b/",
+            "%252F",
+            "%253F",
+            "%2523",
+            "%2525",
+            "path-user",
+            "path-pass",
+            "url-secret",
+        ).forEach { excluded ->
+            assertFalse(
+                "Sanitized URL changed or leaked $excluded: $attachment / $diagnostic",
+                diagnostic.contains(excluded),
+            )
+            assertFalse(
+                "Attachment URL changed or leaked $excluded: $attachment",
+                attachment.toString().contains(excluded),
+            )
+        }
+    }
+
+    @Test
     fun `oversized data uri drops body without decoding metadata`() {
         val oversizedBody = "A".repeat(2 * 1024 * 1024)
         val oversizedUri = "data:application/octet-stream;base64,$oversizedBody"
