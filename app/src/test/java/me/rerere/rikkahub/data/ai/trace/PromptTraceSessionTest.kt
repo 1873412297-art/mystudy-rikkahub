@@ -251,6 +251,28 @@ class PromptTraceSessionTest {
     }
 
     @Test
+    fun `terminal retries a failed authoritative token update before finalizing`() = runBlocking {
+        val store = FailOnceTokenUpdateStore()
+        val input = UIMessage.user("hello")
+        val response = UIMessage.assistant("hi")
+        val session = session(store)
+        session.prepare(listOf(input))
+        session.observeProviderMessages(
+            listOf(input, response.copy(usage = TokenUsage(promptTokens = 12))),
+        )
+        session.observeProviderMessages(
+            listOf(input, response.copy(usage = TokenUsage(promptTokens = 19))),
+        )
+
+        session.complete()
+
+        assertEquals(2, store.tokenUpdateAttempts)
+        assertEquals(19, store.actualPromptTokens)
+        assertEquals(19, store.promptTokensWhenTerminalPersisted)
+        assertEquals(PromptTraceStatus.COMPLETED, store.persistedStatus)
+    }
+
+    @Test
     fun `failed terminal persistence retries the same terminal event`() = runBlocking {
         val store = FailOnceTerminalStore()
         val session = session(store)
@@ -278,6 +300,21 @@ class PromptTraceSessionTest {
         assertEquals(bound.id, store.responseMessageId)
         assertEquals(12, store.actualPromptTokens)
         assertFalse(store.events.contains("TOKENS:99"))
+    }
+
+    @Test
+    fun `first observation with multiple new assistants binds the last assistant`() = runBlocking {
+        val store = RecordingTraceStore()
+        val input = UIMessage.user("hello")
+        val earlier = UIMessage.assistant("earlier").copy(usage = TokenUsage(promptTokens = 7))
+        val last = UIMessage.assistant("last").copy(usage = TokenUsage(promptTokens = 13))
+        val session = session(store)
+        session.prepare(listOf(input))
+
+        session.observeProviderMessages(listOf(input, earlier, last))
+
+        assertEquals(last.id, store.responseMessageId)
+        assertEquals(13, store.actualPromptTokens)
     }
 
     @Test
@@ -482,6 +519,30 @@ private class FailOnceTerminalStore : PromptTraceStore {
     override suspend fun markTerminal(traceId: Uuid, status: PromptTraceStatus, errorSummary: String?) {
         terminalAttempts++
         if (terminalAttempts == 1) throw IllegalStateException("first terminal failed")
+        persistedStatus = status
+    }
+}
+
+private class FailOnceTokenUpdateStore : PromptTraceStore {
+    var tokenUpdateAttempts = 0
+    var actualPromptTokens: Int? = null
+    var promptTokensWhenTerminalPersisted: Int? = null
+    var persistedStatus: PromptTraceStatus? = null
+
+    override suspend fun insertPrepared(traceId: Uuid, payload: PromptTracePayload) = Unit
+
+    override suspend fun markStreaming(traceId: Uuid, responseMessageId: Uuid, actualPromptTokens: Int?) {
+        this.actualPromptTokens = actualPromptTokens
+    }
+
+    override suspend fun updateActualPromptTokens(traceId: Uuid, actualPromptTokens: Int) {
+        tokenUpdateAttempts++
+        if (tokenUpdateAttempts == 1) throw IllegalStateException("first token update failed")
+        this.actualPromptTokens = actualPromptTokens
+    }
+
+    override suspend fun markTerminal(traceId: Uuid, status: PromptTraceStatus, errorSummary: String?) {
+        promptTokensWhenTerminalPersisted = actualPromptTokens
         persistedStatus = status
     }
 }
