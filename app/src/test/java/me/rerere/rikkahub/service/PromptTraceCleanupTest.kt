@@ -1,7 +1,9 @@
 package me.rerere.rikkahub.service
 
 import me.rerere.ai.ui.UIMessage
+import me.rerere.rikkahub.data.ai.trace.PromptTraceCleanup
 import me.rerere.rikkahub.data.ai.trace.removedMessageIds
+import me.rerere.rikkahub.data.ai.trace.removedMessageIdsAfter
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import org.junit.Assert.assertEquals
@@ -9,6 +11,42 @@ import org.junit.Test
 import kotlin.uuid.Uuid
 
 class PromptTraceCleanupTest {
+    @Test
+    fun `ordinary stale metadata save never schedules cleanup for a newer response`() {
+        val anchor = UIMessage.user("one")
+        val newerResponse = UIMessage.assistant("new response")
+        val liveConversation = Conversation(
+            assistantId = Uuid.random(),
+            messageNodes = listOf(MessageNode.of(anchor), MessageNode.of(newerResponse)),
+        )
+        val staleMetadataSave = liveConversation.copy(
+            title = "renamed from stale snapshot",
+            messageNodes = listOf(MessageNode.of(anchor)),
+        )
+
+        assertEquals(setOf(newerResponse.id), removedMessageIds(liveConversation, staleMetadataSave))
+        assertEquals(
+            emptySet<Uuid>(),
+            PromptTraceCleanup.None.removedMessageIdsAfter(staleMetadataSave),
+        )
+    }
+
+    @Test
+    fun `explicit tail removal schedules only intentionally removed messages`() {
+        val anchor = UIMessage.user("one")
+        val removedResponse = UIMessage.assistant("remove me")
+        val before = Conversation(
+            assistantId = Uuid.random(),
+            messageNodes = listOf(MessageNode.of(anchor), MessageNode.of(removedResponse)),
+        )
+        val after = before.copy(messageNodes = before.messageNodes.take(1))
+
+        assertEquals(
+            setOf(removedResponse.id),
+            PromptTraceCleanup.RemovedMessages(before).removedMessageIdsAfter(after),
+        )
+    }
+
     @Test
     fun `removed ids include deleted alternative and truncated tail but not branch selection`() {
         val first = UIMessage.user("one")

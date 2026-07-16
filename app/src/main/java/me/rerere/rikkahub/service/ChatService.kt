@@ -49,10 +49,11 @@ import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.GenerationChunk
 import me.rerere.rikkahub.data.ai.GenerationHandler
+import me.rerere.rikkahub.data.ai.trace.PromptTraceCleanup
 import me.rerere.rikkahub.data.ai.trace.PromptTraceSectionKind
 import me.rerere.rikkahub.data.ai.trace.PromptTraceSourceHint
 import me.rerere.rikkahub.data.ai.trace.buildPromptTraceSeed
-import me.rerere.rikkahub.data.ai.trace.removedMessageIds
+import me.rerere.rikkahub.data.ai.trace.removedMessageIdsAfter
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.tools.createConversationTools
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
@@ -826,7 +827,11 @@ class ChatService(
                     val newConversation = conversation.copy(
                         messageNodes = conversation.messageNodes.subList(0, indexAt + 1)
                     )
-                    saveConversation(conversationId, newConversation)
+                    saveConversationAfterRemovingMessages(
+                        conversationId = conversationId,
+                        before = conversation,
+                        after = newConversation,
+                    )
                     handleMessageComplete(conversationId, memberId = memberId, allowAutoChain = false)
                 } else {
                     if (regenerateAssistantMsg) {
@@ -1602,7 +1607,11 @@ class ChatService(
             chatSuggestions = emptyList(),
         )
 
-        saveConversation(conversationId, newConversation)
+        saveConversationAfterRemovingMessages(
+            conversationId = conversationId,
+            before = conversation,
+            after = newConversation,
+        )
     }
 
     // ---- 对话状态更新 ----
@@ -1669,18 +1678,37 @@ class ChatService(
     }
 
     suspend fun saveConversation(conversationId: Uuid, conversation: Conversation) {
+        saveConversation(
+            conversationId = conversationId,
+            conversation = conversation,
+            promptTraceCleanup = PromptTraceCleanup.None,
+        )
+    }
+
+    private suspend fun saveConversationAfterRemovingMessages(
+        conversationId: Uuid,
+        before: Conversation,
+        after: Conversation,
+    ) {
+        saveConversation(
+            conversationId = conversationId,
+            conversation = after,
+            promptTraceCleanup = PromptTraceCleanup.RemovedMessages(before),
+        )
+    }
+
+    private suspend fun saveConversation(
+        conversationId: Uuid,
+        conversation: Conversation,
+        promptTraceCleanup: PromptTraceCleanup,
+    ) {
         val exists = conversationRepo.existsConversationById(conversation.id)
         if (!exists && conversation.title.isBlank() && conversation.messageNodes.isEmpty()) {
             return // 新会话且为空时不保存
         }
 
-        val previous = getConversationFlow(conversationId).value
         val updatedConversation = conversation.copy()
-        val removedIds = if (previous.id == updatedConversation.id) {
-            removedMessageIds(previous, updatedConversation)
-        } else {
-            emptySet()
-        }
+        val removedIds = promptTraceCleanup.removedMessageIdsAfter(updatedConversation)
         updateConversation(conversationId, updatedConversation)
 
         if (!exists) {
@@ -1880,7 +1908,11 @@ class ChatService(
             return
         }
 
-        saveConversation(conversationId, updatedConversation)
+        saveConversationAfterRemovingMessages(
+            conversationId = conversationId,
+            before = currentConversation,
+            after = updatedConversation,
+        )
     }
 
     suspend fun deleteMessage(
