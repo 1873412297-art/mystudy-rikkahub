@@ -84,6 +84,24 @@ class ConversationSession(
         }
     }
 
+    internal suspend fun <T> completeOwnedGroupCancellation(
+        job: Job?,
+        staleValue: () -> T,
+        block: suspend () -> T,
+    ): T = groupDirectorMutex.withLock {
+        val ownsGenerationOrReply = job != null && (
+            _generationJob.value === job || groupReplyActiveJob === job
+        )
+        if (!ownsGenerationOrReply) {
+            return@withLock staleValue()
+        }
+        try {
+            block()
+        } finally {
+            releaseGroupGenerationLocked(job)
+        }
+    }
+
     // 空闲检查任务
     private var idleCheckJob: Job? = null
 

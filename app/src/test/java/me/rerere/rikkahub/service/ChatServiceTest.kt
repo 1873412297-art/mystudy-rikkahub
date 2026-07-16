@@ -485,6 +485,53 @@ class ChatServiceTest {
     }
 
     @Test
+    fun `superseded cancellation preserves successor director and ownership`() = runBlocking {
+        val engine = GroupDirectorEngine()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(scope)
+        val oldJob = Job()
+        val successorJob = Job()
+        val successorDirector = GroupDirectorState(
+            playbackState = GroupPlaybackState.RUNNING,
+            oneShotNextMemberId = groupMemberB,
+            skipNextRequested = true,
+        )
+        val persistCount = AtomicInteger()
+
+        try {
+            session.setJob(oldJob)
+            session.withGroupDirectorLock {
+                session.markGroupReplyStartedLocked(oldJob)
+            }
+            session.setJob(successorJob)
+            session.withGroupDirectorLock {
+                val current = session.state.value
+                session.state.value = current.copy(
+                    groupRuntimeState = current.groupRuntimeState.copy(director = successorDirector)
+                )
+                session.markGroupReplyStartedLocked(successorJob)
+            }
+
+            val result = normalizeCancelledGroupGeneration(session, oldJob, engine) {
+                persistCount.incrementAndGet()
+                session.state.value = it
+            }
+
+            assertEquals(successorDirector, result.groupRuntimeState.director)
+            assertEquals(successorDirector, session.state.value.groupRuntimeState.director)
+            assertEquals(0, persistCount.get())
+            assertSame(successorJob, session.getJob())
+            session.withGroupDirectorLock {
+                assertEquals(true, session.isGroupReplyActiveLocked())
+            }
+        } finally {
+            oldJob.cancel()
+            successorJob.cancel()
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun `one round cancellation persists paused state with remainder`() = runBlocking {
         val engine = GroupDirectorEngine()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

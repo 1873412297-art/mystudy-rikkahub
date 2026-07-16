@@ -160,3 +160,14 @@ adb -s emulator-5554 logcat -d -b crash
   - Focused `Migration_26_27_Test` on `emulator-5554`: 1 test, PASS.
   - `:app:compileDebugKotlin -x :web:buildWebUi`: PASS.
   - `git diff --check`: clean.
+
+## Final stale-cancellation ownership fix
+
+- A late cancellation from a superseded generation now enters a dedicated atomic cancellation handoff under the session director mutex.
+- The handoff first verifies that the cancelled job still owns the current generation or reply phase. A stale job returns the current conversation unchanged, does not call persistence, and does not release the successor job or reply phase.
+- A current owner still normalizes the director to paused, persists the result, releases its job/reply phase, and allows the original `CancellationException` to propagate.
+- TDD red evidence: `superseded cancellation preserves successor director and ownership` initially failed because the stale job cleared the successor one-shot/skip state and invoked persistence.
+- Final validation:
+  - `ChatServiceTest` plus all `service.group.*`: 93 tests, 0 failures/errors/skips.
+  - `:app:compileDebugKotlin`: PASS.
+  - `git diff --check`: clean.

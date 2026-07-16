@@ -217,15 +217,18 @@ internal suspend fun normalizeCancelledGroupGeneration(
     engine: GroupDirectorEngine,
     persist: suspend (Conversation) -> Unit,
 ): Conversation = withContext(NonCancellable) {
-    session.completeGroupReplyHandoff(generationJob) {
+    session.completeOwnedGroupCancellation(
+        job = generationJob,
+        staleValue = { session.state.value },
+    ) {
         val current = session.state.value
         val normalizedDirector = engine.afterCancellation(current.groupRuntimeState.director)
         val updated = current.copy(
             groupRuntimeState = current.groupRuntimeState.copy(director = normalizedDirector)
         )
         persist(updated)
-        GroupGenerationHandoffResult(updated, shouldContinue = false)
-    }.value
+        updated
+    }
 }
 
 internal fun resolveLocalGroupTurnSelection(
