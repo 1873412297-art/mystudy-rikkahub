@@ -10,6 +10,7 @@ import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.data.repository.FilesRepository
 import me.rerere.rikkahub.data.repository.GenMediaRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
+import me.rerere.rikkahub.data.repository.PromptTraceRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.workspace.ProotShellRunner
 import me.rerere.workspace.RootfsInstaller
@@ -19,6 +20,13 @@ import org.koin.dsl.module
 import java.io.File
 
 val repositoryModule = module {
+    single {
+        PromptTraceRepository(
+            dao = get(),
+            baseJson = get(),
+        )
+    }
+
     single {
         ConversationRepository(get(), get(), get(), get(), get(), get())
     }
