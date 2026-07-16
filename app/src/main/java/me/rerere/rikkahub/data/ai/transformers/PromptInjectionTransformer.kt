@@ -3,13 +3,44 @@ package me.rerere.rikkahub.data.ai.transformers
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.trace.PromptInjectionMatch
+import me.rerere.rikkahub.data.ai.trace.PromptInjectionMatchType
+import me.rerere.rikkahub.data.ai.trace.PromptInjectionSourceType
+import me.rerere.rikkahub.data.ai.trace.PromptInjectionTrace
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.InjectionPosition
-import me.rerere.rikkahub.data.model.PromptInjection
 import me.rerere.rikkahub.data.model.Lorebook
-import me.rerere.rikkahub.data.model.extractContextForMatching
-import me.rerere.rikkahub.data.model.isTriggered
+import me.rerere.rikkahub.data.model.PromptInjection
 import kotlin.uuid.Uuid
+
+internal data class CollectedPromptInjection(
+    val injection: PromptInjection,
+    val sourceType: PromptInjectionSourceType,
+    val lorebookId: Uuid? = null,
+    val lorebookName: String? = null,
+    val match: PromptInjectionMatch? = null,
+)
+
+internal data class AppliedPromptInjection(
+    val collected: CollectedPromptInjection,
+    val targetMessageId: Uuid?,
+    val targetMessageIndex: Int?,
+)
+
+internal data class PromptInjectionTransformResult(
+    val messages: List<UIMessage>,
+    val applied: List<AppliedPromptInjection>,
+)
+
+private data class OrderedPromptInjection(
+    val order: Int,
+    val collected: CollectedPromptInjection,
+)
+
+private data class PromptInjectionApplicationResult(
+    val messages: List<UIMessage>,
+    val targetMessageIds: Map<Int, Uuid>,
+)
 
 /**
  * 提示词注入转换器
@@ -21,7 +52,7 @@ object PromptInjectionTransformer : InputMessageTransformer {
         ctx: TransformerContext,
         messages: List<UIMessage>,
     ): List<UIMessage> {
-        return transformMessages(
+        val result = transformMessagesWithTrace(
             messages = messages,
             assistant = ctx.assistant,
             modeInjections = ctx.settings.modeInjections,
@@ -29,7 +60,28 @@ object PromptInjectionTransformer : InputMessageTransformer {
             conversationModeInjectionIds = ctx.conversationModeInjectionIds,
             conversationLorebookIds = ctx.conversationLorebookIds,
         )
+        ctx.promptTraceSession?.recordInjectionHits(result.applied.map { it.toTrace() })
+        return result.messages
     }
+}
+
+internal fun AppliedPromptInjection.toTrace(): PromptInjectionTrace {
+    val item = collected
+    return PromptInjectionTrace(
+        injectionId = item.injection.id,
+        injectionName = item.injection.name,
+        sourceType = item.sourceType,
+        lorebookId = item.lorebookId,
+        lorebookName = item.lorebookName,
+        match = item.match,
+        position = item.injection.position.name,
+        role = item.injection.role,
+        priority = item.injection.priority,
+        injectDepth = item.injection.injectDepth,
+        content = item.injection.content,
+        targetMessageId = targetMessageId,
+        targetMessageIndex = targetMessageIndex,
+    )
 }
 
 /**
@@ -42,9 +94,24 @@ internal fun transformMessages(
     lorebooks: List<Lorebook>,
     conversationModeInjectionIds: Set<Uuid> = emptySet(),
     conversationLorebookIds: Set<Uuid> = emptySet(),
-): List<UIMessage> {
-    // 收集所有需要注入的内容
-    val injections = collectInjections(
+): List<UIMessage> = transformMessagesWithTrace(
+    messages = messages,
+    assistant = assistant,
+    modeInjections = modeInjections,
+    lorebooks = lorebooks,
+    conversationModeInjectionIds = conversationModeInjectionIds,
+    conversationLorebookIds = conversationLorebookIds,
+).messages
+
+internal fun transformMessagesWithTrace(
+    messages: List<UIMessage>,
+    assistant: Assistant,
+    modeInjections: List<PromptInjection.ModeInjection>,
+    lorebooks: List<Lorebook>,
+    conversationModeInjectionIds: Set<Uuid> = emptySet(),
+    conversationLorebookIds: Set<Uuid> = emptySet(),
+): PromptInjectionTransformResult {
+    val collected = collectInjectionMatches(
         messages = messages,
         assistant = assistant,
         modeInjections = modeInjections,
@@ -53,32 +120,43 @@ internal fun transformMessages(
         conversationLorebookIds = conversationLorebookIds,
     )
 
-    if (injections.isEmpty()) {
-        return messages
+    if (collected.isEmpty()) {
+        return PromptInjectionTransformResult(messages, emptyList())
     }
 
-    // 按位置和优先级分组
-    val byPosition = injections
-        .sortedByDescending { it.priority }
-        .groupBy { it.position }
-
-    // 应用注入
-    return applyInjections(messages, byPosition)
+    val ordered = collected
+        .sortedByDescending { it.injection.priority }
+        .mapIndexed { index, item -> OrderedPromptInjection(index, item) }
+    val application = applyCollectedInjections(
+        messages = messages,
+        byPosition = ordered.groupBy { it.collected.injection.position },
+    )
+    val finalIndexes = application.messages
+        .withIndex()
+        .associate { (index, message) -> message.id to index }
+    val applied = ordered.map { item ->
+        val targetMessageId = application.targetMessageIds[item.order]
+        AppliedPromptInjection(
+            collected = item.collected,
+            targetMessageId = targetMessageId,
+            targetMessageIndex = targetMessageId?.let(finalIndexes::get),
+        )
+    }
+    return PromptInjectionTransformResult(application.messages, applied)
 }
 
 /**
- * 收集需要注入的内容
+ * 收集需要注入的内容及其精确匹配来源。
  */
-internal fun collectInjections(
+internal fun collectInjectionMatches(
     messages: List<UIMessage>,
     assistant: Assistant,
     modeInjections: List<PromptInjection.ModeInjection>,
     lorebooks: List<Lorebook>,
     conversationModeInjectionIds: Set<Uuid> = emptySet(),
     conversationLorebookIds: Set<Uuid> = emptySet(),
-): List<PromptInjection> {
-    val injections = mutableListOf<PromptInjection>()
-    val effectiveModeInjectionIds = if (assistant.allowConversationPromptInjection) {
+): List<CollectedPromptInjection> {
+    val effectiveModeIds = if (assistant.allowConversationPromptInjection) {
         conversationModeInjectionIds
     } else {
         assistant.modeInjectionIds
@@ -88,51 +166,128 @@ internal fun collectInjections(
     } else {
         assistant.lorebookIds
     }
+    val collected = mutableListOf<CollectedPromptInjection>()
 
-    // 1. 获取关联的 ModeInjection
     modeInjections
-        .filter { it.enabled && effectiveModeInjectionIds.contains(it.id) }
-        .forEach { injections.add(it) }
-
-    // 2. 获取关联的 Lorebook 中被触发的 RegexInjection
-    val enabledLorebooks = lorebooks.filter {
-        it.enabled && effectiveLorebookIds.contains(it.id)
-    }
-    if (enabledLorebooks.isNotEmpty()) {
-        // 提取上下文用于匹配（只取非 SYSTEM 消息）
-        val nonSystemMessages = messages.filter { it.role != MessageRole.SYSTEM }
-
-        enabledLorebooks.forEach { lorebook ->
-            lorebook.entries
-                .filter { entry ->
-                    val context = extractContextForMatching(nonSystemMessages, entry.scanDepth)
-                    entry.isTriggered(context)
-                }
-                .forEach { injections.add(it) }
+        .filter { it.enabled && it.id in effectiveModeIds }
+        .forEach { injection ->
+            collected += CollectedPromptInjection(
+                injection = injection,
+                sourceType = PromptInjectionSourceType.MODE,
+            )
         }
-    }
 
-    return injections
+    val nonSystemMessages = messages.filter { it.role != MessageRole.SYSTEM }
+    lorebooks
+        .filter { it.enabled && it.id in effectiveLorebookIds }
+        .forEach { lorebook ->
+            lorebook.entries
+                .filter { it.enabled }
+                .forEach { entry ->
+                    val scannedMessages = nonSystemMessages.takeLast(entry.scanDepth)
+                    val scannedContext = scannedMessages.joinToString("\n") { it.toText() }
+                    val matchedTerms = when {
+                        entry.constantActive -> emptyList()
+                        entry.useRegex -> entry.keywords.filter { keyword ->
+                            try {
+                                val options = if (entry.caseSensitive) {
+                                    emptySet()
+                                } else {
+                                    setOf(RegexOption.IGNORE_CASE)
+                                }
+                                Regex(keyword, options).containsMatchIn(scannedContext)
+                            } catch (_: Exception) {
+                                false
+                            }
+                        }
+
+                        else -> entry.keywords.filter { keyword ->
+                            scannedContext.contains(keyword, ignoreCase = !entry.caseSensitive)
+                        }
+                    }
+                    if (entry.constantActive || matchedTerms.isNotEmpty()) {
+                        collected += CollectedPromptInjection(
+                            injection = entry,
+                            sourceType = PromptInjectionSourceType.LOREBOOK,
+                            lorebookId = lorebook.id,
+                            lorebookName = lorebook.name,
+                            match = PromptInjectionMatch(
+                                type = when {
+                                    entry.constantActive -> PromptInjectionMatchType.CONSTANT
+                                    entry.useRegex -> PromptInjectionMatchType.REGEX
+                                    else -> PromptInjectionMatchType.KEYWORD
+                                },
+                                matchedTerms = matchedTerms,
+                                scanDepth = entry.scanDepth,
+                                scannedMessageIds = scannedMessages.map { it.id },
+                                caseSensitive = entry.caseSensitive,
+                                regexEnabled = entry.useRegex,
+                            ),
+                        )
+                    }
+                }
+        }
+
+    return collected
 }
+
+internal fun collectInjections(
+    messages: List<UIMessage>,
+    assistant: Assistant,
+    modeInjections: List<PromptInjection.ModeInjection>,
+    lorebooks: List<Lorebook>,
+    conversationModeInjectionIds: Set<Uuid> = emptySet(),
+    conversationLorebookIds: Set<Uuid> = emptySet(),
+): List<PromptInjection> = collectInjectionMatches(
+    messages = messages,
+    assistant = assistant,
+    modeInjections = modeInjections,
+    lorebooks = lorebooks,
+    conversationModeInjectionIds = conversationModeInjectionIds,
+    conversationLorebookIds = conversationLorebookIds,
+).map { it.injection }
 
 /**
  * 应用注入到消息列表
  */
 internal fun applyInjections(
     messages: List<UIMessage>,
-    byPosition: Map<InjectionPosition, List<PromptInjection>>
+    byPosition: Map<InjectionPosition, List<PromptInjection>>,
 ): List<UIMessage> {
+    var order = 0
+    val orderedByPosition = byPosition.mapValues { (_, injections) ->
+        injections.map { injection ->
+            OrderedPromptInjection(
+                order = order++,
+                collected = CollectedPromptInjection(
+                    injection = injection,
+                    sourceType = PromptInjectionSourceType.MODE,
+                ),
+            )
+        }
+    }
+    return applyCollectedInjections(
+        messages = messages,
+        byPosition = orderedByPosition,
+    ).messages
+}
+
+private fun applyCollectedInjections(
+    messages: List<UIMessage>,
+    byPosition: Map<InjectionPosition, List<OrderedPromptInjection>>,
+): PromptInjectionApplicationResult {
     val result = messages.toMutableList()
+    val targetMessageIds = mutableMapOf<Int, Uuid>()
 
     // 找到系统消息的索引（通常是第一条）
     val systemIndex = result.indexOfFirst { it.role == MessageRole.SYSTEM }
 
     // 处理 BEFORE_SYSTEM_PROMPT 和 AFTER_SYSTEM_PROMPT
     if (systemIndex >= 0) {
-        val beforeContent = byPosition[InjectionPosition.BEFORE_SYSTEM_PROMPT]
-            ?.joinToString("\n") { it.content } ?: ""
-        val afterContent = byPosition[InjectionPosition.AFTER_SYSTEM_PROMPT]
-            ?.joinToString("\n") { it.content } ?: ""
+        val beforeItems = byPosition[InjectionPosition.BEFORE_SYSTEM_PROMPT].orEmpty()
+        val afterItems = byPosition[InjectionPosition.AFTER_SYSTEM_PROMPT].orEmpty()
+        val beforeContent = beforeItems.joinToString("\n") { it.collected.injection.content }
+        val afterContent = afterItems.joinToString("\n") { it.collected.injection.content }
 
         if (beforeContent.isNotEmpty() || afterContent.isNotEmpty()) {
             val systemMessage = result[systemIndex]
@@ -155,13 +310,16 @@ internal fun applyInjections(
             result[systemIndex] = systemMessage.copy(
                 parts = listOf(UIMessagePart.Text(newText))
             )
+            (beforeItems + afterItems).forEach { item ->
+                targetMessageIds[item.order] = result[systemIndex].id
+            }
         }
     } else {
         // 没有系统消息时，创建一个新的系统消息
-        val beforeContent = byPosition[InjectionPosition.BEFORE_SYSTEM_PROMPT]
-            ?.joinToString("\n") { it.content } ?: ""
-        val afterContent = byPosition[InjectionPosition.AFTER_SYSTEM_PROMPT]
-            ?.joinToString("\n") { it.content } ?: ""
+        val beforeItems = byPosition[InjectionPosition.BEFORE_SYSTEM_PROMPT].orEmpty()
+        val afterItems = byPosition[InjectionPosition.AFTER_SYSTEM_PROMPT].orEmpty()
+        val beforeContent = beforeItems.joinToString("\n") { it.collected.injection.content }
+        val afterContent = afterItems.joinToString("\n") { it.collected.injection.content }
 
         val combinedContent = buildString {
             if (beforeContent.isNotEmpty()) {
@@ -174,7 +332,11 @@ internal fun applyInjections(
         }
 
         if (combinedContent.isNotEmpty()) {
-            result.add(0, UIMessage.system(combinedContent))
+            val message = UIMessage.system(combinedContent)
+            result.add(0, message)
+            (beforeItems + afterItems).forEach { item ->
+                targetMessageIds[item.order] = message.id
+            }
         }
     }
 
@@ -185,8 +347,9 @@ internal fun applyInjections(
         var insertIndex = result.indexOfFirst { it.role == MessageRole.USER }
             .takeIf { it >= 0 } ?: result.size
         insertIndex = findSafeInsertIndex(result, insertIndex)
-        createMergedInjectionMessages(topInjections).forEach { message ->
-            result.add(insertIndex, message)
+        createMergedInjectionMessagesWithTargets(topInjections).forEach { merged ->
+            result.add(insertIndex, merged.message)
+            merged.items.forEach { item -> targetMessageIds[item.order] = merged.message.id }
             insertIndex++
         }
     }
@@ -196,8 +359,9 @@ internal fun applyInjections(
     if (!bottomInjections.isNullOrEmpty()) {
         var insertIndex = (result.size - 1).coerceAtLeast(0)
         insertIndex = findSafeInsertIndex(result, insertIndex)
-        createMergedInjectionMessages(bottomInjections).forEach { message ->
-            result.add(insertIndex, message)
+        createMergedInjectionMessagesWithTargets(bottomInjections).forEach { merged ->
+            result.add(insertIndex, merged.message)
+            merged.items.forEach { item -> targetMessageIds[item.order] = merged.message.id }
             insertIndex++
         }
     }
@@ -206,36 +370,45 @@ internal fun applyInjections(
     // 按 injectDepth 分组，相同深度的合并，按深度从大到小处理（避免索引变化问题）
     val atDepthInjections = byPosition[InjectionPosition.AT_DEPTH]
     if (!atDepthInjections.isNullOrEmpty()) {
-        val byDepth = atDepthInjections.groupBy { it.injectDepth }
+        val byDepth = atDepthInjections.groupBy { it.collected.injection.injectDepth }
         byDepth.keys.sortedDescending().forEach { depth ->
             val injections = byDepth[depth] ?: return@forEach
             // 计算插入位置：result.size - depth，但要确保在有效范围内
             // depth=1 表示在最后一条消息之前，depth=2 表示在倒数第二条之前...
             var insertIndex = (result.size - depth.coerceAtLeast(1)).coerceIn(0, result.size)
             insertIndex = findSafeInsertIndex(result, insertIndex)
-            createMergedInjectionMessages(injections).forEach { message ->
-                result.add(insertIndex, message)
+            createMergedInjectionMessagesWithTargets(injections).forEach { merged ->
+                result.add(insertIndex, merged.message)
+                merged.items.forEach { item -> targetMessageIds[item.order] = merged.message.id }
                 insertIndex++
             }
         }
     }
 
-    return result
+    return PromptInjectionApplicationResult(result, targetMessageIds)
 }
 
 /**
  * 将同一 role 的注入合并成消息列表
  * 按 role 分组后合并内容，返回合并后的消息列表
  */
-private fun createMergedInjectionMessages(injections: List<PromptInjection>): List<UIMessage> {
+private data class MergedPromptInjectionMessage(
+    val message: UIMessage,
+    val items: List<OrderedPromptInjection>,
+)
+
+private fun createMergedInjectionMessagesWithTargets(
+    injections: List<OrderedPromptInjection>,
+): List<MergedPromptInjectionMessage> {
     return injections
-        .groupBy { it.role }
+        .groupBy { it.collected.injection.role }
         .map { (role, grouped) ->
-            val mergedContent = grouped.joinToString("\n") { it.content }
-            when (role) {
+            val mergedContent = grouped.joinToString("\n") { it.collected.injection.content }
+            val message = when (role) {
                 MessageRole.ASSISTANT -> UIMessage.assistant(mergedContent)
                 else -> UIMessage.user(mergedContent)
             }
+            MergedPromptInjectionMessage(message, grouped)
         }
 }
 

@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessage
+import me.rerere.rikkahub.data.ai.trace.PromptTraceRecorder
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
 import kotlin.uuid.Uuid
@@ -19,6 +20,7 @@ class TransformerContext(
     val workspaceCwd: String? = null,
     /** 当前对话的 ID，状态变量 transformer 用它读写 conversation.statusVariables */
     val conversationId: Uuid? = null,
+    val promptTraceSession: PromptTraceRecorder? = null,
 )
 
 interface MessageTransformer {
@@ -74,6 +76,7 @@ suspend fun List<UIMessage>.transforms(
     processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
     workspaceCwd: String? = null,
     conversationId: Uuid? = null,
+    promptTraceSession: PromptTraceRecorder? = null,
 ): List<UIMessage> {
     val ctx = TransformerContext(
         context = context,
@@ -85,6 +88,7 @@ suspend fun List<UIMessage>.transforms(
         processingStatus = processingStatus,
         workspaceCwd = workspaceCwd,
         conversationId = conversationId,
+        promptTraceSession = promptTraceSession,
     )
     return transformers.fold(this) { acc, transformer ->
         transformer.transform(ctx, acc)
