@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.ai.transformers
 
+import kotlinx.coroutines.CancellationException
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -142,8 +143,12 @@ internal fun transformMessagesWithTrace(
         }
         PromptInjectionTransformResult(application.messages, applied)
     }
-    runCatching {
+    try {
         promptTraceRecorder?.recordInjectionHits(result.applied.map { it.toTrace() })
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        // Prompt tracing is best-effort and must not affect generation.
     }
     return result
 }
