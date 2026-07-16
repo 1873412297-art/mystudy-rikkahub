@@ -1,5 +1,5 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
   <string name="about_page_github">Github</string>
   <string name="about_page_license">License</string>
   <string name="about_page_system">系统</string>
@@ -1308,5 +1308,53 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
 <string name="group_director_title">导演台</string>
 <string name="placeholder_current_datetime">日期和时间</string>
 <string name="placeholder_current_time">时间</string>
+<string name="tavern_prompt_console_actual_tokens">实际提示词 Token</string>
+<string name="tavern_prompt_console_approx">约 %1$d</string>
+<string name="tavern_prompt_console_attachment_part">[%1$s] %2$s</string>
+<string name="tavern_prompt_console_binary_reference">二进制引用</string>
+<string name="tavern_prompt_console_branch_missing">当前回复分支没有记录，正在显示最新一次调用。</string>
+<string name="tavern_prompt_console_byte_count">%1$d 字节</string>
+<string name="tavern_prompt_console_cancelled">在创建回复分支前已取消</string>
+<string name="tavern_prompt_console_clear">清空本会话记录</string>
+<string name="tavern_prompt_console_clear_body">聊天消息会保留，只删除本会话的诊断记录。</string>
+<string name="tavern_prompt_console_clear_title">清空提示词记录？</string>
+<string name="tavern_prompt_console_collapse">收起</string>
+<string name="tavern_prompt_console_copied">已复制</string>
+<string name="tavern_prompt_console_copy_all">复制完整记录</string>
+<string name="tavern_prompt_console_copy_message">复制消息</string>
+<string name="tavern_prompt_console_estimate_notice">分段估算可能与提供商用量不同，因为协议开销、工具、缓存和多模态输入由提供商计算。</string>
+<string name="tavern_prompt_console_expand">展开</string>
+<string name="tavern_prompt_console_hit_details">%1$s · %2$s · 优先级 %3$d · 深度 %4$d</string>
+<string name="tavern_prompt_console_hit_scan">%1$s · 扫描 %2$d/%3$d</string>
+<string name="tavern_prompt_console_hits">命中</string>
+<string name="tavern_prompt_console_inactive">未启用</string>
+<string name="tavern_prompt_console_matched_terms">命中词：%1$s</string>
+<string name="tavern_prompt_console_message_clip_label">酒馆提示词消息</string>
+<string name="tavern_prompt_console_message_count">消息数：%1$d</string>
+<string name="tavern_prompt_console_message_header">%1$d. %2$s</string>
+<string name="tavern_prompt_console_messages">发送消息</string>
+<string name="tavern_prompt_console_model">模型：%1$s</string>
+<string name="tavern_prompt_console_no_hits">没有模式或世界书命中</string>
+<string name="tavern_prompt_console_no_traces">本会话还没有提示词记录</string>
+<string name="tavern_prompt_console_not_provided">未提供</string>
+<string name="tavern_prompt_console_open">打开酒馆控制台</string>
+<string name="tavern_prompt_console_overview">概览</string>
+<string name="tavern_prompt_console_payload_unavailable">记录内容解析异常</string>
+<string name="tavern_prompt_console_preview">预览</string>
+<string name="tavern_prompt_console_preview_a2">草稿预览将在 A2 开放</string>
+<string name="tavern_prompt_console_preview_a2_body">A1 中此页签不会运行转换器，也不会创建记录。</string>
+<string name="tavern_prompt_console_provider">提供商：%1$s</string>
+<string name="tavern_prompt_console_provider_step">提供商步骤：%1$d</string>
+<string name="tavern_prompt_console_reasoning_part">[推理]\n%1$s</string>
+<string name="tavern_prompt_console_speaker">发言角色：%1$s</string>
+<string name="tavern_prompt_console_status">状态：%1$s</string>
+<string name="tavern_prompt_console_title">酒馆控制台</string>
+<string name="tavern_prompt_console_tool_input">输入：%1$s</string>
+<string name="tavern_prompt_console_tool_output">输出：%1$s</string>
+<string name="tavern_prompt_console_tool_output_attachment">[工具输出 %1$s] %2$s</string>
+<string name="tavern_prompt_console_tool_part">[工具 %1$s / %2$s]</string>
+<string name="tavern_prompt_console_trace_call_status">调用 %1$d · %2$s</string>
+<string name="tavern_prompt_console_trace_clip_label">酒馆提示词追踪</string>
+<string name="tavern_prompt_console_trace_selector">选择模型调用</string>
 </resources>
 

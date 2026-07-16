@@ -65,6 +65,8 @@ import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.MessageAdd01
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.Screen
+import me.rerere.rikkahub.data.ai.trace.isTavernPromptTraceEligible
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getAssistantById
@@ -92,6 +94,7 @@ import me.rerere.rikkahub.ui.context.Navigator
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.ui.hooks.EditStateContent
 import me.rerere.rikkahub.ui.hooks.useEditState
+import me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsoleEntry
 import me.rerere.rikkahub.utils.ImageUtils
 import me.rerere.rikkahub.utils.base64Decode
 import me.rerere.rikkahub.utils.isAllowedFileType
@@ -298,6 +301,9 @@ private fun ChatPageContent(
     val assistant = remember(setting.assistants, conversation.assistantId) {
         setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
     }
+    val tavernPromptTraceEligible = remember(assistant, setting.assistants) {
+        assistant.isTavernPromptTraceEligible(setting.assistants)
+    }
     val groupAssistant = assistant.takeIf { it.assistantType == AssistantType.GROUP }
     val directorUiState = remember(conversation, groupAssistant, setting, loadingJob) {
         groupAssistant?.let {
@@ -382,8 +388,14 @@ private fun ChatPageContent(
                     bigScreen = bigScreen,
                     drawerState = drawerState,
                     previewMode = previewMode,
+                    tavernPromptTraceEligible = tavernPromptTraceEligible,
                     onNewChat = {
                         navigateToChatPage(navController)
+                    },
+                    onOpenTavernPromptConsole = {
+                        navController.navigate(
+                            Screen.TavernPromptConsole(conversation.id.toString())
+                        )
                     },
                     onClickMenu = {
                         previewMode = !previewMode
@@ -820,8 +832,10 @@ private fun TopBar(
     drawerState: DrawerState,
     bigScreen: Boolean,
     previewMode: Boolean,
+    tavernPromptTraceEligible: Boolean,
     onClickMenu: () -> Unit,
     onNewChat: () -> Unit,
+    onOpenTavernPromptConsole: () -> Unit,
     onUpdateTitle: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -880,6 +894,11 @@ private fun TopBar(
             }
         },
         actions = {
+            TavernPromptConsoleEntry(
+                visible = tavernPromptTraceEligible,
+                onOpen = onOpenTavernPromptConsole,
+            )
+
             IconButton(
                 onClick = {
                     onClickMenu()
