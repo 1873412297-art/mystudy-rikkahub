@@ -67,3 +67,13 @@ The installed data has no configured provider or Tavern/group fixture. All twelv
 | Full `:app:connectedDebugAndroidTest` | PASS, 54/54 |
 | `:app:assembleDebug` | PASS |
 | `git diff --check` | PASS |
+
+## Final-HEAD lint rerun
+
+- Command: `./gradlew.bat :app:lintDebug --console=plain`.
+- Start: `2026-07-17T09:10:08.1180453+08:00`.
+- End: `2026-07-17T09:13:02.3187787+08:00` (2m 53s, exit 1).
+- Result: repository baseline failure with 101 errors, 289 warnings, and 3 hints; first failure is `local.properties:1` `PropertyEscape`.
+- Fresh text report: `app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt`, written at `2026-07-17T09:13:00.2861756+08:00`.
+- Target-file audit: 0 matches for `ChatService.kt`; 0 matches for `PromptTraceConversationPersistence.kt`.
+- Raw run log: `.superpowers/sdd/task-10-review-final-lint.log`.
