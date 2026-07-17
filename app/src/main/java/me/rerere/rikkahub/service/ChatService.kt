@@ -52,7 +52,6 @@ import me.rerere.rikkahub.data.ai.trace.PromptTraceCleanup
 import me.rerere.rikkahub.data.ai.trace.PromptTraceSectionKind
 import me.rerere.rikkahub.data.ai.trace.PromptTraceSourceHint
 import me.rerere.rikkahub.data.ai.trace.buildPromptTraceSeed
-import me.rerere.rikkahub.data.ai.trace.removedMessageIdsAfter
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.tools.createConversationTools
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
@@ -830,10 +829,9 @@ class ChatService(
 
                 if (message.role == MessageRole.USER) {
                     // 如果是用户消息，则截止到当前消息
-                    val node = conversation.getMessageNodeByMessage(message)
-                    val indexAt = conversation.messageNodes.indexOf(node)
-                    val newConversation = conversation.copy(
-                        messageNodes = conversation.messageNodes.subList(0, indexAt + 1)
+                    val newConversation = buildConversationAfterUserRegeneration(
+                        conversation = conversation,
+                        messageId = message.id,
                     )
                     saveConversationAfterRemovingMessages(
                         conversationId = conversationId,
@@ -1684,19 +1682,17 @@ class ChatService(
         }
 
         val updatedConversation = conversation.copy()
-        val removedIds = promptTraceCleanup.removedMessageIdsAfter(updatedConversation)
-        updateConversation(conversationId, updatedConversation)
-
-        if (!exists) {
-            conversationRepo.insertConversation(updatedConversation)
-        } else {
-            conversationRepo.updateConversation(updatedConversation)
-        }
-        if (removedIds.isNotEmpty()) {
-            runCatching {
-                promptTraceRepository.deleteForRemovedMessages(conversationId, removedIds)
-            }.onFailure { error ->
-                Log.w(TAG, "Prompt trace cleanup failed", error)
+        persistConversationAndCleanupPromptTraces(
+            conversationId = conversationId,
+            conversation = updatedConversation,
+            promptTraceCleanup = promptTraceCleanup,
+            promptTraceRepository = promptTraceRepository,
+        ) { persistedConversation ->
+            updateConversation(conversationId, persistedConversation)
+            if (!exists) {
+                conversationRepo.insertConversation(persistedConversation)
+            } else {
+                conversationRepo.updateConversation(persistedConversation)
             }
         }
     }
@@ -1806,35 +1802,10 @@ class ChatService(
         messageId: Uuid
     ): Conversation {
         val currentConversation = getConversationFlow(conversationId).value
-        val targetNodeIndex = currentConversation.messageNodes.indexOfFirst { node ->
-            node.messages.any { it.id == messageId }
-        }
-        if (targetNodeIndex == -1) {
-            throw NotFoundException("Message not found")
-        }
-
-        val copiedNodes = currentConversation.messageNodes
-            .subList(0, targetNodeIndex + 1)
-            .map { node ->
-                node.copy(
-                    id = Uuid.random(),
-                    messages = node.messages.map { message ->
-                        message.copy(
-                            parts = message.parts.map { part ->
-                                part.copyWithForkedFileUrl()
-                            }
-                        )
-                    }
-                )
-            }
-
-        val forkConversation = Conversation(
-            id = Uuid.random(),
-            assistantId = currentConversation.assistantId,
-            messageNodes = copiedNodes,
-            customSystemPrompt = currentConversation.customSystemPrompt,
-            modeInjectionIds = currentConversation.modeInjectionIds,
-            lorebookIds = currentConversation.lorebookIds,
+        val forkConversation = buildForkConversationAtMessage(
+            currentConversation = currentConversation,
+            messageId = messageId,
+            copyPart = { part -> part.copyWithForkedFileUrl() },
         )
 
         saveConversation(forkConversation.id, forkConversation)
