@@ -66,11 +66,31 @@ fun TavernPromptHits(
                         text = hit.lorebookName ?: hit.injectionName.ifBlank { hit.sourceType.name },
                         style = MaterialTheme.typography.titleSmall,
                     )
-                    Text("${hit.position} · ${hit.role} · priority ${hit.priority} · depth ${hit.injectDepth}")
+                    Text(
+                        stringResource(
+                            R.string.tavern_prompt_console_hit_details,
+                            hit.position,
+                            hit.role,
+                            hit.priority,
+                            hit.injectDepth,
+                        )
+                    )
                     hit.match?.let { match ->
-                        Text("${match.type} · scan ${match.scannedMessageIds.size}/${match.scanDepth}")
+                        Text(
+                            stringResource(
+                                R.string.tavern_prompt_console_hit_scan,
+                                match.type,
+                                match.scannedMessageIds.size,
+                                match.scanDepth,
+                            )
+                        )
                         if (match.matchedTerms.isNotEmpty()) {
-                            Text(match.matchedTerms.joinToString(", "))
+                            Text(
+                                stringResource(
+                                    R.string.tavern_prompt_console_matched_terms,
+                                    match.matchedTerms.joinToString(", "),
+                                )
+                            )
                         }
                     }
                     Text(

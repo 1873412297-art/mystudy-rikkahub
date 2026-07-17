@@ -61,7 +61,11 @@ fun TavernPromptMessages(
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                text = "${message.index + 1}. ${message.role}",
+                                text = stringResource(
+                                    R.string.tavern_prompt_console_message_header,
+                                    message.index + 1,
+                                    message.role,
+                                ),
                                 style = MaterialTheme.typography.titleSmall,
                             )
                             message.name?.let {
@@ -84,10 +88,28 @@ fun TavernPromptMessages(
                         }
                     }
                     val visibleParts = if (expanded) message.parts else message.parts.take(2)
-                    visibleParts.forEach { part -> Text(promptTracePartText(part)) }
-                    if (message.parts.size > 2 || message.characterCount > 800) {
+                    visibleParts.forEach { part ->
+                        Text(promptTracePartText(part = part, expanded = expanded))
+                    }
+                    val hasLongPreviewablePart = message.parts.any { part ->
+                        when (part) {
+                            is PromptTracePart.Text -> part.text.length > PART_PREVIEW_CHARACTER_LIMIT
+                            is PromptTracePart.Reasoning -> part.text.length > PART_PREVIEW_CHARACTER_LIMIT
+                            is PromptTracePart.Attachment,
+                            is PromptTracePart.Tool -> false
+                        }
+                    }
+                    if (message.parts.size > 2 || hasLongPreviewablePart) {
                         TextButton(onClick = { expanded = !expanded }) {
-                            Text(if (expanded) "Collapse" else "Expand")
+                            Text(
+                                stringResource(
+                                    if (expanded) {
+                                        R.string.tavern_prompt_console_collapse
+                                    } else {
+                                        R.string.tavern_prompt_console_expand
+                                    }
+                                )
+                            )
                         }
                     }
                 }
@@ -96,24 +118,71 @@ fun TavernPromptMessages(
     }
 }
 
-internal fun promptTracePartText(part: PromptTracePart): String = when (part) {
-    is PromptTracePart.Text -> part.text
-    is PromptTracePart.Reasoning -> "[Reasoning]\n${part.text}"
-    is PromptTracePart.Attachment -> buildString {
-        append("[${part.value.kind}] ")
-        append(part.value.displayName ?: part.value.uri ?: part.value.mimeType ?: "binary reference")
-        part.value.byteLength?.let { append(" ($it bytes)") }
-        part.value.sha256?.let { append(" sha256=$it") }
-    }
-    is PromptTracePart.Tool -> buildString {
-        appendLine("[Tool ${part.toolName} / ${part.approvalState}]")
-        appendLine("Input: ${part.input.preview}")
-        part.outputText?.let { appendLine("Output: ${it.preview}") }
-        part.outputAttachments.forEach { attachment ->
-            appendLine(
-                "[Tool output ${attachment.kind}] " +
-                    (attachment.displayName ?: attachment.uri ?: attachment.mimeType ?: "binary reference")
+private const val PART_PREVIEW_CHARACTER_LIMIT = 800
+
+@Composable
+private fun promptTracePartText(
+    part: PromptTracePart,
+    expanded: Boolean,
+): String = when (part) {
+    is PromptTracePart.Text -> part.text.previewWhenCollapsed(expanded)
+    is PromptTracePart.Reasoning -> stringResource(
+        R.string.tavern_prompt_console_reasoning_part,
+        part.text.previewWhenCollapsed(expanded),
+    )
+    is PromptTracePart.Attachment -> {
+        val value = part.value
+        val reference = value.displayName
+            ?: value.uri
+            ?: value.mimeType
+            ?: stringResource(R.string.tavern_prompt_console_binary_reference)
+        var text = stringResource(
+            R.string.tavern_prompt_console_attachment_part,
+            value.kind,
+            reference,
+        )
+        if (value.byteLength != null) {
+            text += " " + stringResource(
+                R.string.tavern_prompt_console_byte_count,
+                value.byteLength,
             )
         }
-    }.trimEnd()
+        if (value.sha256 != null) {
+            text += " sha256=${value.sha256}"
+        }
+        text
+    }
+    is PromptTracePart.Tool -> {
+        val lines = mutableListOf(
+            stringResource(
+                R.string.tavern_prompt_console_tool_part,
+                part.toolName,
+                part.approvalState,
+            ),
+            stringResource(R.string.tavern_prompt_console_tool_input, part.input.preview),
+        )
+        if (part.outputText != null) {
+            lines += stringResource(
+                R.string.tavern_prompt_console_tool_output,
+                part.outputText.preview,
+            )
+        }
+        for (attachment in part.outputAttachments) {
+            val reference = attachment.displayName
+                ?: attachment.uri
+                ?: attachment.mimeType
+                ?: stringResource(R.string.tavern_prompt_console_binary_reference)
+            lines += stringResource(
+                R.string.tavern_prompt_console_tool_output_attachment,
+                attachment.kind,
+                reference,
+            )
+        }
+        lines.joinToString("\n")
+    }
+}
+
+private fun String.previewWhenCollapsed(expanded: Boolean): String {
+    if (expanded || length <= PART_PREVIEW_CHARACTER_LIMIT) return this
+    return take(PART_PREVIEW_CHARACTER_LIMIT) + "…"
 }

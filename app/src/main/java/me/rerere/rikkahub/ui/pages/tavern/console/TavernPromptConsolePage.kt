@@ -40,11 +40,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.ArrowLeft01
 import me.rerere.hugeicons.stroke.Delete01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.trace.PromptTraceReadResult
 import me.rerere.rikkahub.data.ai.trace.PromptTraceStatus
+import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.theme.CustomColors
@@ -63,6 +63,8 @@ fun TavernPromptConsolePage(conversationId: String) {
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
     val copiedMessage = stringResource(R.string.tavern_prompt_console_copied)
+    val traceClipLabel = stringResource(R.string.tavern_prompt_console_trace_clip_label)
+    val messageClipLabel = stringResource(R.string.tavern_prompt_console_message_clip_label)
 
     TavernPromptConsoleContent(
         state = state,
@@ -73,7 +75,7 @@ fun TavernPromptConsolePage(conversationId: String) {
             vm.copySelectedTrace()?.let { text ->
                 scope.launch {
                     clipboard.setClipEntry(
-                        ClipEntry(ClipData.newPlainText("Tavern Prompt Trace", text))
+                        ClipEntry(ClipData.newPlainText(traceClipLabel, text))
                     )
                     toaster.show(copiedMessage)
                 }
@@ -83,7 +85,7 @@ fun TavernPromptConsolePage(conversationId: String) {
             vm.copyMessage(index)?.let { text ->
                 scope.launch {
                     clipboard.setClipEntry(
-                        ClipEntry(ClipData.newPlainText("Tavern Prompt Message", text))
+                        ClipEntry(ClipData.newPlainText(messageClipLabel, text))
                     )
                     toaster.show(copiedMessage)
                 }
@@ -124,12 +126,7 @@ fun TavernPromptConsoleContent(
             TopAppBar(
                 title = { Text(stringResource(R.string.tavern_prompt_console_title)) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = HugeIcons.ArrowLeft01,
-                            contentDescription = stringResource(R.string.back),
-                        )
-                    }
+                    BackButton(onClick = onBack)
                 },
                 actions = {
                     if (state.traces.isNotEmpty()) {
@@ -294,10 +291,16 @@ private fun TavernPromptTraceHeader(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 selectedStatus?.let {
-                    Text(it.name, style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        stringResource(R.string.tavern_prompt_console_status, it.name),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
                 }
                 selectedSpeaker?.let {
-                    Text("Speaker: $it", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        stringResource(R.string.tavern_prompt_console_speaker, it),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
                 }
             }
             if (
@@ -337,7 +340,15 @@ private fun TavernPromptTraceHeader(
                     FilterChip(
                         selected = trace.traceId == state.selectedTraceId,
                         onClick = { onSelectTrace(trace.traceId) },
-                        label = { Text("${index + 1} · ${status.name}") },
+                        label = {
+                            Text(
+                                stringResource(
+                                    R.string.tavern_prompt_console_trace_call_status,
+                                    index + 1,
+                                    status.name,
+                                )
+                            )
+                        },
                     )
                 }
             }
