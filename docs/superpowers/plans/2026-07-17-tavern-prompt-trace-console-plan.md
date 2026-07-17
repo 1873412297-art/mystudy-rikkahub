@@ -4127,7 +4127,7 @@ Run:
 
 Expected: PASS.
 
-- [x] **Step 8: Run full unit tests, lint, and Debug assembly**
+- [x] **Step 8: Run full unit tests, lint, and Debug assembly** (lint executed; repository baseline failure recorded)
 
 Run:
 
@@ -4142,7 +4142,7 @@ Expected:
 - Lint has no new fatal issue from A1.
 - Debug APK builds successfully.
 
-Execution note: JVM and assembly passed. Lint completed with the repository baseline of 101 errors and 289 warnings; the first failure is `local.properties` `PropertyEscape`, and none of the three Task 10 test files appears in the lint findings.
+Execution note: Step 8 was fully executed. JVM and assembly passed. A fresh final-HEAD `:app:lintDebug` ran from 2026-07-17 09:10:08 +08:00 to 09:13:02 +08:00 and failed with the repository baseline of 101 errors, 289 warnings, and 3 hints; the first failure is `local.properties` `PropertyEscape`. The generated text report contains zero references to both changed production files, `ChatService.kt` and `PromptTraceConversationPersistence.kt`.
 
 - [ ] **Step 9: Install and execute the emulator smoke matrix**
 
@@ -4268,8 +4268,10 @@ Do not declare Phase A1 complete until all of the following are true:
 - b622ff79 feat: add tavern prompt console state
 - 8d087922 feat: add tavern prompt trace console
 - 33c69edf fix: harden tavern prompt console previews
+- 9433bb54 test: verify tavern prompt trace console
+- 1662eed1 test: exercise prompt trace production flows
 
-The Task 10 final commit contains this execution record, so its self-referential hash is intentionally omitted.
+The lint-record follow-up commit contains this execution record, so its self-referential hash is intentionally omitted.
 
 ### Verification
 
@@ -4278,7 +4280,7 @@ The Task 10 final commit contains this execution record, so its self-referential
 - Focused instrumentation tests: PASS, 41 tests
 - Full JVM tests: PASS
 - Full instrumentation tests: PASS, 54 tests
-- Lint: completed with the repository baseline of 101 errors and 289 warnings; no Task 10 test-file finding
+- Lint: final-HEAD rerun completed 2026-07-17 09:10:08–09:13:02 +08:00; failed with the repository baseline of 101 errors, 289 warnings, and 3 hints; zero findings reference `ChatService.kt` or `PromptTraceConversationPersistence.kt`
 - Debug assembly: PASS
 - Emulator: `emulator-5554`; ABI-split APK installed and launched without a crash-buffer entry
 - Manual smoke: top-bar absence observed for the default non-Tavern assistant; all twelve request-dependent live cases remain open
