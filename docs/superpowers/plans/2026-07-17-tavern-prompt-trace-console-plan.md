@@ -3863,6 +3863,9 @@ git commit -m "feat: add tavern prompt trace console"
 - Extend: `app/src/androidTest/java/me/rerere/rikkahub/data/ai/GenerationHandlerPromptTraceTest.kt`
 - Extend: `app/src/androidTest/java/me/rerere/rikkahub/data/repository/PromptTraceRepositoryTest.kt`
 - Create: `app/src/androidTest/java/me/rerere/rikkahub/ui/pages/tavern/console/TavernPromptConsoleFlowTest.kt`
+- Create: `app/src/androidTest/java/me/rerere/rikkahub/service/PromptTraceConversationPersistenceTest.kt`
+- Create: `app/src/main/java/me/rerere/rikkahub/service/PromptTraceConversationPersistence.kt`
+- Update: `app/src/main/java/me/rerere/rikkahub/service/ChatService.kt`
 - Update: `docs/superpowers/plans/2026-07-17-tavern-prompt-trace-console-plan.md`
 
 **Interfaces:**
@@ -4119,7 +4122,7 @@ Expected: PASS.
 Run:
 
 ```powershell
-.\gradlew.bat :app:connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.data.db.migrations.Migration_27_28_Test,me.rerere.rikkahub.data.db.dao.PromptTraceDAOTest,me.rerere.rikkahub.data.repository.PromptTraceRepositoryTest,me.rerere.rikkahub.data.ai.GenerationHandlerPromptTraceTest,me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsoleEntryTest,me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsoleContentTest,me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsoleFlowTest" --console=plain
+.\gradlew.bat :app:connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.data.db.migrations.Migration_27_28_Test,me.rerere.rikkahub.data.db.dao.PromptTraceDAOTest,me.rerere.rikkahub.data.repository.PromptTraceRepositoryTest,me.rerere.rikkahub.data.ai.GenerationHandlerPromptTraceTest,me.rerere.rikkahub.service.PromptTraceConversationPersistenceTest,me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsoleEntryTest,me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsoleContentTest,me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsoleFlowTest" --console=plain
 ```
 
 Expected: PASS.
@@ -4153,7 +4156,7 @@ adb -s emulator-5554 shell monkey -p me.rerere.rikkahub.debug -c android.intent.
 
 Manually verify and record the observed result beside each checkbox:
 
-Execution note: installed `app-x86_64-debug.apk` because this build emits ABI-split APKs rather than `app-debug.apk`. Launch, process health, crash buffer, and the non-Tavern entry case were exercised. The installed data set contains only the default non-Tavern assistant and no configured provider/Tavern smoke fixture, so the remaining eleven live request scenarios stay open; their deterministic behavior is covered by the focused and full automated suites recorded below.
+Execution note: installed `app-x86_64-debug.apk` because this build emits ABI-split APKs rather than `app-debug.apk`. Launch, process health, crash buffer, and non-Tavern top-bar visibility were exercised. The installed data set contains only the default non-Tavern assistant and no configured provider/Tavern smoke fixture. No provider request was generated, so trace non-creation was not established and all twelve live request scenarios remain open.
 
 
 - [ ] Tavern solo request shows exact provider-bound semantic messages.
@@ -4167,9 +4170,9 @@ Execution note: installed `app-x86_64-debug.apk` because this build emits ABI-sp
 - [ ] Branch deletion and conversation deletion remove the expected rows.
 - [ ] The 21st call removes the oldest trace.
 - [ ] Preview remains an A2 state and sends no request.
-- [x] Non-Tavern chat has no top-bar entry and creates no trace. Observed on the freshly installed debug app; UI tree had no console entry and the debug database had zero trace rows.
+- [ ] Non-Tavern chat has no top-bar entry and creates no trace. Top-bar absence was observed, but no provider request was generated; trace non-creation remains open.
 
-- [x] **Step 10: Inspect the database for prohibited content**
+- [ ] **Step 10: Inspect the database for prohibited content**
 
 Stop the app, then stream the database and WAL files directly from the debug
 application sandbox:
@@ -4190,7 +4193,7 @@ Query with a local SQLite client or Android Studio Database Inspector and verify
 - no opaque reasoning signature;
 - row count per tested conversation is at most 20.
 
-Execution note: the streamed debug database contained the `prompt_trace` table with zero rows. Local SQLite inspection reported zero matches for base64 bodies, query credentials, credential metadata, and opaque reasoning signatures; maximum rows per conversation was 0. Sanitizer and retention behavior with populated fixtures is additionally covered by JVM/instrumentation tests.
+Execution note: the streamed debug database contained the `prompt_trace` table with zero rows. This confirms schema presence only; it is not evidence for persisted-row sanitization or 20-row retention. A populated live database fixture is still required for this step.
 
 - [x] **Step 11: Update the plan’s execution record**
 
@@ -4212,7 +4215,7 @@ After all gates pass, append the fixed verification lines shown below:
 - Debug assembly: PASS
 - Emulator: `emulator-5554`
 - Manual smoke: PASS with the twelve matrix results above
-- Database sanitization inspection: PASS
+- Database sanitization inspection: PASS only with populated trace rows
 ```
 
 - [x] **Step 12: Final commit**
@@ -4236,8 +4239,8 @@ Do not declare Phase A1 complete until all of the following are true:
 - [x] Prepared, streaming, completed, cancelled, and failed states are covered.
 - [x] Trace-store failures leave generated chunks and chat error handling unchanged.
 - [x] Room migration 27→28 preserves existing conversations/message branches.
-- [x] Retention, branch deletion, tail truncation, clear, and conversation cascade behave as specified.
-- [x] Base64 bodies, credential metadata, query strings, and provider-private metadata are absent from persisted/copied output.
+- [ ] Retention, branch deletion, tail truncation, clear, and conversation cascade behave as specified. Automated fixtures cover these paths; populated emulator evidence for retention remains open.
+- [ ] Base64 bodies, credential metadata, query strings, and provider-private metadata are absent from persisted/copied output. Automated sanitizer fixtures pass; populated emulator database inspection remains open.
 - [x] The full-screen console handles no-data, historical pre-trace, branch-missing, cancelled, malformed, and A2 Preview states.
 - [ ] Tavern solo, eligible group, and non-Tavern cases pass automated and emulator verification.
 
@@ -4278,5 +4281,18 @@ The Task 10 final commit contains this execution record, so its self-referential
 - Lint: completed with the repository baseline of 101 errors and 289 warnings; no Task 10 test-file finding
 - Debug assembly: PASS
 - Emulator: `emulator-5554`; ABI-split APK installed and launched without a crash-buffer entry
-- Manual smoke: non-Tavern case PASS; eleven provider/Tavern fixture-dependent live cases remain open and have automated coverage
-- Database sanitization inspection: PASS for the installed zero-row debug database; populated sanitizer/retention fixtures PASS in automation
+- Manual smoke: top-bar absence observed for the default non-Tavern assistant; all twelve request-dependent live cases remain open
+- Database sanitization inspection: OPEN; the installed database had zero trace rows and provides no populated-row evidence
+
+### Task 10 review follow-up
+
+- Replaced the local-state console flow with a real in-memory Room repository and `TavernPromptConsoleVM` flow through the production entry/content callbacks.
+- Extracted regeneration/fork conversation building and persistence cleanup wiring from `ChatService`, then exercised it with real `PromptTraceRepository` rows.
+- Removed direct-DAO regeneration/fork assertions that did not execute production wiring.
+- Review TDD: RED at missing production seams; GREEN 3/3 after extraction and integration.
+- Focused JVM: PASS.
+- Focused instrumentation: PASS, 41/41.
+- Full JVM: PASS.
+- Full instrumentation: PASS, 54/54.
+- Debug assembly: PASS.
+- Live non-Tavern trace non-creation and populated database sanitization/retention remain open; zero rows are not counted as evidence.
