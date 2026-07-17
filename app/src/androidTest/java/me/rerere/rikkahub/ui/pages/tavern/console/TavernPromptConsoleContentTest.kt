@@ -96,10 +96,13 @@ class TavernPromptConsoleContentTest {
 
     @Test
     fun availableGroupTraceShowsSpeakerName() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
         val trace = availableTrace(speakerName = "Aileen")
         setConsoleContent(availableState(trace))
 
-        composeRule.onAllNodesWithText("Speaker: Aileen")[0].assertIsDisplayed()
+        composeRule
+            .onAllNodesWithText(context.getString(R.string.tavern_prompt_console_speaker, "Aileen"))[0]
+            .assertIsDisplayed()
     }
 
     @Test
@@ -164,6 +167,40 @@ class TavernPromptConsoleContentTest {
         assertEquals(0, copies)
     }
 
+    @Test
+    fun collapsedLongTextPartHidesTailUntilExpanded() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val tail = "TEXT_TAIL_AFTER_PREVIEW"
+        val longText = "text ".repeat(180) + tail
+        val trace = availableTrace(parts = listOf(PromptTracePart.Text(longText)))
+        setConsoleContent(
+            state = availableState(trace).copy(selectedTab = TavernPromptConsoleTab.SENT_MESSAGES)
+        )
+
+        composeRule.onNodeWithText(tail, substring = true).assertDoesNotExist()
+        composeRule
+            .onNodeWithText(context.getString(R.string.tavern_prompt_console_expand))
+            .performClick()
+        composeRule.onNodeWithText(tail, substring = true).assertExists()
+    }
+
+    @Test
+    fun collapsedLongReasoningPartHidesTailUntilExpanded() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val tail = "REASONING_TAIL_AFTER_PREVIEW"
+        val longReasoning = "r".repeat(900) + tail
+        val trace = availableTrace(parts = listOf(PromptTracePart.Reasoning(longReasoning)))
+        setConsoleContent(
+            state = availableState(trace).copy(selectedTab = TavernPromptConsoleTab.SENT_MESSAGES)
+        )
+
+        composeRule.onNodeWithText(tail, substring = true).assertDoesNotExist()
+        composeRule
+            .onNodeWithText(context.getString(R.string.tavern_prompt_console_expand))
+            .performClick()
+        composeRule.onNodeWithText(tail, substring = true).assertExists()
+    }
+
     private fun setConsoleContent(
         state: TavernPromptConsoleUiState,
         onSelectTab: (TavernPromptConsoleTab) -> Unit = {},
@@ -195,9 +232,22 @@ class TavernPromptConsoleContentTest {
         selectedBranchHasTrace = true,
     )
 
-    private fun availableTrace(speakerName: String? = null): PromptTraceReadResult.Available {
+    private fun availableTrace(
+        speakerName: String? = null,
+        parts: List<PromptTracePart> = listOf(
+            PromptTracePart.Text("Hello from the provider call")
+        ),
+    ): PromptTraceReadResult.Available {
         val traceId = Uuid.random()
-        val messageText = "Hello from the provider call"
+        val characterCount = parts.sumOf { part ->
+            when (part) {
+                is PromptTracePart.Text -> part.text.length
+                is PromptTracePart.Reasoning -> part.text.length
+                is PromptTracePart.Attachment -> 0
+                is PromptTracePart.Tool -> part.input.originalLength +
+                    (part.outputText?.originalLength ?: 0)
+            }
+        }
         return PromptTraceReadResult.Available(
             PromptTraceRecord(
                 traceId = traceId,
@@ -221,8 +271,8 @@ class TavernPromptConsoleContentTest {
                             id = Uuid.random(),
                             index = 0,
                             role = MessageRole.USER,
-                            parts = listOf(PromptTracePart.Text(messageText)),
-                            characterCount = messageText.length,
+                            parts = parts,
+                            characterCount = characterCount,
                             approximateTokens = 8,
                         )
                     ),

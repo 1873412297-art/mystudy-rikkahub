@@ -45,10 +45,27 @@ fun TavernPromptOverview(
                             ?: stringResource(R.string.tavern_prompt_console_not_provided),
                         style = MaterialTheme.typography.headlineMedium,
                     )
-                    Text("Model: ${metadata.modelId}")
-                    Text("Provider step: ${metadata.providerStepIndex + 1}")
-                    Text("Messages: ${metadata.finalMessageCount}")
-                    metadata.speakerName?.let { Text("Speaker: $it") }
+                    Text(
+                        stringResource(R.string.tavern_prompt_console_model, metadata.modelId)
+                    )
+                    metadata.providerName?.let {
+                        Text(stringResource(R.string.tavern_prompt_console_provider, it))
+                    }
+                    Text(
+                        stringResource(
+                            R.string.tavern_prompt_console_provider_step,
+                            metadata.providerStepIndex + 1,
+                        )
+                    )
+                    Text(
+                        stringResource(
+                            R.string.tavern_prompt_console_message_count,
+                            metadata.finalMessageCount,
+                        )
+                    )
+                    metadata.speakerName?.let {
+                        Text(stringResource(R.string.tavern_prompt_console_speaker, it))
+                    }
                 }
             }
         }
@@ -68,7 +85,10 @@ fun TavernPromptOverview(
                         style = MaterialTheme.typography.labelMedium,
                     )
                     if (!section.active) {
-                        Text("Inactive", color = MaterialTheme.colorScheme.outline)
+                        Text(
+                            stringResource(R.string.tavern_prompt_console_inactive),
+                            color = MaterialTheme.colorScheme.outline,
+                        )
                     }
                     Text(section.text)
                 }

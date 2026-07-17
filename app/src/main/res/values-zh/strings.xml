@@ -1318,5 +1318,29 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="tavern_prompt_console_estimate_notice">分段估算可能与提供商用量不同，因为协议开销、工具、缓存和多模态输入由提供商计算。</string>
   <string name="tavern_prompt_console_trace_selector">选择模型调用</string>
   <string name="tavern_prompt_console_no_hits">没有模式或世界书命中</string>
+  <string name="tavern_prompt_console_model">模型：%1$s</string>
+  <string name="tavern_prompt_console_provider">提供商：%1$s</string>
+  <string name="tavern_prompt_console_provider_step">提供商步骤：%1$d</string>
+  <string name="tavern_prompt_console_message_count">消息数：%1$d</string>
+  <string name="tavern_prompt_console_speaker">发言角色：%1$s</string>
+  <string name="tavern_prompt_console_status">状态：%1$s</string>
+  <string name="tavern_prompt_console_inactive">未启用</string>
+  <string name="tavern_prompt_console_hit_details">%1$s · %2$s · 优先级 %3$d · 深度 %4$d</string>
+  <string name="tavern_prompt_console_hit_scan">%1$s · 扫描 %2$d/%3$d</string>
+  <string name="tavern_prompt_console_matched_terms">命中词：%1$s</string>
+  <string name="tavern_prompt_console_message_header">%1$d. %2$s</string>
+  <string name="tavern_prompt_console_expand">展开</string>
+  <string name="tavern_prompt_console_collapse">收起</string>
+  <string name="tavern_prompt_console_reasoning_part">[推理]\n%1$s</string>
+  <string name="tavern_prompt_console_binary_reference">二进制引用</string>
+  <string name="tavern_prompt_console_attachment_part">[%1$s] %2$s</string>
+  <string name="tavern_prompt_console_byte_count">%1$d 字节</string>
+  <string name="tavern_prompt_console_tool_part">[工具 %1$s / %2$s]</string>
+  <string name="tavern_prompt_console_tool_input">输入：%1$s</string>
+  <string name="tavern_prompt_console_tool_output">输出：%1$s</string>
+  <string name="tavern_prompt_console_tool_output_attachment">[工具输出 %1$s] %2$s</string>
+  <string name="tavern_prompt_console_trace_call_status">调用 %1$d · %2$s</string>
+  <string name="tavern_prompt_console_trace_clip_label">酒馆提示词追踪</string>
+  <string name="tavern_prompt_console_message_clip_label">酒馆提示词消息</string>
 </resources>
 
