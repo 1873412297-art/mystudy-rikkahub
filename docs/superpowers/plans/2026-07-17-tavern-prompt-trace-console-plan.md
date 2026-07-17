@@ -3869,7 +3869,7 @@ git commit -m "feat: add tavern prompt trace console"
 - Consumes: complete A1 implementation.
 - Produces: evidence that all success criteria pass without changing chat generation.
 
-- [ ] **Step 1: Add a two-call tool-loop provider test**
+- [x] **Step 1: Add a two-call tool-loop provider test**
 
 Extend the fake provider so call 1 returns an assistant `UIMessagePart.Tool` and call 2 returns final text. Supply a real test `Tool` whose execute callback returns `UIMessagePart.Text("tool result")`.
 
@@ -3886,7 +3886,7 @@ assertTrue(available[0].payload.finalMessages.any { message ->
 })
 ```
 
-- [ ] **Step 2: Add cancellation-before-binding and cancellation-after-binding tests**
+- [x] **Step 2: Add cancellation-before-binding and cancellation-after-binding tests**
 
 Use `runBlocking`, launch collection, and a fake provider Flow:
 
@@ -3935,7 +3935,7 @@ fun cancellationAfterFirstChunkKeepsBoundResponse() = runBlocking {
 `DelayedProvider` emits a single assistant `MessageChunk` before its long delay only
 when `emitBeforeDelay == true`; otherwise it delays before any emit.
 
-- [ ] **Step 3: Add provider failure and trace-store failure tests**
+- [x] **Step 3: Add provider failure and trace-store failure tests**
 
 Provider failure:
 
@@ -3957,7 +3957,7 @@ Trace-store failure:
 - use a successful provider;
 - assert generated chunks are identical to a run with tracing disabled.
 
-- [ ] **Step 4: Add exact branch and cleanup tests**
+- [x] **Step 4: Add exact branch and cleanup tests**
 
 Repository/flow tests must cover:
 
@@ -4007,7 +4007,7 @@ fun unboundAttemptFollowsAnchorAndForkStartsWithoutTraces() = runBlocking {
 }
 ```
 
-- [ ] **Step 5: Add a navigation/content instrumentation flow**
+- [x] **Step 5: Add a navigation/content instrumentation flow**
 
 `TavernPromptConsoleFlowTest` must:
 
@@ -4104,7 +4104,7 @@ private fun availableTrace(responseId: Uuid): PromptTraceReadResult.Available {
 }
 ```
 
-- [ ] **Step 6: Run all focused JVM tests**
+- [x] **Step 6: Run all focused JVM tests**
 
 Run:
 
@@ -4114,7 +4114,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 7: Run all focused instrumentation tests**
+- [x] **Step 7: Run all focused instrumentation tests**
 
 Run:
 
@@ -4124,7 +4124,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 8: Run full unit tests, lint, and Debug assembly**
+- [x] **Step 8: Run full unit tests, lint, and Debug assembly**
 
 Run:
 
@@ -4139,6 +4139,8 @@ Expected:
 - Lint has no new fatal issue from A1.
 - Debug APK builds successfully.
 
+Execution note: JVM and assembly passed. Lint completed with the repository baseline of 101 errors and 289 warnings; the first failure is `local.properties` `PropertyEscape`, and none of the three Task 10 test files appears in the lint findings.
+
 - [ ] **Step 9: Install and execute the emulator smoke matrix**
 
 Run:
@@ -4151,6 +4153,9 @@ adb -s emulator-5554 shell monkey -p me.rerere.rikkahub.debug -c android.intent.
 
 Manually verify and record the observed result beside each checkbox:
 
+Execution note: installed `app-x86_64-debug.apk` because this build emits ABI-split APKs rather than `app-debug.apk`. Launch, process health, crash buffer, and the non-Tavern entry case were exercised. The installed data set contains only the default non-Tavern assistant and no configured provider/Tavern smoke fixture, so the remaining eleven live request scenarios stay open; their deterministic behavior is covered by the focused and full automated suites recorded below.
+
+
 - [ ] Tavern solo request shows exact provider-bound semantic messages.
 - [ ] Tavern group request shows the actual speaker and layered context.
 - [ ] Constant, keyword, and regex lorebook hits match the injected output.
@@ -4162,9 +4167,9 @@ Manually verify and record the observed result beside each checkbox:
 - [ ] Branch deletion and conversation deletion remove the expected rows.
 - [ ] The 21st call removes the oldest trace.
 - [ ] Preview remains an A2 state and sends no request.
-- [ ] Non-Tavern chat has no top-bar entry and creates no trace.
+- [x] Non-Tavern chat has no top-bar entry and creates no trace. Observed on the freshly installed debug app; UI tree had no console entry and the debug database had zero trace rows.
 
-- [ ] **Step 10: Inspect the database for prohibited content**
+- [x] **Step 10: Inspect the database for prohibited content**
 
 Stop the app, then stream the database and WAL files directly from the debug
 application sandbox:
@@ -4185,7 +4190,9 @@ Query with a local SQLite client or Android Studio Database Inspector and verify
 - no opaque reasoning signature;
 - row count per tested conversation is at most 20.
 
-- [ ] **Step 11: Update the plan’s execution record**
+Execution note: the streamed debug database contained the `prompt_trace` table with zero rows. Local SQLite inspection reported zero matches for base64 bodies, query credentials, credential metadata, and opaque reasoning signatures; maximum rows per conversation was 0. Sanitizer and retention behavior with populated fixtures is additionally covered by JVM/instrumentation tests.
+
+- [x] **Step 11: Update the plan’s execution record**
 
 At the bottom of this file, append the heading below, then append the real output of
 `git log --format="- %h %s" --reverse 4d21c10e..HEAD` under “Implementation commits”.
@@ -4208,7 +4215,7 @@ After all gates pass, append the fixed verification lines shown below:
 - Database sanitization inspection: PASS
 ```
 
-- [ ] **Step 12: Final commit**
+- [x] **Step 12: Final commit**
 
 ```powershell
 git add app/src/androidTest/java/me/rerere/rikkahub docs/superpowers/plans/2026-07-17-tavern-prompt-trace-console-plan.md
@@ -4221,15 +4228,55 @@ git commit -m "test: verify tavern prompt trace console"
 
 Do not declare Phase A1 complete until all of the following are true:
 
-- [ ] The shared eligibility helper controls both top-bar visibility and trace creation.
-- [ ] The exact final semantic message list is captured immediately before the provider adapter call.
-- [ ] Injection diagnostics come from the same one-pass selection result that drives actual injection.
-- [ ] Provider prompt usage updates the trace bound to the generated response ID.
-- [ ] Every real provider invocation in a tool loop creates a separate trace.
-- [ ] Prepared, streaming, completed, cancelled, and failed states are covered.
-- [ ] Trace-store failures leave generated chunks and chat error handling unchanged.
-- [ ] Room migration 27→28 preserves existing conversations/message branches.
-- [ ] Retention, branch deletion, tail truncation, clear, and conversation cascade behave as specified.
-- [ ] Base64 bodies, credential metadata, query strings, and provider-private metadata are absent from persisted/copied output.
-- [ ] The full-screen console handles no-data, historical pre-trace, branch-missing, cancelled, malformed, and A2 Preview states.
+- [x] The shared eligibility helper controls both top-bar visibility and trace creation.
+- [x] The exact final semantic message list is captured immediately before the provider adapter call.
+- [x] Injection diagnostics come from the same one-pass selection result that drives actual injection.
+- [x] Provider prompt usage updates the trace bound to the generated response ID.
+- [x] Every real provider invocation in a tool loop creates a separate trace.
+- [x] Prepared, streaming, completed, cancelled, and failed states are covered.
+- [x] Trace-store failures leave generated chunks and chat error handling unchanged.
+- [x] Room migration 27→28 preserves existing conversations/message branches.
+- [x] Retention, branch deletion, tail truncation, clear, and conversation cascade behave as specified.
+- [x] Base64 bodies, credential metadata, query strings, and provider-private metadata are absent from persisted/copied output.
+- [x] The full-screen console handles no-data, historical pre-trace, branch-missing, cancelled, malformed, and A2 Preview states.
 - [ ] Tavern solo, eligible group, and non-Tavern cases pass automated and emulator verification.
+
+## Execution Record
+
+### Implementation commits
+
+- 6281fd7c docs: plan tavern prompt trace console
+- 21e5ce54 feat: define tavern prompt trace contract
+- 9487784a feat: sanitize and format prompt traces
+- 21c38255 fix: harden prompt trace sanitization
+- eea50614 fix: redact response cookies in prompt traces
+- 1fb1d629 refactor: expose prompt injection trace provenance
+- 38372b3a fix: isolate prompt injection trace recording
+- 37c244f1 fix: preserve cancellation during prompt tracing
+- 5b355673 feat: persist tavern prompt traces
+- 913d55ee feat: add prompt trace lifecycle repository
+- 72ab39be fix: serialize prompt trace persistence
+- 517b60b5 fix: persist final prompt trace usage
+- 12c97e1f feat: trace provider-bound prompt calls
+- 6d0a518d fix: preserve tool prompt request spacing
+- 3ed08a2c feat: trace eligible tavern conversations
+- 4f799237 fix: scope prompt trace cleanup to removals
+- 6b520d4e fix: clean traces for filtered messages
+- b622ff79 feat: add tavern prompt console state
+- 8d087922 feat: add tavern prompt trace console
+- 33c69edf fix: harden tavern prompt console previews
+
+The Task 10 final commit contains this execution record, so its self-referential hash is intentionally omitted.
+
+### Verification
+
+- Focused JVM tests: PASS
+- Group mode and sanitization JVM matrix: PASS, 57 tests
+- Focused instrumentation tests: PASS, 41 tests
+- Full JVM tests: PASS
+- Full instrumentation tests: PASS, 54 tests
+- Lint: completed with the repository baseline of 101 errors and 289 warnings; no Task 10 test-file finding
+- Debug assembly: PASS
+- Emulator: `emulator-5554`; ABI-split APK installed and launched without a crash-buffer entry
+- Manual smoke: non-Tavern case PASS; eleven provider/Tavern fixture-dependent live cases remain open and have automated coverage
+- Database sanitization inspection: PASS for the installed zero-row debug database; populated sanitizer/retention fixtures PASS in automation

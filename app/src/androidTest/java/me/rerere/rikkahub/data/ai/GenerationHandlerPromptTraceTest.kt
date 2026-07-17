@@ -5,10 +5,15 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import me.rerere.ai.core.MessageRole
@@ -48,6 +53,8 @@ import me.rerere.rikkahub.data.repository.PromptTraceRepository
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -177,6 +184,42 @@ class GenerationHandlerPromptTraceTest {
     }
 
     @Test
+    fun googleProviderSettingCapturesSameSemanticContractAndProviderIdentity() = runBlocking {
+        val conversationId = insertConversation()
+        val input = UIMessage.user("google prompt")
+        val googleSetting = ProviderSetting.Google(
+            name = "Recorded Google",
+            models = listOf(model),
+        )
+        val provider = RecordingGoogleProvider(listOf(responseChunk("google reply")))
+        providerManager.registerProvider("google", provider)
+
+        handler(DefaultPromptTraceSessionFactory(repository)).generateText(
+            settings = Settings(providers = listOf(googleSetting)),
+            model = model,
+            messages = listOf(input),
+            assistant = Assistant(streamOutput = true, tavernCardJson = "{}"),
+            maxSteps = 1,
+            promptTraceSeed = seed(conversationId, requestAnchorMessageId = input.id),
+        ).toList()
+
+        val record = repository.observeConversation(conversationId).first().single()
+            as PromptTraceReadResult.Available
+        assertEquals(1, provider.callCount)
+        assertEquals("Recorded Google", record.record.payload.metadata.providerName)
+        assertEquals(
+            provider.capturedMessages.map { Triple(it.id, it.role, it.toText()) },
+            record.record.payload.finalMessages.map { message ->
+                Triple(
+                    message.id,
+                    message.role,
+                    message.parts.filterIsInstance<PromptTracePart.Text>().joinToString("\n") { it.text },
+                )
+            },
+        )
+    }
+
+    @Test
     fun ineligibleCallWithoutSeedGeneratesNormallyAndStoresNoTrace() = runBlocking {
         val conversationId = insertConversation()
         val provider = RecordingOpenAIProvider(listOf(responseChunk("plain")))
@@ -303,16 +346,78 @@ class GenerationHandlerPromptTraceTest {
         ).toList()
 
         assertEquals(2, provider.callCount)
-        val records = repository.observeConversation(conversationId).first()
-            .map { it as PromptTraceReadResult.Available }
-        assertEquals(setOf(0, 1), records.map { it.record.payload.metadata.providerStepIndex }.toSet())
-        assertTrue(records.all { it.record.payload.metadata.status == PromptTraceStatus.COMPLETED })
+        val traces = repository.observeConversation(conversationId).first()
+        assertEquals(2, traces.size)
+        val available = traces.map { (it as PromptTraceReadResult.Available).record }
+        assertEquals(listOf(1, 0), available.map { it.payload.metadata.providerStepIndex })
+        assertTrue(available.all { it.payload.metadata.status == PromptTraceStatus.COMPLETED })
+        assertTrue(available[0].payload.finalMessages.any { message ->
+            message.parts.filterIsInstance<PromptTracePart.Tool>().any { toolPart ->
+                toolPart.outputText?.preview?.contains("tool result") == true
+            }
+        })
+    }
+
+    @Test
+    fun cancellationBeforeFirstChunkKeepsAnchorWithoutResponseBinding() = runBlocking {
+        val conversationId = insertConversation()
+        val anchorId = Uuid.random()
+        val provider = DelayedOpenAIProvider(responseChunk("late"), emitBeforeDelay = false)
+        providerManager.registerProvider("openai", provider)
+
+        val job = launch {
+            handler(DefaultPromptTraceSessionFactory(repository)).generateText(
+                settings = Settings(providers = listOf(providerSetting)),
+                model = model,
+                messages = listOf(UIMessage.user("hello").copy(id = anchorId)),
+                assistant = Assistant(streamOutput = true),
+                maxSteps = 1,
+                promptTraceSeed = seed(conversationId, requestAnchorMessageId = anchorId),
+            ).collect()
+        }
+        provider.ready.await()
+        job.cancelAndJoin()
+
+        val record = repository.observeConversation(conversationId).first().single()
+            as PromptTraceReadResult.Available
+        assertTrue(job.isCancelled)
+        assertEquals(PromptTraceStatus.CANCELLED, record.record.payload.metadata.status)
+        assertNull(record.record.payload.metadata.responseMessageId)
+        assertEquals(anchorId, record.record.payload.metadata.requestAnchorMessageId)
+    }
+
+    @Test
+    fun cancellationAfterFirstChunkKeepsBoundResponse() = runBlocking {
+        val conversationId = insertConversation()
+        val anchorId = Uuid.random()
+        val provider = DelayedOpenAIProvider(responseChunk("partial"), emitBeforeDelay = true)
+        providerManager.registerProvider("openai", provider)
+
+        val job = launch {
+            handler(DefaultPromptTraceSessionFactory(repository)).generateText(
+                settings = Settings(providers = listOf(providerSetting)),
+                model = model,
+                messages = listOf(UIMessage.user("hello").copy(id = anchorId)),
+                assistant = Assistant(streamOutput = true),
+                maxSteps = 1,
+                promptTraceSeed = seed(conversationId, requestAnchorMessageId = anchorId),
+            ).collect()
+        }
+        provider.ready.await()
+        job.cancelAndJoin()
+
+        val record = repository.observeConversation(conversationId).first().single()
+            as PromptTraceReadResult.Available
+        assertTrue(job.isCancelled)
+        assertEquals(PromptTraceStatus.CANCELLED, record.record.payload.metadata.status)
+        assertNotNull(record.record.payload.metadata.responseMessageId)
+        assertEquals(anchorId, record.record.payload.metadata.requestAnchorMessageId)
     }
 
     @Test
     fun providerFailureMarksTraceFailedAndRethrowsOriginalFailure() = runBlocking {
         val conversationId = insertConversation()
-        val failure = IllegalStateException("provider failed")
+        val failure = IllegalStateException("authorization=secret")
         val provider = RecordingOpenAIProvider(failure = failure)
         providerManager.registerProvider("openai", provider)
         val assistant = Assistant(systemPrompt = "system", tavernCardJson = "{}")
@@ -334,7 +439,10 @@ class GenerationHandlerPromptTraceTest {
         val record = repository.observeConversation(conversationId).first().single()
             as PromptTraceReadResult.Available
         assertEquals(PromptTraceStatus.FAILED, record.record.payload.metadata.status)
-        assertTrue(requireNotNull(record.record.errorSummary).contains("provider failed"))
+        assertTrue(record.record.payload.finalMessages.isNotEmpty())
+        assertTrue(record.record.payload.finalMessages.any { it.parts.isNotEmpty() })
+        assertTrue(requireNotNull(record.record.errorSummary).contains("[redacted]"))
+        assertTrue(requireNotNull(record.record.errorSummary).contains("secret").not())
     }
 
     @Test
@@ -381,6 +489,36 @@ class GenerationHandlerPromptTraceTest {
 
         assertEquals(1, provider.callCount)
         assertEquals("plain", (output.last() as GenerationChunk.Messages).messages.last().toText())
+    }
+
+    @Test
+    fun ordinaryTraceStoreExceptionLeavesStreamingChunksSemanticallyIdenticalToTracingDisabled() = runBlocking {
+        val conversationId = insertConversation()
+        val fixedChunk = responseChunk("plain", usage = TokenUsage(promptTokens = 3, completionTokens = 1))
+        val provider = RecordingOpenAIProvider(listOf(fixedChunk))
+        providerManager.registerProvider("openai", provider)
+        val input = UIMessage.user("hello")
+        val assistant = Assistant(streamOutput = true)
+
+        val withoutTracing = handler(DefaultPromptTraceSessionFactory(repository)).generateText(
+            settings = Settings(providers = listOf(providerSetting)),
+            model = model,
+            messages = listOf(input),
+            assistant = assistant,
+            maxSteps = 1,
+            promptTraceSeed = null,
+        ).toList().semanticProjection()
+        val withBrokenTraceStore = handler(throwingFactory(IllegalStateException("trace store failed"))).generateText(
+            settings = Settings(providers = listOf(providerSetting)),
+            model = model,
+            messages = listOf(input),
+            assistant = assistant,
+            maxSteps = 1,
+            promptTraceSeed = seed(conversationId, requestAnchorMessageId = input.id),
+        ).toList().semanticProjection()
+
+        assertEquals(withoutTracing, withBrokenTraceStore)
+        assertEquals(2, provider.callCount)
     }
 
     @Test
@@ -480,6 +618,12 @@ class GenerationHandlerPromptTraceTest {
         usage = usage,
     )
 
+    private fun List<GenerationChunk>.semanticProjection() = map { chunk ->
+        (chunk as GenerationChunk.Messages).messages.map { message ->
+            listOf(message.role, message.parts, message.modelId, message.usage)
+        }
+    }
+
     private fun toolCallChunk() = MessageChunk(
         id = Uuid.random().toString(),
         model = model.modelId,
@@ -537,6 +681,38 @@ class GenerationHandlerPromptTraceTest {
         }
     }
 
+    private class RecordingGoogleProvider(
+        private val chunks: List<MessageChunk>,
+    ) : Provider<ProviderSetting.Google> {
+        var capturedMessages: List<UIMessage> = emptyList()
+        var callCount: Int = 0
+
+        override suspend fun listModels(providerSetting: ProviderSetting.Google): List<Model> = emptyList()
+
+        override suspend fun generateText(
+            providerSetting: ProviderSetting.Google,
+            messages: List<UIMessage>,
+            params: TextGenerationParams,
+        ): MessageChunk {
+            recordCall(messages)
+            return chunks.last()
+        }
+
+        override suspend fun streamText(
+            providerSetting: ProviderSetting.Google,
+            messages: List<UIMessage>,
+            params: TextGenerationParams,
+        ): Flow<MessageChunk> = flow {
+            recordCall(messages)
+            chunks.forEach { emit(it) }
+        }
+
+        private fun recordCall(messages: List<UIMessage>) {
+            callCount++
+            capturedMessages = messages
+        }
+    }
+
     private class SequencedOpenAIProvider(
         private val calls: List<List<MessageChunk>>,
     ) : Provider<ProviderSetting.OpenAI> {
@@ -561,6 +737,35 @@ class GenerationHandlerPromptTraceTest {
         private fun nextCall(): List<MessageChunk> {
             val index = callCount++
             return calls[index]
+        }
+    }
+
+    private class DelayedOpenAIProvider(
+        private val chunk: MessageChunk,
+        private val emitBeforeDelay: Boolean,
+    ) : Provider<ProviderSetting.OpenAI> {
+        val ready = CompletableDeferred<Unit>()
+
+        override suspend fun listModels(providerSetting: ProviderSetting.OpenAI): List<Model> = emptyList()
+
+        override suspend fun generateText(
+            providerSetting: ProviderSetting.OpenAI,
+            messages: List<UIMessage>,
+            params: TextGenerationParams,
+        ): MessageChunk = error("Streaming fixture only")
+
+        override suspend fun streamText(
+            providerSetting: ProviderSetting.OpenAI,
+            messages: List<UIMessage>,
+            params: TextGenerationParams,
+        ): Flow<MessageChunk> = flow {
+            if (emitBeforeDelay) {
+                emit(chunk)
+                ready.complete(Unit)
+            } else {
+                ready.complete(Unit)
+            }
+            delay(Long.MAX_VALUE)
         }
     }
 

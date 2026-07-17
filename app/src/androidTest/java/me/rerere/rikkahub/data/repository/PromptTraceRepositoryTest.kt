@@ -21,6 +21,7 @@ import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.db.dao.PromptTraceDAO
 import me.rerere.rikkahub.data.db.entity.ConversationEntity
 import me.rerere.rikkahub.data.db.entity.PromptTraceEntity
+import me.rerere.rikkahub.ui.pages.tavern.console.selectDefaultTraceId
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -141,10 +142,11 @@ class PromptTraceRepositoryTest {
     @Test
     fun insertPreparedSerializesPayloadAndRetainsNewestTwenty() = runBlocking {
         val conversationId = insertConversation(Uuid.random().toString())
+        val traceIds = List(21) { Uuid.random() }
 
         repeat(21) { index ->
             repository.insertPrepared(
-                traceId = Uuid.random(),
+                traceId = traceIds[index],
                 payload = payload(conversationId, startedAt = index.toLong()),
             )
         }
@@ -153,6 +155,104 @@ class PromptTraceRepositoryTest {
         assertEquals(20, results.size)
         assertTrue(results.all { it is PromptTraceReadResult.Available })
         assertEquals((20 downTo 1).map { it.toLong() }, results.map { it.createdAtEpochMs })
+        assertTrue(results.none { it.traceId == traceIds.first() })
+        assertEquals(traceIds.drop(1).toSet(), results.map { it.traceId }.toSet())
+    }
+
+    @Test
+    fun branchSelectionDoesNotDeleteAndBranchRemovalDeletesOnlyBoundTrace() = runBlocking {
+        val conversationId = insertConversation(Uuid.random().toString())
+        val responseA = Uuid.random()
+        val responseB = Uuid.random()
+        val traceA = Uuid.random()
+        val traceB = Uuid.random()
+        dao.insert(traceEntity(traceA.toString(), conversationId, responseMessageId = responseA.toString()))
+        dao.insert(
+            traceEntity(
+                traceB.toString(),
+                conversationId,
+                responseMessageId = responseB.toString(),
+                createdAt = 2L,
+            )
+        )
+
+        val beforeSelection = repository.observeConversation(Uuid.parse(conversationId)).first()
+        assertEquals(traceA, selectDefaultTraceId(beforeSelection, responseA))
+        assertEquals(traceB, selectDefaultTraceId(beforeSelection, responseB))
+        assertEquals(setOf(traceA, traceB), beforeSelection.map { it.traceId }.toSet())
+
+        repository.deleteForRemovedMessages(Uuid.parse(conversationId), setOf(responseA))
+
+        val remaining = repository.observeConversation(Uuid.parse(conversationId)).first()
+        assertEquals(listOf(traceB), remaining.map { it.traceId })
+    }
+
+    @Test
+    fun regeneratingFromEarlierUserRemovesOnlyTracesBoundToTruncatedTail() = runBlocking {
+        val conversationId = insertConversation(Uuid.random().toString())
+        val keptResponse = Uuid.random()
+        val removedResponse = Uuid.random()
+        val removedUnboundAnchor = Uuid.random()
+        val keptTrace = Uuid.random()
+        dao.insert(traceEntity(keptTrace.toString(), conversationId, responseMessageId = keptResponse.toString()))
+        dao.insert(
+            traceEntity(
+                Uuid.random().toString(),
+                conversationId,
+                responseMessageId = removedResponse.toString(),
+                createdAt = 2L,
+            )
+        )
+        dao.insert(
+            traceEntity(
+                Uuid.random().toString(),
+                conversationId,
+                requestAnchorMessageId = removedUnboundAnchor.toString(),
+                responseMessageId = null,
+                createdAt = 3L,
+            )
+        )
+
+        repository.deleteForRemovedMessages(
+            Uuid.parse(conversationId),
+            setOf(removedResponse, removedUnboundAnchor),
+        )
+
+        assertEquals(
+            listOf(keptTrace),
+            repository.observeConversation(Uuid.parse(conversationId)).first().map { it.traceId },
+        )
+    }
+
+    @Test
+    fun unboundAttemptFollowsAnchorAndForkStartsWithoutTraces() = runBlocking {
+        val sourceConversationId = insertConversation(Uuid.random().toString())
+        val forkConversationId = insertConversation(Uuid.random().toString())
+        val anchor = Uuid.random()
+        val traceId = Uuid.random()
+        dao.insert(
+            traceEntity(
+                id = traceId.toString(),
+                conversationId = sourceConversationId,
+                requestAnchorMessageId = anchor.toString(),
+                responseMessageId = null,
+            )
+        )
+
+        assertTrue(repository.observeConversation(Uuid.parse(forkConversationId)).first().isEmpty())
+        assertEquals(
+            listOf(traceId),
+            repository.observeConversation(Uuid.parse(sourceConversationId)).first().map { it.traceId },
+        )
+
+        repository.deleteForRemovedMessages(Uuid.parse(sourceConversationId), setOf(Uuid.random()))
+        assertEquals(
+            listOf(traceId),
+            repository.observeConversation(Uuid.parse(sourceConversationId)).first().map { it.traceId },
+        )
+
+        repository.deleteForRemovedMessages(Uuid.parse(sourceConversationId), setOf(anchor))
+        assertTrue(repository.observeConversation(Uuid.parse(sourceConversationId)).first().isEmpty())
     }
 
     @Test
