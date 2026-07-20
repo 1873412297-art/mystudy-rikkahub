@@ -29,12 +29,12 @@ private val MAIN_TEXT_BLOCK_REGEX = Regex(
 )
 
 private val STATUS_BLOCK_SEGMENT_REGEX = Regex(
-    """<(?:status!?|status_block)>[\s\S]*?(?:</(?:status!?|status_block)>|$)""",
+    """<(?:status_block|statusblock|statusbar|status!?|状态栏)>[\s\S]*?(?:</(?:status_block|statusblock|statusbar|status!?|状态栏)>|$)""",
     RegexOption.IGNORE_CASE
 )
 
 private val STATUS_BLOCK_WRAPPER_REGEX = Regex(
-    """^\s*<(?:status!?|status_block)>\s*([\s\S]*?)(?:</(?:status!?|status_block)>\s*)?$""",
+    """^\s*<(?:status_block|statusblock|statusbar|status!?|状态栏)>\s*([\s\S]*?)(?:</(?:status_block|statusblock|statusbar|status!?|状态栏)>\s*)?$""",
     RegexOption.IGNORE_CASE
 )
 

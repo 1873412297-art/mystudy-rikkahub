@@ -26,6 +26,27 @@ class MarkdownStatusBlockTest {
     }
 
     @Test
+    fun `statusbar alias is detected`() {
+        assertTrue(containsStatusBlockTag("<statusbar>hello</statusbar>"))
+    }
+
+    @Test
+    fun `statusblock alias is detected case insensitively`() {
+        assertTrue(containsStatusBlockTag("<StatusBlock>hello</StatusBlock>"))
+        assertTrue(containsStatusBlockTag("<STATUSBLOCK>hello</STATUSBLOCK>"))
+    }
+
+    @Test
+    fun `chinese status tag is detected`() {
+        assertTrue(containsStatusBlockTag("<状态栏>hello</状态栏>"))
+    }
+
+    @Test
+    fun `unterminated statusbar block is still detected`() {
+        assertTrue(containsStatusBlockTag("<statusbar>hello\nworld"))
+    }
+
+    @Test
     fun `plain markdown is not treated as status block`() {
         assertFalse(containsStatusBlockTag("hello\n\nworld"))
     }
