@@ -112,4 +112,34 @@ class RichTextRenderPolicyTest {
         assertEquals(listOf(RichTextSegment.Kind.JSON_PATCH_DIAGNOSTIC), segments.map { it.kind })
         assertTrue(segments.single().raw.contains("JSON Patch"))
     }
+
+    @Test
+    fun `new status tag variants route to status segment`() {
+        for (tag in listOf("statusbar", "StatusBlock", "状态栏", "status!")) {
+            val segments = parseRichTextSegments("intro\n<$tag>state</$tag>")
+
+            assertEquals(
+                "tag <$tag> should route to STATUS_BLOCK",
+                listOf(RichTextSegment.Kind.MARKDOWN, RichTextSegment.Kind.STATUS_BLOCK),
+                segments.map { it.kind },
+            )
+            assertEquals("state", segments[1].raw.trim())
+        }
+    }
+
+    @Test
+    fun `statusbar variant triggers webview rendering`() {
+        val intent = analyzeRichTextContent("正文\n<statusbar>state</statusbar>")
+
+        assertTrue(intent.hasStatusBlock)
+        assertTrue(intent.useMarkdownWebView)
+        assertFalse(intent.isRawHtmlDocument)
+    }
+
+    @Test
+    fun `unterminated statusblock variant is still a status segment`() {
+        val segments = parseRichTextSegments("正文\n<StatusBlock>state\nmore")
+
+        assertEquals(RichTextSegment.Kind.STATUS_BLOCK, segments.last().kind)
+    }
 }

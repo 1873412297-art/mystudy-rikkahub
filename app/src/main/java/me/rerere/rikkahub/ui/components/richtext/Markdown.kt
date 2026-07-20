@@ -131,7 +131,7 @@ private const val ENABLE_STABLE_DOM_RENDERER = true
 
 /** SillyTavern/status-prompt status blocks. Missing closing tags are tolerated to keep text visible. */
 private val STATUS_BLOCK_REGEX = Regex(
-    "<(?:status!?|status_block)>[\\s\\S]*?(?:</(?:status!?|status_block)>|$)",
+    "<(?:status_block|statusblock|statusbar|status!?|状态栏)>[\\s\\S]*?(?:</(?:status_block|statusblock|statusbar|status!?|状态栏)>|$)",
     RegexOption.IGNORE_CASE
 )
 
