@@ -1,0 +1,46 @@
+--- a/app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt
++++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt
+@@ -8,3 +8,4 @@
+ import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.PaddingValues
+ import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.foundation.layout.fillMaxWidth
+@@ -511,7 +512,29 @@
+             containerColor = Color.Transparent,
+         ) { innerPadding ->
++            Column(
++                modifier = Modifier
++                    .fillMaxSize()
++                    .padding(innerPadding)
++            ) {
++            // 动态状态栏（HUD）：最近一条含状态块的 assistant 消息的状态
++            StatusHudBar(
++                conversation = conversation,
++                onOptionClick = { optionText ->
++                    if (loadingJob == null && currentChatModel != null) {
++                        // 点击选项 = 直接作为用户消息发送（复用聊天页发送链路）
++                        vm.handleMessageSend(listOf(UIMessagePart.Text(optionText)))
++                        scope.launch {
++                            chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
++                        }
++                    } else {
++                        // 生成中 / 未选模型：退化为填入输入框
++                        inputState.setMessageText(optionText)
++                    }
++                },
++                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
++            )
+             ChatList(
+-                innerPadding = innerPadding,
++                innerPadding = PaddingValues(0.dp),
+                 conversation = conversation,
+                 state = chatListState,
+                 loading = loadingJob != null,
+@@ -584,6 +606,7 @@
+                     vm.updateConversation(conversation.copy(customSystemPrompt = newPrompt))
+                     vm.saveConversationAsync()
+                 },
+                 onMentionRole = onMentionRole,
+             )
++            }
+         }
