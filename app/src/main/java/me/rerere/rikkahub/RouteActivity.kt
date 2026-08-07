@@ -58,8 +58,6 @@ import coil3.svg.SvgDecoder
 import com.dokar.sonner.Toaster
 import com.dokar.sonner.rememberToasterState
 import kotlinx.serialization.Serializable
-import me.rerere.highlight.Highlighter
-import me.rerere.highlight.LocalHighlighter
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.db.DatabaseMigrationTracker
 import me.rerere.rikkahub.data.db.MigrationState
@@ -97,7 +95,9 @@ import me.rerere.rikkahub.ui.pages.extensions.skills.SkillDetailPage
 import me.rerere.rikkahub.ui.pages.extensions.skills.SkillsPage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspacePage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceDetailPage
+import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceFileEditorPage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceTerminalPage
+import me.rerere.workspace.WorkspaceStorageArea
 import me.rerere.rikkahub.ui.pages.favorite.FavoritePage
 import me.rerere.rikkahub.ui.pages.history.HistoryPage
 import me.rerere.rikkahub.ui.pages.imggen.ImageGenPage
@@ -108,7 +108,6 @@ import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesThemePage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesNotificationPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesGeneralPage
-import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesRuntimePage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesUIPage
 import me.rerere.rikkahub.ui.pages.setting.SettingThemePage
 import me.rerere.rikkahub.ui.pages.setting.SettingDonatePage
@@ -126,10 +125,12 @@ import me.rerere.rikkahub.ui.pages.share.handler.ShareHandlerPage
 import me.rerere.rikkahub.ui.pages.stats.StatsPage
 import me.rerere.rikkahub.ui.pages.translator.TranslatorPage
 import me.rerere.rikkahub.ui.pages.webview.WebViewPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantGroupMembersPage
+import me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsolePage
+import me.rerere.rikkahub.ui.pages.extensions.lorebook.LorebookPage
+import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesRuntimePage
 import me.rerere.rikkahub.ui.pages.tavern.TavernCardEditorPage
 import me.rerere.rikkahub.ui.pages.tavern.TavernCardViewerPage
-import me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsolePage
-import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantGroupMembersPage
 import me.rerere.rikkahub.ui.theme.LocalDarkMode
 import me.rerere.rikkahub.ui.theme.RikkahubTheme
 import me.rerere.rikkahub.utils.CrashHandler
@@ -142,7 +143,6 @@ import kotlin.uuid.Uuid
 private const val TAG = "RouteActivity"
 
 class RouteActivity : ComponentActivity() {
-    private val highlighter by inject<Highlighter>()
     private val okHttpClient by inject<OkHttpClient>()
     private val settingsStore by inject<SettingsStore>()
     private var navStack: MutableList<NavKey>? = null
@@ -299,7 +299,6 @@ class RouteActivity : ComponentActivity() {
                 LocalNavController provides Navigator(backStack),
                 LocalSharedTransitionScope provides this,
                 LocalSettings provides settings,
-                LocalHighlighter provides highlighter,
                 LocalToaster provides toastState,
                 LocalTTSState provides tts,
                 LocalASRState provides asr,
@@ -351,7 +350,7 @@ class RouteActivity : ComponentActivity() {
                                     text = key.text,
                                     files = key.files.map { it.toUri() },
                                     nodeId = key.nodeId?.let { Uuid.parse(it) },
-                                    greeting = key.greeting,
+                                    greeting = key.greeting
                                 )
                             }
 
@@ -406,6 +405,11 @@ class RouteActivity : ComponentActivity() {
                                 AssistantExtensionsPage(key.id)
                             }
 
+                            entry<Screen.AssistantGroupMembers> { key ->
+                                AssistantGroupMembersPage(key.id)
+                            }
+
+
                             entry<Screen.Translator> {
                                 TranslatorPage()
                             }
@@ -423,7 +427,7 @@ class RouteActivity : ComponentActivity() {
                             }
 
                             entry<Screen.WebView> { key ->
-                                WebViewPage(key.url, key.content)
+                                WebViewPage(key.url, key.contentId)
                             }
 
                             entry<Screen.TavernCardViewer> { key ->
@@ -442,9 +446,10 @@ class RouteActivity : ComponentActivity() {
                                 TavernPromptConsolePage(conversationId = key.conversationId)
                             }
 
-                            entry<Screen.AssistantGroupMembers> { key ->
-                                AssistantGroupMembersPage(key.id)
+                            entry<Screen.Lorebooks> {
+                                LorebookPage()
                             }
+
 
                             entry<Screen.SettingTheme> {
                                 SettingThemePage()
@@ -469,6 +474,7 @@ class RouteActivity : ComponentActivity() {
                             entry<Screen.SettingPreferencesRuntime> {
                                 SettingPreferencesRuntimePage()
                             }
+
 
                             entry<Screen.SettingPreferencesUI> {
                                 SettingPreferencesUIPage()
@@ -554,6 +560,14 @@ class RouteActivity : ComponentActivity() {
 
                             entry<Screen.WorkspaceTerminal> { key ->
                                 WorkspaceTerminalPage(key.id)
+                            }
+
+                            entry<Screen.WorkspaceFileEditor> { key ->
+                                WorkspaceFileEditorPage(
+                                    id = key.id,
+                                    area = WorkspaceStorageArea.valueOf(key.area),
+                                    path = key.path,
+                                )
                             }
 
                             entry<Screen.SkillDetail> { key ->
@@ -677,7 +691,7 @@ sealed interface Screen : NavKey {
     data object ImageGen : Screen
 
     @Serializable
-    data class WebView(val url: String = "", val content: String = "") : Screen
+    data class WebView(val url: String = "", val contentId: String = "") : Screen
 
     @Serializable
     data class TavernCardViewer(val cardUri: String? = null, val cardJson: String? = null, val assistantId: String? = null) : Screen
@@ -686,10 +700,17 @@ sealed interface Screen : NavKey {
     data class TavernCardEditor(val assistantId: String) : Screen
 
     @Serializable
+    data class AssistantGroupMembers(val id: String) : Screen
+
+    @Serializable
+    data object SettingPreferencesRuntime : Screen
+
+    @Serializable
     data class TavernPromptConsole(val conversationId: String) : Screen
 
     @Serializable
-    data class AssistantGroupMembers(val id: String) : Screen
+    data object Lorebooks : Screen
+
 
     @Serializable
     data object SettingTheme : Screen
@@ -705,9 +726,6 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object SettingPreferencesGeneral : Screen
-
-    @Serializable
-    data object SettingPreferencesRuntime : Screen
 
     @Serializable
     data object SettingPreferencesUI : Screen
@@ -771,6 +789,9 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data class WorkspaceTerminal(val id: String) : Screen
+
+    @Serializable
+    data class WorkspaceFileEditor(val id: String, val area: String, val path: String) : Screen
 
     @Serializable
     data class SkillDetail(val skillName: String) : Screen

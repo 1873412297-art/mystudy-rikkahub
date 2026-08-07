@@ -726,20 +726,20 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
 
                 // 1. 拆分出纯文本部分
                 val textParts = output.filterIsInstance<UIMessagePart.Text>()
-
+                
                 // 2. 提取所有的多模态(图片/视频/音频)，并直接转为 Google 要求的格式
                 // 过滤出最终包含 inlineData 的数据块
                 val mediaGoogleParts = output
                     .filter { it !is UIMessagePart.Text }
                     .mapNotNull { it.toGooglePart() }
-                    .filter { it.containsKey("inlineData") }
+                    .filter { it.containsKey("inlineData") } 
 
                 // 3. 构建给模型看的结构化 response 节点
                 put("response", buildJsonObject {
                     // 处理文本结果
                     if (textParts.isNotEmpty()) {
                         put(
-                            "result",
+                            "result", 
                             textParts.joinToString("\n") { it.text }
                         )
                     } else if (mediaGoogleParts.isEmpty()) {
@@ -771,7 +771,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                                     // 添加能够让 $ref 认出它的唯一名称
                                     put("displayName", refName)
                                 })
-
+                                
                                 // 保留可能存在的其他字段
                                 googlePart.forEach { (k, v) ->
                                     if (k != "inlineData") put(k, v)

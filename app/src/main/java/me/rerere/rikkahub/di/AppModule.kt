@@ -3,12 +3,11 @@ package me.rerere.rikkahub.di
 import com.google.firebase.Firebase
 import com.google.firebase.analytics.analytics
 import com.google.firebase.crashlytics.crashlytics
-import com.google.firebase.remoteconfig.remoteConfig
 import kotlinx.serialization.json.Json
-import me.rerere.highlight.Highlighter
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.status.StatusRenderer
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
+import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.service.ChatNotificationManager
@@ -24,10 +23,6 @@ import org.koin.dsl.module
 
 val appModule = module {
     single<Json> { JsonInstant }
-
-    single {
-        Highlighter(get())
-    }
 
     single {
         AppEventBus()
@@ -58,10 +53,6 @@ val appModule = module {
     }
 
     single {
-        Firebase.remoteConfig
-    }
-
-    single {
         Firebase.analytics
     }
 
@@ -82,6 +73,10 @@ val appModule = module {
 
     single {
         StatusVariableStore()
+    }
+
+    single {
+        TavernHostEventBus()
     }
 
     single {
@@ -107,6 +102,7 @@ val appModule = module {
             workspaceRepository = get(),
             folderRepository = get(),
             statusVariableStore = get(),
+            tavernHostEventBus = get(),
         )
     }
 

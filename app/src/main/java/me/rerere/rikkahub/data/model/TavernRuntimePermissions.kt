@@ -8,4 +8,6 @@ data class TavernRuntimePermissions(
     val allowWorldWrite: Boolean = false,
     val allowMessageWrite: Boolean = false,
     val allowNetwork: Boolean = false,
+    val allowVariablesWrite: Boolean = false,
+    val allowEventSubscribe: Boolean = false,
 )

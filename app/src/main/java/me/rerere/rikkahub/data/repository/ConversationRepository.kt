@@ -20,6 +20,7 @@ import me.rerere.rikkahub.data.db.dao.MessageNodeDAO
 import me.rerere.rikkahub.data.db.entity.ConversationEntity
 import me.rerere.rikkahub.data.db.entity.MessageNodeEntity
 import me.rerere.rikkahub.data.files.FilesManager
+import me.rerere.rikkahub.data.model.AuthorNote
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.service.group.GroupRuntimeState
@@ -473,6 +474,7 @@ internal fun conversationToEntity(conversation: Conversation): ConversationEntit
         activeGroupMemberId = conversation.activeGroupMemberId?.toString() ?: "",
         groupMemberQueue = JsonInstant.encodeToString(conversation.groupMemberQueue),
         groupMemberQueueIndex = conversation.groupMemberQueueIndex,
+        authorNote = conversation.authorNote?.let { JsonInstant.encodeToString(it) },
     )
 }
 
@@ -504,6 +506,9 @@ internal fun conversationFromEntity(
         JsonInstant.decodeFromString<List<Uuid>>(entity.groupMemberQueue)
     }.getOrDefault(emptyList()),
     groupMemberQueueIndex = entity.groupMemberQueueIndex,
+    authorNote = entity.authorNote?.let { json ->
+        runCatching { JsonInstant.decodeFromString<AuthorNote>(json) }.getOrNull()
+    },
 )
 
 /**

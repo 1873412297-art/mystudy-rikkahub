@@ -143,11 +143,19 @@ private fun PromptInjection.RegexInjection.toWorldJson(lorebook: Lorebook): Json
     put("content", JsonPrimitive(content))
     put("injectDepth", JsonPrimitive(injectDepth))
     put("role", JsonPrimitive(role.name.lowercase()))
-    put("keywords", JsonArray(keywords.map { JsonPrimitive(it) }))
+    put("keywords", stringsToJsonArray(keywords))
     put("useRegex", JsonPrimitive(useRegex))
     put("caseSensitive", JsonPrimitive(caseSensitive))
     put("scanDepth", JsonPrimitive(scanDepth))
     put("constantActive", JsonPrimitive(constantActive))
+    put("secondaryKeywords", stringsToJsonArray(secondaryKeywords))
+    put("selective", JsonPrimitive(selective))
+    put("probability", JsonPrimitive(probability))
+    put("sticky", JsonPrimitive(sticky))
+    put("cooldown", JsonPrimitive(cooldown))
+    put("delay", JsonPrimitive(delay))
+    put("lorebookTokenBudget", JsonPrimitive(lorebook.tokenBudget))
+    put("lorebookRecursiveScanning", JsonPrimitive(lorebook.recursiveScanning))
 }
 
 private fun JsonObject.toRegexInjection(entryId: String): PromptInjection.RegexInjection {
@@ -166,6 +174,12 @@ private fun JsonObject.toRegexInjection(entryId: String): PromptInjection.RegexI
         caseSensitive = getBoolean("caseSensitive", false),
         scanDepth = getInt("scanDepth", 4),
         constantActive = getBoolean("constantActive", false),
+        secondaryKeywords = getJsonStrings("secondaryKeywords"),
+        selective = getBoolean("selective", false),
+        probability = getInt("probability", 100),
+        sticky = getInt("sticky", 0),
+        cooldown = getInt("cooldown", 0),
+        delay = getInt("delay", 0),
     )
 }
 
@@ -176,6 +190,8 @@ private fun JsonObject.getBoolean(name: String, default: Boolean): Boolean {
 private fun JsonObject.getInt(name: String, default: Int): Int {
     return (this[name] as? JsonPrimitive)?.intOrNull ?: default
 }
+
+private fun stringsToJsonArray(values: List<String>): JsonArray = JsonArray(values.map { JsonPrimitive(it) })
 
 private fun JsonObject.getJsonStrings(name: String): List<String> {
     val raw = this[name] as? JsonArray ?: return emptyList()

@@ -7,6 +7,7 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.ai.trace.PromptTraceRecorder
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AuthorNote
 import kotlin.uuid.Uuid
 
 class TransformerContext(
@@ -16,6 +17,7 @@ class TransformerContext(
     val settings: Settings,
     val conversationModeInjectionIds: Set<Uuid> = emptySet(),
     val conversationLorebookIds: Set<Uuid> = emptySet(),
+    val conversationAuthorNote: AuthorNote? = null,
     val processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
     val workspaceCwd: String? = null,
     /** 当前对话的 ID，状态变量 transformer 用它读写 conversation.statusVariables */
@@ -73,6 +75,7 @@ suspend fun List<UIMessage>.transforms(
     settings: Settings,
     conversationModeInjectionIds: Set<Uuid> = emptySet(),
     conversationLorebookIds: Set<Uuid> = emptySet(),
+    conversationAuthorNote: AuthorNote? = null,
     processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
     workspaceCwd: String? = null,
     conversationId: Uuid? = null,
@@ -85,6 +88,7 @@ suspend fun List<UIMessage>.transforms(
         settings = settings,
         conversationModeInjectionIds = conversationModeInjectionIds,
         conversationLorebookIds = conversationLorebookIds,
+        conversationAuthorNote = conversationAuthorNote,
         processingStatus = processingStatus,
         workspaceCwd = workspaceCwd,
         conversationId = conversationId,

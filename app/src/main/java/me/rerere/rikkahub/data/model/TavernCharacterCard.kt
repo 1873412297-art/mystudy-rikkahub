@@ -134,6 +134,7 @@ data class CharacterBookEntry(
     @SerialName("secondary_keys")
     val secondaryKeys: List<String>? = null,
     val constant: Boolean? = null,
+    val depth: Int? = null, // ST @Depth：从最新消息往前数（顶层字段，与 extensions.depth 并存）
     val position: String? = null, // "before_char" | "after_char"
 )
 

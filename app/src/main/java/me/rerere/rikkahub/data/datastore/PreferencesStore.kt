@@ -7,6 +7,7 @@ import androidx.datastore.preferences.SharedPreferencesMigration
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.provider.Model
@@ -42,6 +44,8 @@ import me.rerere.rikkahub.data.model.PromptInjection
 import me.rerere.rikkahub.data.model.QuickMessage
 import me.rerere.rikkahub.data.model.TavernRuntimePermissions
 import me.rerere.rikkahub.data.model.Tag
+import me.rerere.rikkahub.data.model.resolveVisibleQuickMessages
+import me.rerere.rikkahub.data.model.sanitizeQuickMessageRefs
 import me.rerere.rikkahub.data.sync.s3.S3Config
 import me.rerere.rikkahub.ui.theme.CustomTheme
 import me.rerere.rikkahub.ui.theme.PresetThemes
@@ -83,7 +87,6 @@ class SettingsStore(
         val DEVELOPER_MODE = booleanPreferencesKey("developer_mode")
 
         // 模型选择
-        val ENABLE_WEB_SEARCH = booleanPreferencesKey("enable_web_search")
         val FAVORITE_MODELS = stringPreferencesKey("favorite_models")
         val SELECT_MODEL = stringPreferencesKey("chat_model")
         val FAST_MODEL = stringPreferencesKey("fast_model")
@@ -126,6 +129,7 @@ class SettingsStore(
         // TTS
         val TTS_PROVIDERS = stringPreferencesKey("tts_providers")
         val SELECTED_TTS_PROVIDER = stringPreferencesKey("selected_tts_provider")
+        val DEFAULT_TTS_PLAYBACK_SPEED = floatPreferencesKey("default_tts_playback_speed")
 
         // ASR
         val ASR_PROVIDERS = stringPreferencesKey("asr_providers")
@@ -143,6 +147,7 @@ class SettingsStore(
         val LOREBOOKS = stringPreferencesKey("lorebooks")
         val QUICK_MESSAGES = stringPreferencesKey("quick_messages")
         val TAVERN_RUNTIME_PERMISSIONS = stringPreferencesKey("tavern_runtime_permissions")
+        val TAVERN_GLOBAL_VARIABLES = stringPreferencesKey("tavern_global_variables")
 
         // 备份提醒
         val BACKUP_REMINDER_CONFIG = stringPreferencesKey("backup_reminder_config")
@@ -165,7 +170,6 @@ class SettingsStore(
             }
         }.map { preferences ->
             Settings(
-                enableWebSearch = preferences[ENABLE_WEB_SEARCH] == true,
                 favoriteModels = preferences[FAVORITE_MODELS]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: emptyList(),
@@ -222,6 +226,7 @@ class SettingsStore(
                 } ?: emptyList(),
                 selectedTTSProviderId = preferences[SELECTED_TTS_PROVIDER]?.let { Uuid.parse(it) }
                     ?: DEFAULT_SYSTEM_TTS_ID,
+                defaultTTSPlaybackSpeed = preferences[DEFAULT_TTS_PLAYBACK_SPEED]?.coerceIn(0.5f, 2.0f) ?: 1.0f,
                 asrProviders = preferences[ASR_PROVIDERS]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: emptyList(),
@@ -238,6 +243,9 @@ class SettingsStore(
                 runtimePermissions = preferences[TAVERN_RUNTIME_PERMISSIONS]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: TavernRuntimePermissions(),
+                tavernGlobalVariables = preferences[TAVERN_GLOBAL_VARIABLES]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: JsonObject(emptyMap()),
                 webServerEnabled = preferences[WEB_SERVER_ENABLED] == true,
                 webServerPort = preferences[WEB_SERVER_PORT] ?: 8080,
                 webServerJwtEnabled = preferences[WEB_SERVER_JWT_ENABLED] == true,
@@ -322,11 +330,9 @@ class SettingsStore(
                         lorebookIds = assistant.lorebookIds.filter { id ->
                             id in validLorebookIds
                         }.toSet(),
-                        // 过滤掉不存在的快捷消息 ID
-                        quickMessageIds = assistant.quickMessageIds.filter { id ->
-                            id in validQuickMessageIds
-                        }.toSet()
                     )
+                        // 过滤掉不存在的快捷消息 ID（含助手级隐藏记录）
+                        .sanitizeQuickMessageRefs(validQuickMessageIds)
                 },
                 ttsProviders = settings.ttsProviders.distinctBy { it.id },
                 asrProviders = asrProviders,
@@ -362,7 +368,6 @@ class SettingsStore(
             preferences[DEVELOPER_MODE] = settings.developerMode
             preferences[DISPLAY_SETTING] = JsonInstant.encodeToString(settings.displaySetting)
 
-            preferences[ENABLE_WEB_SEARCH] = settings.enableWebSearch
             preferences[FAVORITE_MODELS] = JsonInstant.encodeToString(settings.favoriteModels)
             preferences[SELECT_MODEL] = settings.chatModelId.toString()
             preferences[FAST_MODEL] = settings.fastModelId.toString()
@@ -401,6 +406,7 @@ class SettingsStore(
             settings.selectedTTSProviderId?.let {
                 preferences[SELECTED_TTS_PROVIDER] = it.toString()
             } ?: preferences.remove(SELECTED_TTS_PROVIDER)
+            preferences[DEFAULT_TTS_PLAYBACK_SPEED] = settings.defaultTTSPlaybackSpeed.coerceIn(0.5f, 2.0f)
             preferences[ASR_PROVIDERS] = JsonInstant.encodeToString(settings.asrProviders)
             settings.selectedASRProviderId?.let {
                 preferences[SELECTED_ASR_PROVIDER] = it.toString()
@@ -409,6 +415,7 @@ class SettingsStore(
             preferences[LOREBOOKS] = JsonInstant.encodeToString(settings.lorebooks)
             preferences[QUICK_MESSAGES] = JsonInstant.encodeToString(settings.quickMessages)
             preferences[TAVERN_RUNTIME_PERMISSIONS] = JsonInstant.encodeToString(settings.runtimePermissions)
+            preferences[TAVERN_GLOBAL_VARIABLES] = JsonInstant.encodeToString(settings.tavernGlobalVariables)
             preferences[WEB_SERVER_ENABLED] = settings.webServerEnabled
             preferences[WEB_SERVER_PORT] = settings.webServerPort
             preferences[WEB_SERVER_JWT_ENABLED] = settings.webServerJwtEnabled
@@ -450,6 +457,20 @@ class SettingsStore(
                 assistants = settings.assistants.map { assistant ->
                     if (assistant.id == assistantId) {
                         assistant.copy(reasoningLevel = reasoningLevel)
+                    } else {
+                        assistant
+                    }
+                }
+            )
+        }
+    }
+
+    suspend fun updateAssistantWebSearch(assistantId: Uuid, enabled: Boolean) {
+        update { settings ->
+            settings.copy(
+                assistants = settings.assistants.map { assistant ->
+                    if (assistant.id == assistantId) {
+                        assistant.copy(enableWebSearch = enabled)
                     } else {
                         assistant
                     }
@@ -505,7 +526,6 @@ data class Settings(
     val customThemes: List<CustomTheme> = emptyList(),
     val developerMode: Boolean = false,
     val displaySetting: DisplaySetting = DisplaySetting(),
-    val enableWebSearch: Boolean = false,
     val favoriteModels: List<Uuid> = emptyList(),
     val chatModelId: Uuid = Uuid.random(),
     val fastModelId: Uuid = Uuid.random(),
@@ -534,12 +554,14 @@ data class Settings(
     val s3Config: S3Config = S3Config(),
     val ttsProviders: List<TTSProviderSetting> = DEFAULT_TTS_PROVIDERS,
     val selectedTTSProviderId: Uuid = DEFAULT_SYSTEM_TTS_ID,
+    val defaultTTSPlaybackSpeed: Float = 1.0f,
     val asrProviders: List<ASRProviderSetting> = emptyList(),
     val selectedASRProviderId: Uuid? = null,
     val modeInjections: List<PromptInjection.ModeInjection> = DEFAULT_MODE_INJECTIONS,
     val lorebooks: List<Lorebook> = emptyList(),
     val quickMessages: List<QuickMessage> = emptyList(),
     val runtimePermissions: TavernRuntimePermissions = TavernRuntimePermissions(),
+    val tavernGlobalVariables: JsonObject = JsonObject(emptyMap()),
     val webServerEnabled: Boolean = false,
     val webServerPort: Int = 8080,
     val webServerJwtEnabled: Boolean = false,
@@ -594,6 +616,7 @@ data class DisplaySetting(
     val codeBlockAutoCollapse: Boolean = false,
     val showLineNumbers: Boolean = false,
     val ttsOnlyReadQuoted: Boolean = false,
+    val ttsOnlyReadOutsideBrackets: Boolean = false,
     val autoPlayTTSAfterGeneration: Boolean = false,
     val pasteLongTextAsFile: Boolean = false,
     val pasteLongTextThreshold: Int = 1000,
@@ -668,7 +691,11 @@ fun Settings.getAssistantById(id: Uuid): Assistant? {
 }
 
 fun Settings.getQuickMessagesOfAssistant(assistant: Assistant) =
-    quickMessages.filter { it.id in assistant.quickMessageIds }
+    resolveVisibleQuickMessages(
+        quickMessages = quickMessages,
+        quickMessageIds = assistant.quickMessageIds,
+        hiddenQuickMessageIds = assistant.hiddenQuickMessageIds,
+    )
 
 fun Settings.getSelectedTTSProvider(): TTSProviderSetting? {
     return selectedTTSProviderId?.let { id ->
@@ -716,7 +743,7 @@ internal val DEFAULT_ASSISTANTS = listOf(
             You are a helpful assistant, called {{char}}, based on model {{model_name}}.
 
             ## Info
-            - Time: {{cur_datetime}}
+            - Date: {{cur_date}}
             - Locale: {{locale}}
             - Timezone: {{timezone}}
             - Device Info: {{device_info}}

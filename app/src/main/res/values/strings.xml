@@ -63,10 +63,6 @@
   <string name="assistant_page_chat_model_desc">Set the default chat model for the assistant. If not set, the global default chat model will be used</string>
   <string name="assistant_page_clone">Clone</string>
   <string name="assistant_page_confirm">Confirm</string>
-  <string name="assistant_page_context_message_count">Context Message Size: %d</string>
-  <string name="assistant_page_context_message_desc">Controls how many historical messages will be sent to the model as context. Messages exceeding this number will be ignored, only the most recent N messages will be retained, which can save tokens</string>
-  <string name="assistant_page_context_message_size">Context Message Size</string>
-  <string name="assistant_page_context_message_unlimited">Unlimited context messages</string>
   <string name="assistant_page_creative">Creative</string>
   <string name="assistant_page_current_assistant">Current Assistant</string>
   <string name="assistant_page_custom_bodies">Custom Body</string>
@@ -91,7 +87,7 @@
   <string name="assistant_page_local_tools_javascript_engine_title">JavaScript Engine</string>
   <string name="assistant_page_local_tools_time_info_desc">Get current date, weekday, time, and timezone info from the device</string>
   <string name="assistant_page_local_tools_time_info_title">Time Info</string>
-  <string name="assistant_page_local_tools_tts_desc">Let the AI speak text aloud to you using the device TTS engine</string>
+  <string name="assistant_page_local_tools_tts_desc">Let the AI read text aloud to you using your selected TTS service</string>
   <string name="assistant_page_local_tools_tts_title">Text to Speech</string>
   <string name="assistant_page_manage_memory_title">Manage Memory</string>
   <string name="assistant_page_max_tokens">Max Tokens</string>
@@ -415,9 +411,9 @@
   <string name="language_french">🇫🇷 Français</string>
   <string name="language_german">🇩🇪 Deutsch</string>
   <string name="language_italian">🇮🇹 Italiano</string>
-  <string name="language_japanese">🇯🇵 日本�</string>
-  <string name="language_korean">🇰🇷 한국�</string>
-  <string name="language_simplified_chinese">🇨🇳 简体中�</string>
+  <string name="language_japanese">🇯🇵 日本語</string>
+  <string name="language_korean">🇰🇷 한국어</string>
+  <string name="language_simplified_chinese">🇨🇳 简体中文</string>
   <string name="language_spanish">🇪🇸 Español</string>
   <string name="language_traditional_chinese">🇨🇳 繁體中文</string>
   <string name="mcp_picker_syncing">Syncing MCP servers...</string>
@@ -473,8 +469,6 @@
   <string name="placeholder_battery_level">Battery Level</string>
   <string name="placeholder_char">Assistant Name</string>
   <string name="placeholder_current_date">Date</string>
-  <string name="placeholder_current_datetime">Date and Time</string>
-  <string name="placeholder_current_time">Time</string>
   <string name="placeholder_device_info">Device Info</string>
   <string name="placeholder_locale">Locale</string>
   <string name="placeholder_model_id">Model ID</string>
@@ -484,8 +478,6 @@
   <string name="placeholder_timezone">Timezone</string>
   <string name="placeholder_user">User</string>
   <string name="prompt_page_add">Add</string>
-  <string name="prompt_page_add_entry">Add Entry</string>
-  <string name="prompt_page_add_lorebook">Add Lorebook</string>
   <string name="prompt_page_add_mode_injection">Add Mode Injection</string>
   <string name="prompt_page_cancel">Cancel</string>
   <string name="prompt_page_case_sensitive">Case Sensitive</string>
@@ -496,20 +488,14 @@
   <string name="prompt_page_description">Description</string>
   <string name="prompt_page_disabled">Disabled</string>
   <string name="prompt_page_edit">Edit</string>
-  <string name="prompt_page_edit_entry">Edit Entry</string>
-  <string name="prompt_page_edit_lorebook">Edit Lorebook</string>
   <string name="prompt_page_edit_mode_injection">Edit Mode Injection</string>
   <string name="prompt_page_empty_hint">Click the button below to add</string>
   <string name="prompt_page_enabled">Enabled</string>
   <string name="prompt_page_entries_count_format">%d entries</string>
-  <string name="prompt_page_entries_format">Entries (%d)</string>
   <string name="prompt_page_inject_depth">Inject Depth</string>
   <string name="prompt_page_injection_content">Injection Content</string>
   <string name="prompt_page_injection_position">Injection Position</string>
   <string name="prompt_page_injection_role">Injection Role</string>
-  <string name="prompt_page_keywords_format">Keywords: %s</string>
-  <string name="prompt_page_keywords_label">Keywords</string>
-  <string name="prompt_page_lorebook_empty">No Lorebooks</string>
   <string name="prompt_page_lorebook_tab">Lorebook</string>
   <string name="prompt_page_mode_injection_empty">No mode injections</string>
   <string name="prompt_page_mode_injection_tab">Mode Injection</string>
@@ -527,8 +513,6 @@
   <string name="prompt_page_scan_depth">Scan Depth (Messages)</string>
   <string name="prompt_page_title">Prompt Injection</string>
   <string name="prompt_page_unnamed">Unnamed</string>
-  <string name="prompt_page_unnamed_entry">Unnamed Entry</string>
-  <string name="prompt_page_unnamed_lorebook">Unnamed Lorebook</string>
   <string name="prompt_page_use_regex">Use Regular Expression</string>
   <string name="quick_messages_page_add_title">Add Quick Message</string>
   <string name="quick_messages_page_delete_message">Are you sure you want to delete "%s"? This action cannot be undone.</string>
@@ -691,7 +675,7 @@
   <string name="setting_display_page_enable_latex_rendering_title">Enable LaTeX Rendering</string>
   <string name="setting_display_page_enable_message_generation_haptic_effect_desc">Enable haptic feedback when messages are being generated</string>
   <string name="setting_display_page_enable_message_generation_haptic_effect_title">Message Generation Haptic Effect</string>
-  <string name="setting_display_page_font_size_preview">At four in the morning, I saw the begonia flowers still awake. I am often like this �?lying awake alone in the quiet night, thinking: if someone is thinking of me at this moment, that would be wonderful.</string>
+  <string name="setting_display_page_font_size_preview">At four in the morning, I saw the begonia flowers still awake. I am often like this — lying awake alone in the quiet night, thinking: if someone is thinking of me at this moment, that would be wonderful.</string>
   <string name="setting_display_page_font_size_title">Chat Font Size</string>
   <string name="setting_display_page_live_update_notification">Live Update Notification</string>
   <string name="setting_display_page_live_update_notification_desc">Show real-time notification updates during message generation (Android 15+)</string>
@@ -725,14 +709,22 @@
   <string name="setting_display_page_skip_crop_image_desc">Skip crop interface after importing images or taking photos</string>
   <string name="setting_display_page_skip_crop_image_title">Skip Image Editing</string>
   <string name="setting_display_page_title">Display Settings</string>
-  <string name="setting_display_page_tts_only_read_quoted_desc">When enabled, TTS will only read content within quotation marks (including "", \'\', 「」, 『』)</string>
+  <string name="setting_display_page_tts_only_read_quoted_desc">When enabled, TTS will only read content within quotation marks (including\" \", \' \', “”, ‘’, 「」, 『』)</string>
   <string name="setting_display_page_tts_only_read_quoted_title">TTS Read Quoted Content Only</string>
+  <string name="setting_display_page_tts_read_outside_brackets_desc">When enabled, TTS will not read content inside brackets</string>
+  <string name="setting_display_page_tts_read_outside_brackets_title">TTS Skip Bracketed Content</string>
   <string name="setting_display_page_use_app_icon_style_loading_indicator_desc">Use the animated app icon instead of the default circular loading indicator</string>
   <string name="setting_display_page_use_app_icon_style_loading_indicator_title">Use App Icon-Style Loading Indicator</string>
   <string name="setting_display_page_volume_key_scroll_desc">Scroll pages with volume keys, ideal for e-ink screens</string>
   <string name="setting_display_page_volume_key_scroll_ratio">Scroll Amount</string>
   <string name="setting_display_page_volume_key_scroll_title">Volume Key Page Scroll</string>
   <string name="setting_files_page_cancel_action">Cancel</string>
+  <string name="setting_files_page_clean_action">Clean</string>
+  <string name="setting_files_page_clean_confirmation">All files in this category will be permanently deleted. This action cannot be undone.</string>
+  <string name="setting_files_page_clean_content_description">Clean files</string>
+  <string name="setting_files_page_clean_failed_toast">Some files could not be cleaned</string>
+  <string name="setting_files_page_clean_title">Clean files?</string>
+  <string name="setting_files_page_cleaned_toast">Files cleaned</string>
   <string name="setting_files_page_delete_action">Delete</string>
   <string name="setting_files_page_delete_content_description">Delete</string>
   <string name="setting_files_page_delete_failed_toast">Delete Failed</string>
@@ -863,7 +855,7 @@
   <string name="setting_page_search_service">Search Service</string>
   <string name="setting_page_search_service_desc">Set up search service</string>
   <string name="setting_page_search_test">Test Search</string>
-  <string name="setting_page_search_test_query_hint">Enter test query�</string>
+  <string name="setting_page_search_test_query_hint">Enter test query…</string>
   <string name="setting_page_search_test_run">Run Test</string>
   <string name="setting_page_search_title">Search Service</string>
   <string name="setting_page_share">Share</string>
@@ -1001,6 +993,8 @@
   <string name="setting_tts_page_base_url_description">API base URL endpoint</string>
   <string name="setting_tts_page_base_url_placeholder">https://api.openai.com/v1</string>
   <string name="setting_tts_page_default_name">System TTS</string>
+  <string name="setting_tts_page_default_playback_speed">Default playback speed</string>
+  <string name="setting_tts_page_default_playback_speed_description">Applied locally to every TTS provider without changing its synthesis settings.</string>
   <string name="setting_tts_page_edit_provider">Edit Provider</string>
   <string name="setting_tts_page_emotion">Emotion</string>
   <string name="setting_tts_page_emotion_description">Emotion style for speech synthesis</string>
@@ -1108,6 +1102,8 @@
   <string name="text_area_save">Save</string>
   <string name="theme_name_autumn">Autumn Yellow</string>
   <string name="theme_name_black">Neutral Black</string>
+  <string name="theme_name_claude">Claude</string>
+  <string name="theme_name_minimal">Minimal White</string>
   <string name="theme_name_ocean">Ocean Blue</string>
   <string name="theme_name_sakura">Sakura Pink</string>
   <string name="theme_name_spring">Meadow Green</string>
@@ -1203,7 +1199,7 @@
   <string name="workspace_terminal_title">Terminal</string>
   <string name="workspace_terminal_title_with_name">%s · Terminal</string>
   <string name="workspace_terminal_not_installed">Please install Rootfs first</string>
-  <string name="workspace_terminal_loading">Loading workspace�</string>
+  <string name="workspace_terminal_loading">Loading workspace…</string>
   <string name="workspace_terminal_exited">Terminal exited</string>
   <string name="extensions_page_workspace">Workspace</string>
   <string name="extensions_page_workspace_desc">Manage local working directories accessible by Agent</string>
@@ -1248,41 +1244,10 @@
   <string name="tool_ui_replay">Replay</string>
   <string name="tool_ui_delete_memory">Delete memory</string>
   <string name="tool_ui_file">file</string>
-  <string name="assistant_page_enhancement_prompt">Enhancement Prompt</string>
-  <string name="assistant_page_enhancement_prompt_desc">Appended to the last user message before sending to the AI; not shown in chat.</string>
-  <string name="setting_display_page_auto_show_greeting_picker_title">Auto pick greeting on new chat</string>
-  <string name="setting_display_page_auto_show_greeting_picker_desc">When the assistant has multiple greetings, automatically open the picker. Off lets you pick from the character-card view.</string>
-  <string name="assistant_importer_imported_lorebook">Imported character book with %d entries</string>
-  <string name="assistant_importer_imported_regexes">Imported %d regex scripts</string>
-  <string name="render_html">Render HTML</string>
-  <string name="tavern_card_viewer_title">Character Card</string>
-  <string name="tavern_card_load_error">Failed to load character card</string>
-  <string name="tavern_card_section_overview">Overview</string>
-  <string name="tavern_card_section_details">Details</string>
-  <string name="tavern_card_section_examples">Examples</string>
-  <string name="tavern_card_creator_notes">Creator Notes</string>
-  <string name="tavern_card_description">Description</string>
-  <string name="tavern_card_personality">Personality</string>
-  <string name="tavern_card_scenario">Scenario</string>
-  <string name="tavern_card_system_prompt">System Prompt</string>
-  <string name="tavern_card_post_history">Post-history Instructions</string>
-  <string name="tavern_card_first_message">First Message</string>
-  <string name="tavern_card_alternate_greeting">Alternate Greeting</string>
-  <string name="tavern_card_example_messages">Example Messages</string>
-  <string name="tavern_card_character_book">Character Book</string>
-  <string name="tavern_card_view_card">View Character Card</string>
-  <string name="tavern_card_import_card">Import Character Card</string>
-  <string name="tavern_card_view_full">View Full Card</string>
-  <string name="tavern_card_no_data">No character card data available. Please re-import the card.</string>
-  <string name="tavern_card_export_title">Export Character Card</string>
-  <string name="tavern_card_export_desc">Export as SillyTavern V2 JSON</string>
-  <string name="tavern_card_export_success">Character card exported successfully</string>
-  <string name="tavern_card_export_failed">Failed to export character card</string>
   <string name="workspace_page_name_duplicate">Name already exists</string>
   <string name="setting_mcp_page_name_invalid">Name can only contain English letters and numbers</string>
   <string name="log_page_record_requests">Record requests</string>
   <string name="log_page_record_requests_desc">Capture request headers, bodies, and response metadata</string>
-  <string name="assistant_page_context_message_truncation_warning">Limiting context may cause frequent context truncation and prevent prompt caching</string>
   <string name="chat_message_tool_recent_chats">View recent chats</string>
   <string name="chat_message_tool_conversation_search">Search history: %1$s</string>
   <string name="assistant_page_local_tools_screen_time_title">Screen Time</string>
@@ -1305,70 +1270,112 @@
   <string name="chat_page_folder_add">New</string>
   <string name="chat_page_delete_folder_confirm">Delete folder "%1$s"? Conversations inside will not be deleted, only removed from the folder.</string>
   <string name="chat_page_delete_folder_generating">Some conversations in this folder are still generating. Please stop them before deleting.</string>
-  <string name="group_director_title">Director</string>
-  <string name="group_director_open">Open group director</string>
-  <string name="group_director_pause_after_current">Pause after current reply</string>
-  <string name="group_director_continue_round">Continue one round</string>
-  <string name="group_director_continue_current_round">Continue this round</string>
-  <string name="group_director_skip_next">Skip next speaker</string>
-  <string name="group_director_mode_manual">Manual</string>
-  <string name="group_director_mode_round_robin">Round robin</string>
-  <string name="group_director_mode_moderator">Moderator</string>
-  <string name="group_director_status_running">Running</string>
-  <string name="group_director_status_paused">Paused</string>
-  <string name="group_director_status_pause_pending">Pauses after this reply</string>
-  <string name="group_director_status_round_remaining">Round: %1$d remaining</string>
-  <string name="group_director_nominate_member">Make %1$s the next speaker</string>
-  <string name="group_director_no_members">No enabled group members</string>
-  <string name="group_director_invalid_member">That member is no longer available</string>
-  <string name="group_director_no_alternative">No other member is available</string>
-  <string name="group_director_not_group">This conversation is not a group chat</string>
-  <string name="tavern_prompt_console_title" tools:ignore="MissingTranslation">Tavern console</string>
-  <string name="tavern_prompt_console_open" tools:ignore="MissingTranslation">Open Tavern console</string>
-  <string name="tavern_prompt_console_overview" tools:ignore="MissingTranslation">Overview</string>
-  <string name="tavern_prompt_console_hits" tools:ignore="MissingTranslation">Hits</string>
-  <string name="tavern_prompt_console_messages" tools:ignore="MissingTranslation">Sent messages</string>
-  <string name="tavern_prompt_console_preview" tools:ignore="MissingTranslation">Preview</string>
-  <string name="tavern_prompt_console_actual_tokens" tools:ignore="MissingTranslation">Actual prompt tokens</string>
-  <string name="tavern_prompt_console_not_provided" tools:ignore="MissingTranslation">Not provided</string>
-  <string name="tavern_prompt_console_approx" tools:ignore="MissingTranslation">Approx. %1$d</string>
-  <string name="tavern_prompt_console_no_traces" tools:ignore="MissingTranslation">No prompt traces yet</string>
-  <string name="tavern_prompt_console_branch_missing" tools:ignore="MissingTranslation">The selected reply branch has no trace; showing the newest available call.</string>
-  <string name="tavern_prompt_console_payload_unavailable" tools:ignore="MissingTranslation">Trace payload unavailable</string>
-  <string name="tavern_prompt_console_cancelled" tools:ignore="MissingTranslation">Cancelled before a response branch was created</string>
-  <string name="tavern_prompt_console_preview_a2" tools:ignore="MissingTranslation">Draft preview arrives in A2</string>
-  <string name="tavern_prompt_console_preview_a2_body" tools:ignore="MissingTranslation">This tab does not run transformers or create a trace in A1.</string>
-  <string name="tavern_prompt_console_clear" tools:ignore="MissingTranslation">Clear this conversation’s traces</string>
-  <string name="tavern_prompt_console_clear_title" tools:ignore="MissingTranslation">Clear prompt traces?</string>
-  <string name="tavern_prompt_console_clear_body" tools:ignore="MissingTranslation">Chat messages are kept. Only diagnostics for this conversation are deleted.</string>
-  <string name="tavern_prompt_console_copy_all" tools:ignore="MissingTranslation">Copy full trace</string>
-  <string name="tavern_prompt_console_copy_message" tools:ignore="MissingTranslation">Copy message</string>
-  <string name="tavern_prompt_console_copied" tools:ignore="MissingTranslation">Copied</string>
-  <string name="tavern_prompt_console_estimate_notice" tools:ignore="MissingTranslation">Approximate section counts may differ from provider usage because protocol overhead, tools, caching, and multimodal input are provider-specific.</string>
-  <string name="tavern_prompt_console_trace_selector" tools:ignore="MissingTranslation">Select provider call</string>
-  <string name="tavern_prompt_console_no_hits" tools:ignore="MissingTranslation">No mode or lorebook hits</string>
-  <string name="tavern_prompt_console_model" tools:ignore="MissingTranslation">Model: %1$s</string>
-  <string name="tavern_prompt_console_provider" tools:ignore="MissingTranslation">Provider: %1$s</string>
-  <string name="tavern_prompt_console_provider_step" tools:ignore="MissingTranslation">Provider step: %1$d</string>
-  <string name="tavern_prompt_console_message_count" tools:ignore="MissingTranslation">Messages: %1$d</string>
-  <string name="tavern_prompt_console_speaker" tools:ignore="MissingTranslation">Speaker: %1$s</string>
-  <string name="tavern_prompt_console_status" tools:ignore="MissingTranslation">Status: %1$s</string>
-  <string name="tavern_prompt_console_inactive" tools:ignore="MissingTranslation">Inactive</string>
-  <string name="tavern_prompt_console_hit_details" tools:ignore="MissingTranslation">%1$s · %2$s · priority %3$d · depth %4$d</string>
-  <string name="tavern_prompt_console_hit_scan" tools:ignore="MissingTranslation">%1$s · scan %2$d/%3$d</string>
-  <string name="tavern_prompt_console_matched_terms" tools:ignore="MissingTranslation">Matched: %1$s</string>
-  <string name="tavern_prompt_console_message_header" tools:ignore="MissingTranslation">%1$d. %2$s</string>
-  <string name="tavern_prompt_console_expand" tools:ignore="MissingTranslation">Expand</string>
-  <string name="tavern_prompt_console_collapse" tools:ignore="MissingTranslation">Collapse</string>
-  <string name="tavern_prompt_console_reasoning_part" tools:ignore="MissingTranslation">[Reasoning]\n%1$s</string>
-  <string name="tavern_prompt_console_binary_reference" tools:ignore="MissingTranslation">binary reference</string>
-  <string name="tavern_prompt_console_attachment_part" tools:ignore="MissingTranslation">[%1$s] %2$s</string>
-  <string name="tavern_prompt_console_byte_count" tools:ignore="MissingTranslation">%1$d bytes</string>
-  <string name="tavern_prompt_console_tool_part" tools:ignore="MissingTranslation">[Tool %1$s / %2$s]</string>
-  <string name="tavern_prompt_console_tool_input" tools:ignore="MissingTranslation">Input: %1$s</string>
-  <string name="tavern_prompt_console_tool_output" tools:ignore="MissingTranslation">Output: %1$s</string>
-  <string name="tavern_prompt_console_tool_output_attachment" tools:ignore="MissingTranslation">[Tool output %1$s] %2$s</string>
-  <string name="tavern_prompt_console_trace_call_status" tools:ignore="MissingTranslation">Call %1$d · %2$s</string>
-  <string name="tavern_prompt_console_trace_clip_label" tools:ignore="MissingTranslation">Tavern prompt trace</string>
-  <string name="tavern_prompt_console_message_clip_label" tools:ignore="MissingTranslation">Tavern prompt message</string>
+  <string name="assistant_page_context_message_limit">Context Message Limit</string>
+  <string name="assistant_page_context_message_limit_desc">Caps how many recent messages are sent to the model. When the limit is exceeded, the context is trimmed down to about half in one step instead of dropping one message per turn, so the request prefix stays stable and prompt caching keeps working for many turns.</string>
+  <string name="assistant_page_context_message_limit_count">Context message limit: %d</string>
+  <string name="assistant_page_context_message_limit_unlimited">Unlimited context messages</string>
+  <string name="assistant_page_context_message_limit_warning">Any non-zero limit invalidates the prompt cache each time the context is trimmed. A larger limit trims less often; 0 never trims and keeps the cache fully intact.</string>
+<string name="assistant_importer_imported_lorebook">Imported character book with %d entries</string>
+<string name="assistant_importer_imported_regexes">Imported %d regex scripts</string>
+<string name="assistant_page_context_message_count">Context Message Size: %d</string>
+<string name="assistant_page_context_message_desc">Controls how many historical messages will be sent to the model as context. Messages exceeding this number will be ignored, only the most recent N messages will be retained, which can save tokens</string>
+<string name="assistant_page_context_message_size">Context Message Size</string>
+<string name="assistant_page_context_message_truncation_warning">Limiting context may cause frequent context truncation and prevent prompt caching</string>
+<string name="assistant_page_context_message_unlimited">Unlimited context messages</string>
+<string name="assistant_page_enhancement_prompt">Enhancement Prompt</string>
+<string name="assistant_page_enhancement_prompt_desc">Appended to the last user message before sending to the AI; not shown in chat.</string>
+<string name="group_director_continue_current_round">Continue this round</string>
+<string name="group_director_continue_round">Continue one round</string>
+<string name="group_director_invalid_member">That member is no longer available</string>
+<string name="group_director_mode_manual">Manual</string>
+<string name="group_director_mode_moderator">Moderator</string>
+<string name="group_director_mode_round_robin">Round robin</string>
+<string name="group_director_no_alternative">No other member is available</string>
+<string name="group_director_no_members">No enabled group members</string>
+<string name="group_director_nominate_member">Make %1$s the next speaker</string>
+<string name="group_director_not_group">This conversation is not a group chat</string>
+<string name="group_director_open">Open group director</string>
+<string name="group_director_pause_after_current">Pause after current reply</string>
+<string name="group_director_skip_next">Skip next speaker</string>
+<string name="group_director_status_pause_pending">Pauses after this reply</string>
+<string name="group_director_status_paused">Paused</string>
+<string name="group_director_status_round_remaining">Round: %1$d remaining</string>
+<string name="group_director_status_running">Running</string>
+<string name="group_director_title">Director</string>
+<string name="placeholder_current_datetime">Date and Time</string>
+<string name="placeholder_current_time">Time</string>
+<string name="render_html">Render HTML</string>
+<string name="setting_display_page_auto_show_greeting_picker_desc">When the assistant has multiple greetings, automatically open the picker. Off lets you pick from the character-card view.</string>
+<string name="setting_display_page_auto_show_greeting_picker_title">Auto pick greeting on new chat</string>
+<string name="tavern_card_alternate_greeting">Alternate Greeting</string>
+<string name="tavern_card_character_book">Character Book</string>
+<string name="tavern_card_creator_notes">Creator Notes</string>
+<string name="tavern_card_description">Description</string>
+<string name="tavern_card_example_messages">Example Messages</string>
+<string name="tavern_card_export_desc">Export as SillyTavern V2 JSON</string>
+<string name="tavern_card_export_failed">Failed to export character card</string>
+<string name="tavern_card_export_success">Character card exported successfully</string>
+<string name="tavern_card_export_title">Export Character Card</string>
+<string name="tavern_card_first_message">First Message</string>
+<string name="tavern_card_import_card">Import Character Card</string>
+<string name="tavern_card_load_error">Failed to load character card</string>
+<string name="tavern_card_no_data">No character card data available. Please re-import the card.</string>
+<string name="tavern_card_personality">Personality</string>
+<string name="tavern_card_post_history">Post-history Instructions</string>
+<string name="tavern_card_scenario">Scenario</string>
+<string name="tavern_card_section_details">Details</string>
+<string name="tavern_card_section_examples">Examples</string>
+<string name="tavern_card_section_overview">Overview</string>
+<string name="tavern_card_system_prompt">System Prompt</string>
+<string name="tavern_card_view_card">View Character Card</string>
+<string name="tavern_card_view_full">View Full Card</string>
+<string name="tavern_card_viewer_title">Character Card</string>
+<string name="tavern_prompt_console_actual_tokens" tools:ignore="MissingTranslation">Actual prompt tokens</string>
+<string name="tavern_prompt_console_approx" tools:ignore="MissingTranslation">Approx. %1$d</string>
+<string name="tavern_prompt_console_attachment_part" tools:ignore="MissingTranslation">[%1$s] %2$s</string>
+<string name="tavern_prompt_console_binary_reference" tools:ignore="MissingTranslation">binary reference</string>
+<string name="tavern_prompt_console_branch_missing" tools:ignore="MissingTranslation">The selected reply branch has no trace; showing the newest available call.</string>
+<string name="tavern_prompt_console_byte_count" tools:ignore="MissingTranslation">%1$d bytes</string>
+<string name="tavern_prompt_console_cancelled" tools:ignore="MissingTranslation">Cancelled before a response branch was created</string>
+<string name="tavern_prompt_console_clear" tools:ignore="MissingTranslation">Clear this conversation’s traces</string>
+<string name="tavern_prompt_console_clear_body" tools:ignore="MissingTranslation">Chat messages are kept. Only diagnostics for this conversation are deleted.</string>
+<string name="tavern_prompt_console_clear_title" tools:ignore="MissingTranslation">Clear prompt traces?</string>
+<string name="tavern_prompt_console_collapse" tools:ignore="MissingTranslation">Collapse</string>
+<string name="tavern_prompt_console_copied" tools:ignore="MissingTranslation">Copied</string>
+<string name="tavern_prompt_console_copy_all" tools:ignore="MissingTranslation">Copy full trace</string>
+<string name="tavern_prompt_console_copy_message" tools:ignore="MissingTranslation">Copy message</string>
+<string name="tavern_prompt_console_estimate_notice" tools:ignore="MissingTranslation">Approximate section counts may differ from provider usage because protocol overhead, tools, caching, and multimodal input are provider-specific.</string>
+<string name="tavern_prompt_console_expand" tools:ignore="MissingTranslation">Expand</string>
+<string name="tavern_prompt_console_hit_details" tools:ignore="MissingTranslation">%1$s · %2$s · priority %3$d · depth %4$d</string>
+<string name="tavern_prompt_console_hit_scan" tools:ignore="MissingTranslation">%1$s · scan %2$d/%3$d</string>
+<string name="tavern_prompt_console_hits" tools:ignore="MissingTranslation">Hits</string>
+<string name="tavern_prompt_console_inactive" tools:ignore="MissingTranslation">Inactive</string>
+<string name="tavern_prompt_console_matched_terms" tools:ignore="MissingTranslation">Matched: %1$s</string>
+<string name="tavern_prompt_console_message_clip_label" tools:ignore="MissingTranslation">Tavern prompt message</string>
+<string name="tavern_prompt_console_message_count" tools:ignore="MissingTranslation">Messages: %1$d</string>
+<string name="tavern_prompt_console_message_header" tools:ignore="MissingTranslation">%1$d. %2$s</string>
+<string name="tavern_prompt_console_messages" tools:ignore="MissingTranslation">Sent messages</string>
+<string name="tavern_prompt_console_model" tools:ignore="MissingTranslation">Model: %1$s</string>
+<string name="tavern_prompt_console_no_hits" tools:ignore="MissingTranslation">No mode or lorebook hits</string>
+<string name="tavern_prompt_console_no_traces" tools:ignore="MissingTranslation">No prompt traces yet</string>
+<string name="tavern_prompt_console_not_provided" tools:ignore="MissingTranslation">Not provided</string>
+<string name="tavern_prompt_console_open" tools:ignore="MissingTranslation">Open Tavern console</string>
+<string name="tavern_prompt_console_overview" tools:ignore="MissingTranslation">Overview</string>
+<string name="tavern_prompt_console_payload_unavailable" tools:ignore="MissingTranslation">Trace payload unavailable</string>
+<string name="tavern_prompt_console_preview" tools:ignore="MissingTranslation">Preview</string>
+<string name="tavern_prompt_console_preview_a2" tools:ignore="MissingTranslation">Draft preview arrives in A2</string>
+<string name="tavern_prompt_console_preview_a2_body" tools:ignore="MissingTranslation">This tab does not run transformers or create a trace in A1.</string>
+<string name="tavern_prompt_console_provider" tools:ignore="MissingTranslation">Provider: %1$s</string>
+<string name="tavern_prompt_console_provider_step" tools:ignore="MissingTranslation">Provider step: %1$d</string>
+<string name="tavern_prompt_console_reasoning_part" tools:ignore="MissingTranslation">[Reasoning]\n%1$s</string>
+<string name="tavern_prompt_console_speaker" tools:ignore="MissingTranslation">Speaker: %1$s</string>
+<string name="tavern_prompt_console_status" tools:ignore="MissingTranslation">Status: %1$s</string>
+<string name="tavern_prompt_console_title" tools:ignore="MissingTranslation">Tavern console</string>
+<string name="tavern_prompt_console_tool_input" tools:ignore="MissingTranslation">Input: %1$s</string>
+<string name="tavern_prompt_console_tool_output" tools:ignore="MissingTranslation">Output: %1$s</string>
+<string name="tavern_prompt_console_tool_output_attachment" tools:ignore="MissingTranslation">[Tool output %1$s] %2$s</string>
+<string name="tavern_prompt_console_tool_part" tools:ignore="MissingTranslation">[Tool %1$s / %2$s]</string>
+<string name="tavern_prompt_console_trace_call_status" tools:ignore="MissingTranslation">Call %1$d · %2$s</string>
+<string name="tavern_prompt_console_trace_clip_label" tools:ignore="MissingTranslation">Tavern prompt trace</string>
+<string name="tavern_prompt_console_trace_selector" tools:ignore="MissingTranslation">Select provider call</string>
 </resources>

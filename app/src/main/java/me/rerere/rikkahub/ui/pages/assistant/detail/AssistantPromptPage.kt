@@ -2,7 +2,9 @@ package me.rerere.rikkahub.ui.pages.assistant.detail
 
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowDown01
+import me.rerere.hugeicons.stroke.ArrowDown02
 import me.rerere.hugeicons.stroke.ArrowUp01
+import me.rerere.hugeicons.stroke.ArrowUp02
 import me.rerere.hugeicons.stroke.Add01
 import me.rerere.hugeicons.stroke.Delete01
 import me.rerere.hugeicons.stroke.Cancel01
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -57,6 +60,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -76,6 +80,7 @@ import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.AssistantRegex
+import me.rerere.rikkahub.data.model.AuthorNote
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.toMessageNode
 import me.rerere.rikkahub.ui.components.message.ChatMessage
@@ -576,7 +581,167 @@ private fun AssistantPromptContent(
                 }
             }
         }
+
+        // ── 作者注释（Author's Note @ Depth）──
+        AuthorNoteCard(
+            assistant = assistant,
+            onUpdate = onUpdate,
+        )
+
+        // ── 允许会话覆盖作者注释 ──
+        Card(
+            colors = CustomColors.cardColorsOnSurfaceContainer
+        ) {
+            FormItem(
+                modifier = Modifier.padding(8.dp),
+                label = {
+                    Text("允许会话覆盖作者注释")
+                },
+                description = {
+                    Text("开启后，单个会话可以在聊天页配置自己的作者注释，并优先于助手级配置生效")
+                },
+                tail = {
+                    Switch(
+                        checked = assistant.allowConversationAuthorNote,
+                        onCheckedChange = {
+                            onUpdate(
+                                assistant.copy(
+                                    allowConversationAuthorNote = it
+                                )
+                            )
+                        }
+                    )
+                }
+            )
+        }
     }
+}
+
+/**
+ * 作者注释（Author's Note @ Depth）配置卡片。
+ * 所有字段统一走局部函数 updateAuthorNote 更新，避免重复的 copy 嵌套。
+ */
+@Composable
+private fun AuthorNoteCard(
+    assistant: Assistant,
+    onUpdate: (Assistant) -> Unit,
+) {
+    fun updateAuthorNote(transform: (AuthorNote) -> AuthorNote) {
+        onUpdate(assistant.copy(authorNote = assistant.authorNote.let(transform)))
+    }
+
+    Card(
+        colors = CustomColors.cardColorsOnSurfaceContainer
+    ) {
+        Column(
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            FormItem(
+                label = {
+                    Text("作者注释")
+                },
+                description = {
+                    Text("在对话指定深度处注入的作者注释，按用户消息轮次间隔生效，跟随每条生成请求注入")
+                },
+                tail = {
+                    Switch(
+                        checked = assistant.authorNote.enabled,
+                        onCheckedChange = { enabled ->
+                            updateAuthorNote { it.copy(enabled = enabled) }
+                        }
+                    )
+                }
+            )
+            if (assistant.authorNote.enabled) {
+                OutlinedTextField(
+                    value = assistant.authorNote.content,
+                    onValueChange = { content ->
+                        updateAuthorNote { it.copy(content = content) }
+                    },
+                    label = { Text("注释正文") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    minLines = 3,
+                    maxLines = 8,
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    IntTextField(
+                        value = assistant.authorNote.depth,
+                        onValueChange = { depth ->
+                            updateAuthorNote { it.copy(depth = depth) }
+                        },
+                        label = "注入深度",
+                        modifier = Modifier.weight(1f),
+                    )
+                    IntTextField(
+                        value = assistant.authorNote.interval,
+                        onValueChange = { interval ->
+                            updateAuthorNote { it.copy(interval = interval) }
+                        },
+                        label = "间隔轮数",
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "注入角色",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Select(
+                        options = listOf(MessageRole.USER, MessageRole.ASSISTANT),
+                        selectedOption = assistant.authorNote.role,
+                        onOptionSelected = { role ->
+                            updateAuthorNote { it.copy(role = role) }
+                        },
+                        modifier = Modifier.width(160.dp),
+                        optionToString = { it.displayLabel() },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 整数输入框：仅当输入可解析为 Int 时才回调，其余输入被忽略。
+ */
+@Composable
+private fun IntTextField(
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedTextField(
+        value = value.toString(),
+        onValueChange = { text -> text.toIntOrNull()?.let(onValueChange) },
+        label = { Text(label) },
+        modifier = modifier,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        singleLine = true,
+    )
+}
+
+/**
+ * 注入角色在作者注释配置中的显示名。
+ */
+private fun MessageRole.displayLabel(): String = when (this) {
+    MessageRole.USER -> "用户"
+    MessageRole.ASSISTANT -> "助手"
+    else -> name
 }
 
 @Composable
@@ -589,6 +754,28 @@ private fun AssistantRegexCard(
     var expanded by remember {
         mutableStateOf(false)
     }
+
+    // 更新当前规则（保持列表中其他规则不变）
+    fun updateRegex(newRegex: AssistantRegex) {
+        onUpdate(
+            assistant.copy(
+                regexes = assistant.regexes.mapIndexed { i, reg ->
+                    if (i == index) newRegex else reg
+                }
+            )
+        )
+    }
+
+    // 调整规则顺序（应用顺序 = 列表顺序）
+    fun moveRegex(to: Int) {
+        if (to !in assistant.regexes.indices) return
+        val reordered = assistant.regexes.toMutableList().apply {
+            val item = removeAt(index)
+            add(to, item)
+        }
+        onUpdate(assistant.copy(regexes = reordered))
+    }
+
     ElevatedCard(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -626,6 +813,24 @@ private fun AssistantRegexCard(
                     },
                     modifier = Modifier.padding(start = 8.dp)
                 )
+                IconButton(
+                    onClick = { moveRegex(index - 1) },
+                    enabled = index > 0
+                ) {
+                    Icon(
+                        imageVector = HugeIcons.ArrowUp02,
+                        contentDescription = "上移"
+                    )
+                }
+                IconButton(
+                    onClick = { moveRegex(index + 1) },
+                    enabled = index < assistant.regexes.lastIndex
+                ) {
+                    Icon(
+                        imageVector = HugeIcons.ArrowDown02,
+                        contentDescription = "下移"
+                    )
+                }
                 IconButton(
                     onClick = {
                         expanded = !expanded
@@ -698,6 +903,79 @@ private fun AssistantRegexCard(
                     label = { Text(stringResource(R.string.assistant_page_regex_replace_string)) },
                     placeholder = { Text("e.g., [EMAIL]") }
                 )
+
+                Column {
+                    Text(
+                        text = "修饰标志",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        REGEX_FLAG_OPTIONS.forEach { (option, label) ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Checkbox(
+                                    checked = option in regex.options,
+                                    onCheckedChange = { checked ->
+                                        val newOptions = if (checked) {
+                                            regex.options + option
+                                        } else {
+                                            regex.options - option
+                                        }
+                                        updateRegex(regex.copy(options = newOptions))
+                                    }
+                                )
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "深度范围（可选）",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = regex.minDepth?.toString() ?: "",
+                            onValueChange = { text ->
+                                updateRegex(regex.copy(minDepth = parseDepthInput(text)))
+                            },
+                            label = { Text("最小深度") },
+                            placeholder = { Text("不限") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = regex.maxDepth?.toString() ?: "",
+                            onValueChange = { text ->
+                                updateRegex(regex.copy(maxDepth = parseDepthInput(text)))
+                            },
+                            label = { Text("最大深度") },
+                            placeholder = { Text("不限") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Text(
+                        text = "深度按消息倒序计算：0 为最新消息，留空不限制；仅影响发送给模型的助手输出",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                RegexSampleTester(regex = regex)
 
                 Column {
                     Text(
@@ -790,4 +1068,79 @@ private fun AssistantRegexCard(
             }
         }
     }
+}
+
+/**
+ * 正则修饰标志选项（对应 ST 的 i/m/s 标志）
+ */
+private val REGEX_FLAG_OPTIONS = listOf(
+    RegexOption.IGNORE_CASE to "忽略大小写 (i)",
+    RegexOption.MULTILINE to "多行模式 (m)",
+    RegexOption.DOT_MATCHES_ALL to "点匹配换行 (s)",
+)
+
+/**
+ * 解析深度输入：只保留数字字符，空串视为"不限"（null）。
+ */
+private fun parseDepthInput(text: String): Int? = text.filter(Char::isDigit).toIntOrNull()
+
+/**
+ * 样文测试器：输入样文，实时预览当前规则（含修饰标志）的替换结果
+ */
+@Composable
+private fun RegexSampleTester(regex: AssistantRegex) {
+    var sampleText by remember { mutableStateOf("") }
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = "样文测试",
+            style = MaterialTheme.typography.labelMedium
+        )
+        OutlinedTextField(
+            value = sampleText,
+            onValueChange = { sampleText = it },
+            label = { Text("输入样文") },
+            minLines = 2,
+            maxLines = 4,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (sampleText.isNotEmpty()) {
+            val result = remember(regex.findRegex, regex.replaceString, regex.options, sampleText) {
+                runRegexSample(regex.findRegex, regex.replaceString, regex.options, sampleText)
+            }
+            result.onSuccess { output ->
+                Text(
+                    text = output,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = JetbrainsMono,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.small)
+                        .background(MaterialTheme.colorScheme.background)
+                        .padding(8.dp)
+                )
+            }
+            result.onFailure { error ->
+                Text(
+                    text = "正则错误：${error.message ?: error.javaClass.simpleName}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 纯计算：用给定规则（含修饰标志）对样文执行替换。
+ * 与运行时 replaceRegexes 的编译语义一致（options 为空时等价于 Regex(pattern)）。
+ */
+private fun runRegexSample(
+    findRegex: String,
+    replaceString: String,
+    options: Set<RegexOption>,
+    sample: String,
+): Result<String> = runCatching {
+    Regex(findRegex, options).replace(sample, replaceString)
 }

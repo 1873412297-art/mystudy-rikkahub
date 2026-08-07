@@ -81,6 +81,7 @@ import me.rerere.rikkahub.ui.components.webview.WebView
 import me.rerere.rikkahub.ui.components.webview.rememberWebViewState
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalToaster
+import me.rerere.rikkahub.ui.components.webview.WebViewContentCache
 import androidx.compose.ui.tooling.preview.Preview
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.ImageUtils
@@ -257,10 +258,9 @@ fun TavernCardViewerPage(
                                     characterVersion = currentCard.characterVersion,
                                     colorScheme = colorScheme
                                 )
+                                val contentId = WebViewContentCache.store(context.cacheDir, html)
                                 navController.navigate(
-                                    Screen.WebView(
-                                        content = html.base64Encode()
-                                    )
+                                    Screen.WebView(contentId = contentId)
                                 )
                             }
                         ) {

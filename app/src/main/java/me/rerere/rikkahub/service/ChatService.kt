@@ -30,6 +30,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.core.Tool
@@ -86,7 +88,10 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.ai.slash.ScriptManager
 import me.rerere.rikkahub.data.ai.slash.SlashCommandInterceptor
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
+import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
+import me.rerere.rikkahub.data.ai.status.TavernHostEventType
 import me.rerere.rikkahub.data.ai.transformers.StatusPlaceholderTransformer
+import me.rerere.rikkahub.data.ai.transformers.StatusTrailingBlockTransformer
 import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.data.model.AssistantAffectScope
@@ -135,7 +140,7 @@ private const val TAG = "ChatService"
 
 internal fun backgroundTextGenerationParams(
     model: Model,
-    reasoningLevel: ReasoningLevel = ReasoningLevel.OFF,
+    reasoningLevel: ReasoningLevel = ReasoningLevel.AUTO,
     maxTokens: Int? = null,
 ): TextGenerationParams = TextGenerationParams(
     model = model,
@@ -174,6 +179,7 @@ private val outputTransformers by lazy {
         Base64ImageToLocalFileTransformer,
         RegexOutputTransformer,
         StatusPlaceholderTransformer,
+        StatusTrailingBlockTransformer,
     )
 }
 
@@ -275,6 +281,7 @@ class ChatService(
     private val workspaceRepository: WorkspaceRepository,
     private val folderRepository: FolderRepository,
     private val statusVariableStore: StatusVariableStore,
+    private val tavernHostEventBus: TavernHostEventBus,
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
@@ -615,9 +622,28 @@ class ChatService(
                 )
                 saveConversation(conversationId, newConversation)
 
+                // 酒馆脚本宿主事件：消息发送前
+                tavernHostEventBus.emit(
+                    type = TavernHostEventType.MESSAGE_SENDING,
+                    conversationId = conversationId,
+                    payload = buildJsonObject {
+                        put("role", userMessage.role.name.lowercase())
+                        put("preview", userMessage.toText().take(500))
+                    },
+                )
+
                 // 开始补全
                 if (answer) {
                     handleMessageComplete(conversationId)
+
+                    // 酒馆脚本宿主事件：生成结束
+                    tavernHostEventBus.emit(
+                        type = TavernHostEventType.GENERATION_FINISHED,
+                        conversationId = conversationId,
+                        payload = buildJsonObject {
+                            put("role", "assistant")
+                        },
+                    )
                 }
 
                 _generationDoneFlow.emit(conversationId)
@@ -1014,7 +1040,7 @@ class ChatService(
 
             // memory tool
             if (!model.abilities.contains(ModelAbility.TOOL)) {
-                if (settings.enableWebSearch || mcpManager.getAllAvailableTools().isNotEmpty()) {
+                if (assistant.enableWebSearch || mcpManager.getAllAvailableTools().isNotEmpty()) {
                     addError(
                         IllegalStateException(context.getString(R.string.tools_warning)),
                         conversationId,
@@ -1126,6 +1152,7 @@ class ChatService(
                 conversationSystemPrompt = conversation.customSystemPrompt,
                 conversationModeInjectionIds = conversation.modeInjectionIds,
                 conversationLorebookIds = conversation.lorebookIds,
+                conversationAuthorNote = conversation.authorNote,
                 workspaceCwd = conversation.workspaceCwd,
                 conversationId = conversationId,
                 memberId = effectiveMemberId,
@@ -1143,7 +1170,7 @@ class ChatService(
                 },
                 outputTransformers = outputTransformers,
                 tools = buildList {
-                    if (settings.enableWebSearch) {
+                    if (assistant.enableWebSearch) {
                         addAll(createSearchTools(settings))
                     }
                     addAll(localTools.getTools(assistant.localTools))
@@ -1156,7 +1183,6 @@ class ChatService(
                             createSkillTools(
                                 enabledSkills = assistant.enabledSkills,
                                 allSkills = skillManager.listSkills(),
-                                skillManager = skillManager,
                             )
                         )
                     }

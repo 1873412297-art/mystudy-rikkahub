@@ -13,10 +13,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -25,13 +27,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.abs
+import kotlin.uuid.Uuid
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import me.rerere.rikkahub.data.ai.status.StatusVariableStore
+import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
+import me.rerere.rikkahub.data.ai.status.TavernHostEventType
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeBridge
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeController
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimePermissionStore
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsBackedTavernWorldRepository
+import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernVariableGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernWorldGateway
+import me.rerere.rikkahub.ui.components.richtext.runtime.StatusStoreTavernVariableGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScript
+import org.json.JSONObject
 import org.koin.compose.koinInject
 
 /**
@@ -61,9 +72,18 @@ fun MarkdownWebView(
      * 用于「卡片预览」那种刻意限定的窗口尺寸（罕见）。
      */
     fixedHeight: Boolean = false,
+    /**
+     * 酒馆脚本运行时上下文：消息所属会话 ID 与当前消息 JSON。
+     * 传入后 variables.* 走真实持久化链路（chat → StatusVariableStore / global → Settings），
+     * messages.getCurrent 返回该消息，脚本可经 events.subscribe 接收宿主事件（th:<name> DOM 事件）。
+     */
+    tavernConversationId: Uuid? = null,
+    tavernCurrentMessage: JsonElement? = null,
 ) {
     val context = LocalContext.current
     val settingsStore: SettingsStore = koinInject()
+    val statusVariableStore: StatusVariableStore = koinInject()
+    val tavernHostEventBus: TavernHostEventBus = koinInject()
     val appSettings by settingsStore.settingsFlow.collectAsStateWithLifecycle()
     val colorScheme = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -85,13 +105,43 @@ fun MarkdownWebView(
     LaunchedEffect(appSettings.runtimePermissions) {
         runtimePermissionStore.update(appSettings.runtimePermissions)
     }
-    val runtimeController = remember(settingsStore) {
+    val runtimeCoroutineScope = rememberCoroutineScope()
+    val runtimeController = remember(settingsStore, tavernConversationId) {
         TavernRuntimeController(
+            conversationId = tavernConversationId,
             worldRepository = SettingsBackedTavernWorldRepository(
                 SettingsStoreTavernWorldGateway(settingsStore)
             ),
             permissionStore = runtimePermissionStore,
+            variableGateway = StatusStoreTavernVariableGateway(
+                statusVariableStore = statusVariableStore,
+                settingsGateway = SettingsStoreTavernVariableGateway(settingsStore),
+            ),
+            hostEventFlow = tavernHostEventBus.events,
+            hostEventScope = runtimeCoroutineScope,
         )
+    }
+    // controller 重建（tavernConversationId 变化）或离开组合时，取消旧 controller 的
+    // 宿主事件收集 job，避免旧 job 泄漏到组合结束才取消、期间继续向无人消费的 SharedFlow 空发
+    DisposableEffect(runtimeController) {
+        onDispose { runtimeController.cancelHostEventCollection() }
+    }
+    // 宿主注入当前消息（messages.getCurrent 的数据源）
+    LaunchedEffect(runtimeController, tavernCurrentMessage) {
+        tavernCurrentMessage?.let { runtimeController.setCurrentMessage(it) }
+    }
+    // 脚本/宿主事件 → WebView 内 th:<name> DOM CustomEvent
+    val tavernWebViewRef = remember { mutableStateOf<WebView?>(null) }
+    LaunchedEffect(runtimeController) {
+        runtimeController.outboundEvents.collect { (name, payload) ->
+            val view = tavernWebViewRef.value ?: return@collect
+            val eventName = JSONObject.quote("th:$name")
+            val detailJson = JSONObject.quote((payload ?: JsonNull).toString())
+            view.postEvaluateJavascript(
+                "(function(){var d=JSON.parse($detailJson);" +
+                    "document.dispatchEvent(new CustomEvent($eventName,{detail:d,bubbles:true}));})();"
+            )
+        }
     }
 
     val useIframeSandbox = isRawHtml || looksLikeHtmlDocument(content)
@@ -124,6 +174,7 @@ fun MarkdownWebView(
             factory = { ctx ->
                 WebView(ctx).apply {
                     val webView = this
+                    tavernWebViewRef.value = this
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
                     isVerticalScrollBarEnabled = false
                     isHorizontalScrollBarEnabled = false
@@ -231,13 +282,11 @@ fun MarkdownWebView(
                     val tavernBridge = TavernRuntimeBridge(
                         controller = runtimeController,
                         emitResult = { callbackName, responseJson ->
-                            val payload = org.json.JSONObject.quote(responseJson)
-                            webView.post {
-                                webView.evaluateJavascript(
-                                    "(function(){var cb=window['$callbackName'];if(typeof cb==='function'){cb(JSON.parse($payload));}})();",
-                                    null
-                                )
-                            }
+                            val payload = JSONObject.quote(responseJson)
+                            webView.postEvaluateJavascript(
+                                "(function(){var cb=window['$callbackName'];" +
+                                    "if(typeof cb==='function'){cb(JSON.parse($payload));}})();"
+                            )
                         }
                     )
                     addJavascriptInterface(tavernBridge, "TavernRuntimeBridge")
@@ -302,6 +351,13 @@ fun MarkdownWebView(
                                         }
                                     }
                                 }, delay)
+                            }
+                            // 酒馆脚本宿主事件：消息渲染完成
+                            tavernConversationId?.let { cid ->
+                                tavernHostEventBus.emit(
+                                    type = TavernHostEventType.MESSAGE_RENDERED,
+                                    conversationId = cid,
+                                )
                             }
                         }
                     }
@@ -393,6 +449,11 @@ private fun WebView.measureContentHeight(onResult: (Int) -> Unit) {
     ) { r ->
         r?.toIntOrNull()?.let { h -> if (h > 0) onResult(h) }
     }
+}
+
+/** 把一段 JS 投递到 WebView 的 UI 线程执行（evaluateJavascript 必须在 UI 线程调用）。 */
+private fun WebView.postEvaluateJavascript(script: String) {
+    post { evaluateJavascript(script, null) }
 }
 
 /**

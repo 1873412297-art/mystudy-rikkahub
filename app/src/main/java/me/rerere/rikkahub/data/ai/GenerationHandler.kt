@@ -52,6 +52,7 @@ import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantMemory
+import me.rerere.rikkahub.data.model.AuthorNote
 import me.rerere.rikkahub.data.model.normalizedSystemPromptForGeneration
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.utils.applyPlaceholders
@@ -91,6 +92,7 @@ class GenerationHandler(
         conversationSystemPrompt: String? = null,
         conversationModeInjectionIds: Set<Uuid> = emptySet(),
         conversationLorebookIds: Set<Uuid> = emptySet(),
+        conversationAuthorNote: AuthorNote? = null,
         workspaceCwd: String? = null,
         conversationId: Uuid? = null,
         memberId: Uuid? = null,
@@ -182,6 +184,7 @@ class GenerationHandler(
                         conversationSystemPrompt = conversationSystemPrompt,
                         conversationModeInjectionIds = conversationModeInjectionIds,
                         conversationLorebookIds = conversationLorebookIds,
+                        conversationAuthorNote = conversationAuthorNote,
                         workspaceCwd = workspaceCwd,
                         conversationId = conversationId,
                         promptTraceSession = promptTraceSession,
@@ -394,6 +397,7 @@ class GenerationHandler(
         conversationSystemPrompt: String? = null,
         conversationModeInjectionIds: Set<Uuid> = emptySet(),
         conversationLorebookIds: Set<Uuid> = emptySet(),
+        conversationAuthorNote: AuthorNote? = null,
         workspaceCwd: String? = null,
         conversationId: Uuid? = null,
         promptTraceSession: PromptTraceSession? = null,
@@ -412,7 +416,7 @@ class GenerationHandler(
         val toolPrompts = tools.map { tool ->
             tool.name to tool.systemPrompt(model, messages)
         }
-        val limitedMessages = messages.limitContext(assistant.contextMessageSize)
+        val limitedMessages = messages.limitContext(assistant.contextMessageLimit)
         val systemText = buildString {
             if (effectiveSystemPrompt.isNotBlank()) append(effectiveSystemPrompt)
             if (memoryPrompt.isNotBlank()) {
@@ -483,6 +487,7 @@ class GenerationHandler(
             settings = settings,
             conversationModeInjectionIds = conversationModeInjectionIds,
             conversationLorebookIds = conversationLorebookIds,
+            conversationAuthorNote = conversationAuthorNote,
             processingStatus = processingStatus,
             workspaceCwd = workspaceCwd,
             conversationId = conversationId,

@@ -140,6 +140,9 @@ class TavernCardEditorVM(
                         book.name?.let { put("name", JsonPrimitive(it)) }
                         book.description?.let { put("description", JsonPrimitive(it)) }
                         book.scanDepth?.let { put("scan_depth", JsonPrimitive(it)) }
+                        book.tokenBudget?.let { put("token_budget", JsonPrimitive(it)) }
+                        book.recursiveScanning?.let { put("recursive_scanning", JsonPrimitive(it)) }
+                        book.extensions?.let { put("extensions", it) }
                         putJsonArray("entries") {
                             book.entries.forEach { entry ->
                                 add(buildJsonObject {
@@ -152,6 +155,14 @@ class TavernCardEditorVM(
                                     entry.priority?.let { put("priority", JsonPrimitive(it)) }
                                     entry.constant?.let { put("constant", JsonPrimitive(it)) }
                                     entry.position?.let { put("position", JsonPrimitive(it)) }
+                                    entry.id?.let { put("id", JsonPrimitive(it)) }
+                                    entry.comment?.let { put("comment", JsonPrimitive(it)) }
+                                    entry.selective?.let { put("selective", JsonPrimitive(it)) }
+                                    entry.secondaryKeys?.let { keys ->
+                                        putJsonArray("secondary_keys") { keys.forEach { add(JsonPrimitive(it)) } }
+                                    }
+                                    entry.depth?.let { put("depth", JsonPrimitive(it)) }
+                                    entry.extensions?.let { put("extensions", it) }
                                 })
                             }
                         }

@@ -117,10 +117,10 @@ class PromptTraceSession(
             injectionHits += hits
             hits.forEach { hit ->
                 sections += PromptTraceSection(
-                    kind = if (hit.sourceType == PromptInjectionSourceType.MODE) {
-                        PromptTraceSectionKind.MODE_INJECTION
-                    } else {
-                        PromptTraceSectionKind.LOREBOOK_INJECTION
+                    kind = when (hit.sourceType) {
+                        PromptInjectionSourceType.MODE,
+                        PromptInjectionSourceType.AUTHOR_NOTE -> PromptTraceSectionKind.MODE_INJECTION
+                        PromptInjectionSourceType.LOREBOOK -> PromptTraceSectionKind.LOREBOOK_INJECTION
                     },
                     label = hit.injectionName.ifBlank { hit.injectionId.toString() },
                     text = hit.content,

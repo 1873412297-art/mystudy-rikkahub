@@ -6,6 +6,7 @@ import me.rerere.ai.core.TokenUsage
 import me.rerere.ai.ui.UIMessageAnnotation
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.model.AuthorNote
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 
@@ -111,6 +112,7 @@ data class UpdateAssistantInjectionsRequest(
 
 @Serializable
 data class UpdateSearchEnabledRequest(
+    val assistantId: String,
     val enabled: Boolean,
 )
 
@@ -193,6 +195,7 @@ data class ConversationDto(
     val lorebookIds: List<String> = emptyList(),
     val workspaceCwd: String? = null,
     val folderId: String? = null,
+    val authorNote: AuthorNote? = null,
     val createAt: Long,
     val updateAt: Long,
     val isGenerating: Boolean = false
@@ -334,6 +337,7 @@ fun Conversation.toDto(isGenerating: Boolean = false) = ConversationDto(
     lorebookIds = lorebookIds.map { it.toString() },
     workspaceCwd = workspaceCwd,
     folderId = folderId?.toString(),
+    authorNote = authorNote,
     createAt = createAt.toEpochMilli(),
     updateAt = updateAt.toEpochMilli(),
     isGenerating = isGenerating

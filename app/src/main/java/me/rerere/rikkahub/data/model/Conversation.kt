@@ -38,6 +38,8 @@ data class Conversation(
     val activeGroupMemberId: Uuid? = null,
     val groupMemberQueue: List<Uuid> = emptyList(),
     val groupMemberQueueIndex: Int = 0,
+    // 会话级作者注释，仅在助手开启 allowConversationAuthorNote 且自身 enabled 时优先生效
+    val authorNote: AuthorNote? = null,
     @Transient
     val newConversation: Boolean = false
 ) {
