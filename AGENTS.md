@@ -96,6 +96,24 @@
 
 ## Current Status
 
+**2026-08-07：私有 fork 已全量移植到官方最新版 2.4.5（versionCode 172）。**
+
+- 合并提交：`62787dce`（`merge: integrate 2.4.5 port (all private features) into private-main`）
+- 移植分支：`codex/port-private-to-2.4.5`（已推送 origin；worktree `C:\Users\18734\Desktop\HTML\rikkahub-source-2.4.5`）
+- 移植内容：群聊/酒馆/状态渲染/Slash/群组上下文玩法（受控 merge `codex/port-private-to-2.4.1`）
+  + 提示词追踪控制台 + 状态 HUD + 酒馆功能包（世界书/ST 正则/QuickReply/作者注释/脚本 API）
+- 验证（在 `private-main` 集成后复跑）：`:app:compileDebugKotlin` ✅、
+  `:app:testDebugUnitTest` **70 类 / 518 测试 0 失败** ✅、`:app:assembleDebug` ✅、
+  模拟器冒烟（`emulator-5554` 安装 + 启动 + 前台运行无 FATAL）✅
+- DB schema：`private-main` 现为 v27（上游 v24 folder_id → v25 群组/状态 → v27 group_runtime_state）
+- 详情见 `docs/superpowers/plans/2026-08-07-port-to-2.4.5-status.md`
+- 备份：private-main WIP 快照分支 `codex/private-main-wip-snapshot-2026-08-07`（`794ca7d9`）；
+  旧 private-main 历史已推送 `origin/private-main`（`0df5fc8b`）
+- 待办：模拟器深度功能冒烟（群聊四场景/酒馆/状态 HUD）参考既有 Manual Test Results 清单
+
+---
+（以下为历史状态块，保留作参考）
+
 Primary source of truth:
 
 - `docs/superpowers/plans/2026-06-17-group-context-gameplay-plan.md`
