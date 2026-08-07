@@ -32,4 +32,14 @@ data class ConversationEntity(
     val workspaceCwd: String = "",
     @ColumnInfo("folder_id", defaultValue = "")
     val folderId: String = "",
+    @ColumnInfo("status_variables", defaultValue = "{}")
+    val statusVariables: String = "{}",
+    @ColumnInfo("group_runtime_state", defaultValue = "{}")
+    val groupRuntimeState: String = "{}",
+    @ColumnInfo("active_group_member_id", defaultValue = "")
+    val activeGroupMemberId: String = "",
+    @ColumnInfo("group_member_queue", defaultValue = "[]")
+    val groupMemberQueue: String = "[]",
+    @ColumnInfo("group_member_queue_index", defaultValue = "0")
+    val groupMemberQueueIndex: Int = 0,
 )

@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fontsapi.zeoseven.com https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://esm.sh; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com https://fontsapi.zeoseven.com; connect-src 'self' https://cdn.jsdelivr.net https://esm.sh; frame-src 'self' data: blob:; child-src 'self' data: blob:;">
     <title>Markdown Preview</title>
 
     <!-- KaTeX for LaTeX math rendering -->
@@ -12,6 +13,10 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/atom-one-dark.min.css">
 
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
             line-height: 1.6;
@@ -165,6 +170,43 @@
             margin-right: 8px;
         }
 
+        /* HTML iframe container */
+        .html-iframe-container {
+            width: 100%;
+            border: 1px solid {{OUTLINE_VARIANT_COLOR}};
+            border-radius: 8px;
+            overflow: hidden;
+            background: {{SURFACE_COLOR}};
+        }
+
+        .html-iframe-container iframe {
+            width: 100%;
+            min-height: 400px;
+            border: none;
+            display: block;
+        }
+
+        .html-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            background: {{PRIMARY_COLOR}};
+            color: {{BACKGROUND_COLOR}};
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        /* SillyTavern macro highlighting */
+        .tavern-macro {
+            display: inline-block; padding: 1px 7px; border-radius: 4px;
+            background: {{PRIMARY_COLOR}}22; color: {{PRIMARY_COLOR}};
+            font-family: 'SF Mono', Monaco, 'Roboto Mono', monospace;
+            font-size: 0.88em; font-weight: 500; white-space: nowrap;
+            border: 1px solid {{PRIMARY_COLOR}}44;
+        }
+        .tavern-action { font-style: italic; opacity: 0.85; }
+
         /* Theme colors are dynamically replaced by the Android app */
     </style>
 </head>
@@ -181,14 +223,15 @@
         // mhchem 扩展: 支持 \ce{} 等化学公式语法
         import 'https://esm.sh/katex@0.16.8/dist/contrib/mhchem.mjs';
         import hljs from 'https://esm.sh/highlight.js@11.9.0';
-        import mermaid from 'https://esm.sh/mermaid@10.6.1';
+        import mermaid from 'https://esm.sh/mermaid@11';
         import { Base64 } from 'https://esm.sh/js-base64@3.7.5';
+        import DOMPurify from 'https://esm.sh/dompurify@3.1.7';
 
         // Configure markdown-it
         const md = new MarkdownIt({
-            html: true,         // Enable HTML tags in source
+            html: true,         // 允许 raw HTML，但渲染后会用 DOMPurify 净化（见 render() 末尾）
             xhtmlOut: false,    // Use '/' to close single tags (<br />)
-            breaks: false,      // Convert '\n' in paragraphs into <br>
+            breaks: true,       // Convert '\n' in paragraphs into <br> (matching ST behavior)
             langPrefix: 'language-',  // CSS language prefix for fenced blocks
             linkify: true,      // Autoconvert URL-like text to links
             typographer: true,  // Enable some language-neutral replacement + quotes beautification
@@ -234,16 +277,214 @@
         };
 
         // Configure mermaid
+        // securityLevel: 'strict' 阻止图表内的 click events 与 HTML 注入（防 mermaid 历史 XSS）。
         mermaid.initialize({
             startOnLoad: false,
             theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
-            securityLevel: 'loose',
+            securityLevel: 'strict',
             fontFamily: 'inherit'
         });
 
         // The markdown content to render (base64 encoded)
         const markdownBase64 = `{{MARKDOWN_BASE64}}`;
         let markdownContent = Base64.decode(markdownBase64);
+
+        // 安全：HTML 自动检测 + iframe 渲染路径已禁用。
+        // 旧实现使用 sandbox="allow-scripts allow-same-origin" 是 W3C 警告的危险组合
+        // （iframe 内 JS 可移除自身 sandbox 后 reload 父页绕过隔离）。
+        // 现在 LLM 输出的所有 HTML 标签将被 markdown-it (html:false) 转义为文本。
+        function detectHtmlContent(content) {
+            return { isHtml: false, htmlContent: null };
+        }
+
+        /**
+         * Build HTML preview with theme-matched styling for iframe rendering
+         */
+        function buildHtmlViewerContent(htmlContent) {
+            const bgColor = '{{BACKGROUND_COLOR}}';
+            const textColor = '{{ON_BACKGROUND_COLOR}}';
+            const primaryColor = '{{PRIMARY_COLOR}}';
+
+            return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' blob: data:;">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+            line-height: 1.6;
+            color: ${textColor};
+            margin: 0;
+            padding: 16px;
+            background: ${bgColor};
+        }
+        a { color: ${primaryColor}; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        img { max-width: 100%; height: auto; }
+        table { border-collapse: collapse; width: 100%; }
+        td, th { border: 1px solid ${textColor}33; padding: 8px; }
+        pre { overflow-x: auto; padding: 12px; background: ${textColor}11; border-radius: 6px; }
+        code { font-family: 'SF Mono', Monaco, Inconsolata, 'Roboto Mono', monospace; background: ${textColor}11; padding: 2px 6px; border-radius: 3px; }
+
+        /* SillyTavern 角色卡常用的 <status!> 状态栏（自创非标准标签）。
+           我们在预处理阶段把它转成 <div class="status-block">，再在这里给样式。 */
+        .status-block {
+            display: block;
+            margin: 12px 0;
+            padding: 12px 14px;
+            background: ${primaryColor}1A;
+            border-left: 3px solid ${primaryColor};
+            border-radius: 6px;
+            font-size: 0.95em;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .status-block .status-label {
+            font-weight: 600;
+            color: ${primaryColor};
+            margin-right: 4px;
+        }
+        .json-patch-block {
+            border-left-color: #ff9800;
+            background: #ff98001a;
+        }
+        .json-patch-op {
+            display: inline-block;
+            min-width: 4.5em;
+            font-weight: 700;
+            color: ${primaryColor};
+        }
+        .json-patch-path {
+            font-family: 'SF Mono', Monaco, 'Roboto Mono', monospace;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+${htmlContent}
+</body>
+</html>`;
+        }
+
+        /**
+         * Render HTML content in a sandboxed iframe
+         */
+        function renderHtmlContent(htmlContent) {
+            const container = document.getElementById('content');
+            const safeHtml = buildHtmlViewerContent(htmlContent);
+            const encodedHtml = btoa(unescape(encodeURIComponent(safeHtml)));
+
+            container.innerHTML = `
+                <div class="html-badge">HTML</div>
+                <div class="html-iframe-container">
+                    <iframe
+                        src="data:text/html;base64,${encodedHtml}"
+                        sandbox="allow-scripts allow-same-origin"
+                        title="HTML Preview"
+                        onload="this.style.height = (this.contentDocument.body.scrollHeight + 32) + 'px'"
+                    ></iframe>
+                </div>
+            `;
+        }
+
+        let hasJsonPatchBlock = false;
+
+        function escapeHtml(text) {
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function findMatchingBracket(text, startIndex) {
+            const openChar = text[startIndex];
+            const closeChar = openChar === '[' ? ']' : openChar === '{' ? '}' : null;
+            if (!closeChar) return startIndex;
+
+            let depth = 0;
+            let inString = false;
+            let escaped = false;
+
+            for (let i = startIndex; i < text.length; i++) {
+                const c = text[i];
+                if (escaped) {
+                    escaped = false;
+                    continue;
+                }
+                if (c === '\\') {
+                    escaped = true;
+                    continue;
+                }
+                if (c === '"') {
+                    inString = !inString;
+                    continue;
+                }
+                if (!inString) {
+                    if (c === openChar) {
+                        depth++;
+                    } else if (c === closeChar) {
+                        depth--;
+                        if (depth === 0) return i + 1;
+                    }
+                }
+            }
+
+            return startIndex;
+        }
+
+        function isJsonPatchArray(candidate) {
+            try {
+                const parsed = JSON.parse(candidate);
+                return Array.isArray(parsed) && parsed.length > 0 && parsed.every(op =>
+                    op && typeof op === 'object' &&
+                    typeof op.op === 'string' &&
+                    typeof op.path === 'string'
+                );
+            } catch {
+                return false;
+            }
+        }
+
+        function summarizeJsonPatch(candidate) {
+            const ops = JSON.parse(candidate);
+            return ops.map(op => {
+                const value = Object.prototype.hasOwnProperty.call(op, 'value')
+                    ? ` = ${escapeHtml(typeof op.value === 'string' ? op.value : JSON.stringify(op.value))}`
+                    : '';
+                return `<div><span class="json-patch-op">${escapeHtml(op.op)}</span> <span class="json-patch-path">${escapeHtml(op.path)}</span>${value}</div>`;
+            }).join('');
+        }
+
+        function transformJsonPatchBlocks(content) {
+            let out = '';
+            let i = 0;
+
+            while (i < content.length) {
+                if (content[i] === '[') {
+                    const end = findMatchingBracket(content, i);
+                    if (end > i) {
+                        const candidate = content.slice(i, end);
+                        if (isJsonPatchArray(candidate)) {
+                            hasJsonPatchBlock = true;
+                            out += `\n\n<div class="status-block json-patch-block">${summarizeJsonPatch(candidate)}</div>\n\n`;
+                            i = end;
+                            continue;
+                        }
+                    }
+                }
+
+                out += content[i];
+                i++;
+            }
+
+            return out;
+        }
 
         // Convert \[ ... \] to $$ ... $$ for LaTeX block math
         markdownContent = markdownContent.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
@@ -252,60 +493,99 @@
         // Convert \( ... \) to $ ... $ for LaTeX inline math
         markdownContent = markdownContent.replace(/\\\(([\s\S]*?)\\\)/g, '$$$1$$');
 
-        // Render markdown with markdown-it
-        async function renderMarkdown() {
-            try {
-                // Process with markdown-it
-                const html = md.render(markdownContent);
-                document.getElementById('content').innerHTML = html;
-
-                // Render mermaid diagrams
-                const mermaidElements = document.querySelectorAll('.mermaid');
-                if (mermaidElements.length > 0) {
-                    await mermaid.run({
-                        nodes: mermaidElements
-                    });
-                }
-
-                // Render KaTeX math
-                document.querySelectorAll('.math.inline').forEach(el => {
-                    try {
-                        katex.render(el.textContent, el, {
-                            throwOnError: false,
-                            errorColor: '#cc0000',
-                            trust: true
-                        });
-                    } catch (e) {
-                        console.warn('KaTeX inline render error:', e);
+        // SillyTavern status blocks use non-standard tags such as <status!>.
+        // Normalize them into styled HTML blocks before markdown rendering.
+        markdownContent = markdownContent.replace(
+            /<(status!?|status_block)>([\s\S]*?)(?:<\/\1>|$)/gi,
+            (match, tagName, inner) => {
+                const lines = inner.split('\n').map(line => {
+                    const m = line.match(/^(\s*)([\u4e00-\u9fa5A-Za-z0-9_]{1,10})([:：])\s*(.*)$/);
+                    if (m) {
+                        const [, lead, label, sep, content] = m;
+                        return `${lead}<span class="status-label">${label}${sep}</span>${content}`;
                     }
+                    return line;
                 });
-
-                document.querySelectorAll('.math.block').forEach(el => {
-                    try {
-                        katex.render(el.textContent, el, {
-                            displayMode: true,
-                            throwOnError: false,
-                            errorColor: '#cc0000',
-                            trust: true
-                        });
-                    } catch (e) {
-                        console.warn('KaTeX block render error:', e);
-                    }
-                });
-
-                // Handle external links
-                document.querySelectorAll('a[href^="http"]').forEach(link => {
-                    link.target = '_blank';
-                    link.rel = 'noopener noreferrer';
-                });
-            } catch (error) {
-                console.error('Error rendering markdown:', error);
-                document.getElementById('content').innerHTML = '<p>Error rendering markdown content: ' + error.message + '</p>';
+                return `\n\n<div class="status-block">${lines.join('\n')}</div>\n\n`;
             }
-        }
+        );
+        // Bare JSON Patch arrays are also rendered as compact status blocks.
+        markdownContent = transformJsonPatchBlocks(markdownContent);
 
-        // Call the render function
-        renderMarkdown();
+        // Detect if content is HTML
+        const detection = hasJsonPatchBlock ? { isHtml: false, htmlContent: null } : detectHtmlContent(markdownContent);
+
+        if (detection.isHtml) {
+            // Render as HTML directly
+            renderHtmlContent(detection.htmlContent);
+        } else {
+            // Render markdown with markdown-it
+            async function renderMarkdown() {
+                try {
+                    // Process with markdown-it (html:true)
+                    const rawHtml = md.render(markdownContent);
+
+                    // 用 DOMPurify 白名单净化，关键拦截：
+                    // - <script> / <iframe> / <object> / <embed> / on* 事件 / javascript: 协议
+                    // - <a target=_blank> 强制 rel=noopener noreferrer
+                    // 允许常用标签：details/summary/font/sub/sup/kbd/mark/u/s/del/ins/abbr/cite 等
+                    const cleanHtml = DOMPurify.sanitize(rawHtml, {
+                        USE_PROFILES: { html: true, svg: false, mathMl: false },
+                        ADD_TAGS: ['details', 'summary', 'font', 'mark', 'kbd'],
+                        ADD_ATTR: ['open', 'color', 'face', 'size', 'target', 'class'],
+                        FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'frame', 'frameset', 'noframes', 'meta', 'base', 'link', 'form', 'input', 'button', 'textarea', 'select', 'option'],
+                        FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onmouseout', 'onfocus', 'onblur', 'onchange', 'onsubmit', 'formaction', 'srcdoc'],
+                        ALLOW_DATA_ATTR: false,
+                        ALLOW_UNKNOWN_PROTOCOLS: false,
+                    });
+                    document.getElementById('content').innerHTML = cleanHtml;
+
+                    // Render mermaid diagrams
+                    const mermaidElements = document.querySelectorAll('.mermaid');
+                    if (mermaidElements.length > 0) {
+                        await mermaid.run({
+                            nodes: mermaidElements
+                        });
+                    }
+
+                    // Render KaTeX math
+                    document.querySelectorAll('.math.inline').forEach(el => {
+                        try {
+                            katex.render(el.textContent, el, {
+                                throwOnError: false,
+                                errorColor: '#cc0000'
+                            });
+                        } catch (e) {
+                            console.warn('KaTeX inline render error:', e);
+                        }
+                    });
+
+                    document.querySelectorAll('.math.block').forEach(el => {
+                        try {
+                            katex.render(el.textContent, el, {
+                                displayMode: true,
+                                throwOnError: false,
+                                errorColor: '#cc0000'
+                            });
+                        } catch (e) {
+                            console.warn('KaTeX block render error:', e);
+                        }
+                    });
+
+                    // Handle external links
+                    document.querySelectorAll('a[href^="http"]').forEach(link => {
+                        link.target = '_blank';
+                        link.rel = 'noopener noreferrer';
+                    });
+                } catch (error) {
+                    console.error('Error rendering markdown:', error);
+                    document.getElementById('content').innerHTML = '<p>Error rendering markdown content: ' + error.message + '</p>';
+                }
+            }
+
+            // Call the render function
+            renderMarkdown();
+        }
     </script>
     <script nomodule>
         alert('您的系统WebView不支持 ES Modules，请升级WebView或者系统!');

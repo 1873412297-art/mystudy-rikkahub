@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.components.message
 
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
@@ -27,10 +28,11 @@ fun ChatMessageUserAvatar(
     message: UIMessage,
     avatar: Avatar,
     nickname: String,
+    isRealUserMessage: Boolean = message.role == MessageRole.USER && message.memberId == null,
     modifier: Modifier = Modifier,
 ) {
     val settings = LocalSettings.current
-    if (message.role == MessageRole.USER && !message.parts.isEmptyUIMessage() && settings.displaySetting.showUserAvatar) {
+    if (isRealUserMessage && !message.parts.isEmptyUIMessage() && settings.displaySetting.showUserAvatar) {
         Row(
             modifier = modifier,
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
@@ -57,18 +59,53 @@ fun ChatMessageAssistantAvatar(
     loading: Boolean,
     model: Model?,
     assistant: Assistant?,
+    onLongPressMention: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val settings = LocalSettings.current
     val showIcon = settings.displaySetting.showModelIcon
     val useAssistantAvatar = assistant?.useAssistantAvatar == true
-    if (message.role == MessageRole.ASSISTANT && (model != null || useAssistantAvatar)) {
+    val isGroupMember = message.memberId != null && assistant?.assistantType == me.rerere.rikkahub.data.model.AssistantType.GROUP
+    val groupMember = if (isGroupMember) assistant?.groupMembers?.find { it.id == message.memberId } else null
+    if ((message.role == MessageRole.ASSISTANT || isGroupMember) && (model != null || useAssistantAvatar || isGroupMember)) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            modifier = modifier
+            modifier = modifier.then(
+                if (isGroupMember && groupMember != null && onLongPressMention != null) {
+                    Modifier.combinedClickable(
+                        onClick = {},
+                        onLongClick = { onLongPressMention(groupMember.displayName.ifBlank { assistant?.name.orEmpty() }) },
+                    )
+                } else {
+                    Modifier
+                }
+            )
         ) {
-            if (useAssistantAvatar) {
+            if (isGroupMember && groupMember != null) {
+                val memberName = groupMember.displayName.ifBlank { assistant?.name ?: "?" }
+                if (showIcon) {
+                    UIAvatar(
+                        name = memberName,
+                        modifier = Modifier.size(28.dp),
+                        value = groupMember.avatar,
+                        loading = loading,
+                    )
+                }
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (settings.displaySetting.showModelName) {
+                        Text(
+                            text = memberName,
+                            style = MaterialTheme.typography.labelLargeEmphasized,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            } else if (useAssistantAvatar) {
                 if (showIcon) {
                     UIAvatar(
                         name = assistant.name,

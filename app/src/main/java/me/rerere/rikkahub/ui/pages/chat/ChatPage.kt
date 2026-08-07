@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
@@ -66,15 +67,20 @@ import me.rerere.hugeicons.stroke.MessageAdd01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
+import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
+import me.rerere.rikkahub.service.group.GroupDirectorCommandStatus
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
+import me.rerere.rikkahub.ui.components.ai.completion.GroupMentionCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.useCropLauncher
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
@@ -97,7 +103,7 @@ import java.io.File
 import kotlin.uuid.Uuid
 
 @Composable
-fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
+fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null, greeting: String? = null) {
     val vm: ChatVM = koinViewModel(
         parameters = {
             parametersOf(id.toString())
@@ -147,6 +153,14 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val inputState = vm.inputState
 
     // 初始化输入状态（处理传入的 files 和 text 参数）
+    LaunchedEffect(greeting) {
+        greeting?.base64Decode()?.let { decodedGreeting ->
+            if (decodedGreeting.isNotBlank()) {
+                vm.applyInitialGreeting(decodedGreeting)
+            }
+        }
+    }
+
     LaunchedEffect(files, text) {
         if (files.isNotEmpty()) {
             val localFiles = filesManager.createChatFilesByContents(files)
@@ -281,19 +295,76 @@ private fun ChatPageContent(
     val workspaceRepository: WorkspaceRepository = koinInject()
     var previewMode by rememberSaveable { mutableStateOf(false) }
     val hazeState = rememberHazeState()
-    val assistant = setting.getCurrentAssistant()
-    var showFilesSheet by remember { mutableStateOf(false) }
-
-    val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
-        assistant.workspaceId?.let { workspaceId ->
-            listOf(
-                WorkspaceCompletionProvider(
-                    workspaceId = workspaceId.toString(),
-                    repository = workspaceRepository,
-                    currentCwd = conversation.workspaceCwd,
-                )
+    val assistant = remember(setting.assistants, conversation.assistantId) {
+        setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
+    }
+    val groupAssistant = assistant.takeIf { it.assistantType == AssistantType.GROUP }
+    val directorUiState = remember(conversation, groupAssistant, setting, loadingJob) {
+        groupAssistant?.let {
+            buildGroupDirectorUiState(
+                conversation = conversation,
+                assistant = it,
+                settings = setting,
+                isGenerating = loadingJob?.isActive == true,
             )
-        }.orEmpty()
+        }
+    }
+    var showDirectorSheet by rememberSaveable { mutableStateOf(false) }
+    val enabledManualMembers = groupAssistant?.groupMembers?.filter { it.enabled }.orEmpty()
+    val availableManualMemberIds = remember(enabledManualMembers) {
+        enabledManualMembers.map { it.id }
+    }
+    val selectedIds = vm.selectedGroupMemberIds.collectAsStateWithLifecycle().value
+    val isManualGroup = groupAssistant != null &&
+        directorUiState?.effectiveMode == TurnTakingStrategy.MANUAL &&
+        enabledManualMembers.isNotEmpty()
+    var showFilesSheet by remember { mutableStateOf(false) }
+    val completionProviders = remember(
+        assistant.workspaceId,
+        assistant.groupMembers,
+        assistant.assistantType,
+        conversation.workspaceCwd,
+        workspaceRepository,
+    ) {
+        buildList {
+            assistant.workspaceId?.let { workspaceId ->
+                add(
+                    WorkspaceCompletionProvider(
+                        workspaceId = workspaceId.toString(),
+                        repository = workspaceRepository,
+                        currentCwd = conversation.workspaceCwd,
+                    )
+                )
+            }
+            if (assistant.assistantType == AssistantType.GROUP) {
+                add(GroupMentionCompletionProvider(assistant.groupMembers))
+            }
+        }
+    }
+    val onMentionRole: (String) -> Unit = remember(inputState) {
+        { roleName ->
+            if (roleName.isNotBlank()) {
+                inputState.insertTextAtCursor("@$roleName ")
+            }
+        }
+    }
+
+    val context = LocalContext.current
+    LaunchedEffect(vm) {
+        vm.groupDirectorNotices.collect { status ->
+            val message = when (status) {
+                GroupDirectorCommandStatus.NO_ENABLED_MEMBERS -> R.string.group_director_no_members
+                GroupDirectorCommandStatus.INVALID_MEMBER -> R.string.group_director_invalid_member
+                GroupDirectorCommandStatus.NO_ALTERNATIVE_MEMBER -> R.string.group_director_no_alternative
+                GroupDirectorCommandStatus.NOT_GROUP -> R.string.group_director_not_group
+                GroupDirectorCommandStatus.APPLIED -> return@collect
+            }
+            toaster.show(context.getString(message))
+        }
+    }
+
+    LaunchedEffect(availableManualMemberIds) {
+        vm.sanitizeGroupMemberSelection(availableManualMemberIds)
     }
 
     TTSAutoPlay(vm = vm, setting = setting, conversation = conversation)
@@ -323,7 +394,18 @@ private fun ChatPageContent(
                 )
             },
             bottomBar = {
-                ChatInput(
+                Column {
+                    if (isManualGroup) {
+                        GroupMemberSelector(
+                            members = enabledManualMembers,
+                            selectedMemberIds = selectedIds,
+                            settings = setting,
+                            onToggle = { vm.toggleGroupMember(it) },
+                            onSelectionChange = { vm.setGroupMemberSelection(it) },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
+                    }
+                    ChatInput(
                     state = inputState,
                     loading = loadingJob != null,
                     settings = setting,
@@ -358,9 +440,18 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
-                            vm.handleMessageSend(inputState.getContents())
-                            scope.launch {
-                                chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
+                            if (isManualGroup) {
+                                if (selectedIds.isNotEmpty()) {
+                                    vm.handleGroupSend(content = inputState.getContents())
+                                } else {
+                                    toaster.show("请先选择发言角色")
+                                    return@ChatInput
+                                }
+                            } else {
+                                vm.handleMessageSend(inputState.getContents())
+                                scope.launch {
+                                    chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
+                                }
                             }
                         }
                         inputState.clearInput()
@@ -406,6 +497,15 @@ private fun ChatPageContent(
                         showFilesSheet = true
                     },
                 )
+                }
+            },
+            floatingActionButton = {
+                directorUiState?.let { state ->
+                    GroupDirectorFab(
+                        state = state,
+                        onClick = { showDirectorSheet = true },
+                    )
+                }
             },
             containerColor = Color.Transparent,
         ) { innerPadding ->
@@ -483,6 +583,15 @@ private fun ChatPageContent(
                     vm.updateConversation(conversation.copy(customSystemPrompt = newPrompt))
                     vm.saveConversationAsync()
                 },
+                onMentionRole = onMentionRole,
+            )
+        }
+
+        if (showDirectorSheet && directorUiState != null) {
+            GroupDirectorSheet(
+                state = directorUiState,
+                onDismiss = { showDirectorSheet = false },
+                onCommand = vm::applyGroupDirectorCommand,
             )
         }
 

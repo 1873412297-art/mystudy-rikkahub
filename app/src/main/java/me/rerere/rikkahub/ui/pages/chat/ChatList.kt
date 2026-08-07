@@ -91,6 +91,7 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.getAssistantById
+import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.service.ChatError
@@ -135,6 +136,7 @@ fun ChatList(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
+    onMentionRole: ((String) -> Unit)? = null,
 ) {
     AnimatedContent(
         targetState = previewMode,
@@ -177,6 +179,7 @@ fun ChatList(
                 onToolAnswer = onToolAnswer,
                 onToggleFavorite = onToggleFavorite,
                 onConversationSystemPromptChange = onConversationSystemPromptChange,
+                onMentionRole = onMentionRole,
             )
         }
     }
@@ -207,6 +210,7 @@ private fun ChatListNormal(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
+    onMentionRole: ((String) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val loadingState by rememberUpdatedState(loading)
@@ -333,8 +337,14 @@ private fun ChatListNormal(
                             node = node,
                             model = node.currentMessage.modelId?.let(modelById::get),
                             assistant = assistant,
+                            runtimeState = if (assistant?.assistantType == AssistantType.GROUP) {
+                                conversation.groupRuntimeState
+                            } else {
+                                null
+                            },
                             loading = loading && index == lastMessageIndex,
-                            onRegenerate = {
+                            onMentionRole = onMentionRole,
+                            onRegenerate = { _ ->
                                 onRegenerate(node.currentMessage)
                             },
                             onEdit = {
@@ -664,7 +674,7 @@ private fun ChatListPreview(
                 key = { index, item -> item.second.id },
             ) { _, (originalIndex, node) ->
                 val message = node.currentMessage
-                val isUser = message.role == me.rerere.ai.core.MessageRole.USER
+                val isUser = message.role == me.rerere.ai.core.MessageRole.USER && message.memberId == null
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()

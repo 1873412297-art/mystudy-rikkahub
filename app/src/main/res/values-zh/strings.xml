@@ -1283,5 +1283,30 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="assistant_page_context_message_limit_count">上下文消息限制: %d</string>
   <string name="assistant_page_context_message_limit_unlimited">无限上下文消息</string>
   <string name="assistant_page_context_message_limit_warning">任何非零值都会在每次截断上下文时使提示词缓存失效。上限越大，截断越少；0 表示从不截断，缓存完整保留。</string>
+<string name="assistant_page_context_message_count">上下文消息数量: %d</string>
+<string name="assistant_page_context_message_desc">控制多少条历史消息会被作为上下文发送给模型, 超过此数量的消息会被忽略，只有最近的N条消息会被保留，可以节省token</string>
+<string name="assistant_page_context_message_size">上下文消息数量</string>
+<string name="assistant_page_context_message_truncation_warning">限制上下文可能导致频繁的上下文截断，并阻止提示词缓存</string>
+<string name="assistant_page_context_message_unlimited">无限制的上下文消息</string>
+<string name="group_director_continue_current_round">继续本轮</string>
+<string name="group_director_continue_round">继续一轮</string>
+<string name="group_director_invalid_member">该角色已不可用</string>
+<string name="group_director_mode_manual">手动</string>
+<string name="group_director_mode_moderator">主持人</string>
+<string name="group_director_mode_round_robin">轮询</string>
+<string name="group_director_no_alternative">暂无其他角色</string>
+<string name="group_director_no_members">没有已启用的群组成员</string>
+<string name="group_director_nominate_member">指定%1$s下一位发言</string>
+<string name="group_director_not_group">当前会话不是群聊</string>
+<string name="group_director_open">打开群聊导演台</string>
+<string name="group_director_pause_after_current">当前角色说完后暂停</string>
+<string name="group_director_skip_next">跳过下一位</string>
+<string name="group_director_status_pause_pending">本条回复结束后暂停</string>
+<string name="group_director_status_paused">已暂停</string>
+<string name="group_director_status_round_remaining">本轮剩余 %1$d 位</string>
+<string name="group_director_status_running">运行中</string>
+<string name="group_director_title">导演台</string>
+<string name="placeholder_current_datetime">日期和时间</string>
+<string name="placeholder_current_time">时间</string>
 </resources>
 

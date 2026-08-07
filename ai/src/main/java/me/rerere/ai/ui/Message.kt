@@ -28,7 +28,11 @@ data class UIMessage(
     val finishedAt: LocalDateTime? = null,
     val modelId: Uuid? = null,
     val usage: TokenUsage? = null,
-    val translation: String? = null
+    val translation: String? = null,
+    /** 群组对话中所属成员的 GroupMember.id；非群组对话为 null */
+    val memberId: Uuid? = null,
+    /** 群组对话中显示用的成员名（也用于 OpenAI 的 message.name 字段）；非群组对话为 null */
+    val name: String? = null,
 ) {
     private fun appendChunk(chunk: MessageChunk): UIMessage {
         val choice = chunk.choices.getOrNull(0)
@@ -208,6 +212,16 @@ data class UIMessage(
             role = MessageRole.ASSISTANT,
             parts = listOf(UIMessagePart.Text(prompt))
         )
+
+        /**
+         * Construct an assistant message whose Text part will be rendered as raw HTML
+         * (sandbox iframe). Used for character-card-sourced content like first_mes /
+         * alternate_greetings — those fields are designed as full HTML documents.
+         */
+        fun assistantHtml(prompt: String) = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(UIMessagePart.Text(prompt, renderMode = UIMessagePart.RenderMode.HTML))
+        )
     }
 }
 
@@ -225,7 +239,10 @@ fun List<UIMessage>.handleMessageChunk(chunk: MessageChunk, model: Model? = null
     }
     val choice = chunk.choices.getOrNull(0) ?: return this
     val message = choice.delta ?: choice.message ?: return this
-    if (this.last().role != message.role) {
+    // Create a new message if:
+    // - the role differs from the last message (normal case: user → assistant), OR
+    // - the last message is already finished (group chat: previous member's reply is complete)
+    if (this.last().role != message.role || this.last().finishedAt != null) {
         return this + (UIMessage(modelId = model?.id, role = message.role, parts = emptyList()) + chunk)
     } else {
         val last = this.last() + chunk
@@ -389,10 +406,24 @@ fun ToolApprovalState.canResumeToolExecution(): Boolean {
 sealed class UIMessagePart {
     abstract val metadata: JsonObject?
 
+    /**
+     * 文本渲染模式。
+     * - MARKDOWN（默认）：通过 markdown 渲染器
+     * - HTML：直接当作完整 HTML 文档塞进沙箱 iframe
+     *
+     * 旧消息（无该字段的）会以 MARKDOWN 反序列化，不影响兼容性。
+     */
+    @Serializable
+    enum class RenderMode {
+        @SerialName("markdown") MARKDOWN,
+        @SerialName("html") HTML,
+    }
+
     @Serializable
     @SerialName("text")
     data class Text(
         val text: String,
+        val renderMode: RenderMode = RenderMode.MARKDOWN,
         override var metadata: JsonObject? = null
     ) : UIMessagePart()
 
@@ -432,6 +463,23 @@ sealed class UIMessagePart {
         val reasoning: String,
         val createdAt: Instant = Clock.System.now(),
         val finishedAt: Instant? = Clock.System.now(),
+        override var metadata: JsonObject? = null
+    ) : UIMessagePart()
+
+    /** 单个角色的状态页：[name] 显示标签，[html] 已渲染好的 HTML 片段（用于 MultiCharacterStatusView）。*/
+    @Serializable
+    @SerialName("character_status_page")
+    data class CharacterStatusPage(
+        val name: String,
+        val html: String,
+    )
+
+    /** 占位消息部分：状态变量系统由 LLM 流式输出 status block，渲染后用本部分插到对话里替代原文本。*/
+    @Serializable
+    @SerialName("status_placeholder")
+    data class StatusPlaceholder(
+        val htmlContent: String,
+        val characterPages: List<CharacterStatusPage> = emptyList(),
         override var metadata: JsonObject? = null
     ) : UIMessagePart()
 
@@ -540,6 +588,7 @@ fun List<UIMessagePart>.toSortedMessageParts(): List<UIMessagePart> {
             is UIMessagePart.ToolCall -> 0
             is UIMessagePart.ToolResult -> 0
             is UIMessagePart.Search -> 0
+            is UIMessagePart.StatusPlaceholder -> 0
             is UIMessagePart.Image -> 1
             is UIMessagePart.Video -> 1
             is UIMessagePart.Audio -> 1

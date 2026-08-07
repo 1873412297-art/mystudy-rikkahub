@@ -24,15 +24,22 @@ data class WorkspaceShellContext(
 
 class HostShellRunner : WorkspaceShellRunner {
     override fun execute(context: WorkspaceShellContext): WorkspaceCommandResult {
-        val process = ProcessBuilder(defaultShell(), "-c", context.command)
+        val process = ProcessBuilder(defaultShellCommand(context.command))
             .directory(context.workingDir)
             .redirectErrorStream(false)
             .start()
         return process.readResult(context.timeoutMillis, context.stdin)
     }
 
-    private fun defaultShell(): String =
-        if (File("/system/bin/sh").exists()) "/system/bin/sh" else "/bin/sh"
+    private fun defaultShellCommand(command: String): List<String> =
+        if (isWindows()) {
+            listOf("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command)
+        } else {
+            listOf(if (File("/system/bin/sh").exists()) "/system/bin/sh" else "/bin/sh", "-c", command)
+        }
+
+    private fun isWindows(): Boolean =
+        System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
 }
 
 // 单个流保留的最大字符数, 防止命令疯狂输出导致 OOM 或撑爆 LLM 上下文
