@@ -31,6 +31,41 @@ internal fun buildTavernRuntimeScript(): String = """
     });
   }
 
+  // ── TH 风格事件订阅：DOM CustomEvent('th:<name>') + 宿主侧 events.subscribe 登记 ──
+  var thListeners = {};
+  function addThListener(name, handler){
+    var listener = function(ev){ handler(ev.detail); };
+    document.addEventListener('th:' + name, listener);
+    (thListeners[name] = thListeners[name] || []).push({ handler: handler, listener: listener });
+    // 登记宿主事件订阅（无权限时被拒，静默降级为只收脚本本地事件）
+    call('events.subscribe', { name: name }).catch(function(){});
+    return true;
+  }
+  function removeThListener(name, handler){
+    var list = thListeners[name] || [];
+    for (var i = list.length - 1; i >= 0; i--) {
+      if (!handler || list[i].handler === handler) {
+        document.removeEventListener('th:' + name, list[i].listener);
+        list.splice(i, 1);
+      }
+    }
+    if (list.length === 0) {
+      call('events.unsubscribe', { name: name }).catch(function(){});
+    }
+    return true;
+  }
+
+  var eventSource = {
+    on: function(name, handler){ addThListener(name, handler); return Promise.resolve(true); },
+    off: function(name, handler){ removeThListener(name, handler); return Promise.resolve(true); },
+    once: function(name, handler){
+      var wrapped = function(detail){ removeThListener(name, wrapped); handler(detail); };
+      addThListener(name, wrapped);
+      return Promise.resolve(true);
+    },
+    emit: function(name, payload){ return call('events.emit', { name: name, payload: payload || null }); }
+  };
+
   var api = {
     runtime: {
       ping: function(){ return call('runtime.ping', {}); }
@@ -38,17 +73,18 @@ internal fun buildTavernRuntimeScript(): String = """
     variables: {
       get: function(key, scope){ return call('variables.get', { key: key, scope: scope || 'chat' }); },
       set: function(key, value, scope){ return call('variables.set', { key: key, value: value, scope: scope || 'chat' }); },
-      list: function(scope){ return call('variables.list', { scope: scope || 'chat' }); }
+      list: function(scope){ return call('variables.list', { scope: scope || 'chat' }); },
+      delete: function(key, scope){ return call('variables.delete', { key: key, scope: scope || 'chat' }); }
     },
     slash: {
       run: function(command, args){ return call('slash.run', { command: command, args: args || {} }); }
     },
     events: {
-      on: function(name, handler){
-        document.addEventListener('th:' + name, function(ev){ handler(ev.detail); });
-        return Promise.resolve(true);
-      },
-      emit: function(name, payload){ return call('events.emit', { name: name, payload: payload || null }); }
+      on: function(name, handler){ return eventSource.on(name, handler); },
+      off: function(name, handler){ return eventSource.off(name, handler); },
+      emit: function(name, payload){ return eventSource.emit(name, payload); },
+      subscribe: function(name){ return call('events.subscribe', { name: name }); },
+      unsubscribe: function(name){ return call('events.unsubscribe', { name: name }); }
     },
     world: {
       getEntries: function(){ return call('world.getEntries', {}); },
@@ -58,6 +94,19 @@ internal fun buildTavernRuntimeScript(): String = """
     messages: {
       getCurrent: function(){ return call('messages.getCurrent', {}); },
       updateCurrent: function(patch){ return call('messages.updateCurrent', { patch: patch }); }
+    },
+
+    // ── TavernHelper 风格别名（委托上面的 api.variables，保持单一实现） ──
+    eventSource: eventSource,
+    getVariable: function(key, scope){ return api.variables.get(key, scope); },
+    setVariable: function(key, value, scope){ return api.variables.set(key, value, scope); },
+    deleteVariable: function(key, scope){ return api.variables.delete(key, scope); },
+    getVariables: function(scope){ return api.variables.list(scope); },
+    setVariables: function(vars, scope){
+      var keys = Object.keys(vars || {});
+      return Promise.all(keys.map(function(key){
+        return api.variables.set(key, vars[key], scope);
+      })).then(function(){ return true; });
     }
   };
 

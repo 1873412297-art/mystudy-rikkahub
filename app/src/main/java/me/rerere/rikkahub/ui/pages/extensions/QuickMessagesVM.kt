@@ -8,6 +8,8 @@ import kotlinx.coroutines.launch
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.QuickMessage
+import me.rerere.rikkahub.data.model.QuickMessageMode
+import me.rerere.rikkahub.data.model.sanitizeQuickMessageRefs
 import kotlin.uuid.Uuid
 
 class QuickMessagesVM(
@@ -16,11 +18,20 @@ class QuickMessagesVM(
     val settings = settingsStore.settingsFlow
         .stateIn(viewModelScope, SharingStarted.Lazily, Settings.dummy())
 
-    fun addQuickMessage(title: String, content: String) {
+    fun addQuickMessage(
+        title: String,
+        content: String,
+        autoSend: Boolean = false,
+        mode: QuickMessageMode = QuickMessageMode.APPEND,
+        order: Int = 0,
+    ) {
         updateQuickMessages(
             settings.value.quickMessages + QuickMessage(
                 title = title,
                 content = content,
+                autoSend = autoSend,
+                mode = mode,
+                order = order,
             )
         )
     }
@@ -48,9 +59,7 @@ class QuickMessagesVM(
                 settings.copy(
                     quickMessages = quickMessages,
                     assistants = settings.assistants.map { assistant ->
-                        assistant.copy(
-                            quickMessageIds = assistant.quickMessageIds.filter { it in validIds }.toSet()
-                        )
+                        assistant.sanitizeQuickMessageRefs(validIds)
                     }
                 )
             }

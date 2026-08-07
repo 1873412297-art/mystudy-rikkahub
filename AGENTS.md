@@ -165,3 +165,39 @@ Recommended reintegration workflow for the dirty workspace:
 7. Only after the replayed branch is green should it replace or merge back into `private-main`.
 
 If a later session continues the sync/reintegration work, start from this status block instead of re-merging upstream from scratch.
+
+## Status HUD Integration Status (2026-07-21)
+
+The status-HUD feature set (expanded status tag family + bare `<details>` fallback + StatusHudBar) has been fully replayed onto the sync codebase and verified green.
+
+- Integration branch: `codex/integrate-status-hud-20260720`
+- Worktree: `C:\Users\18734\Desktop\HTML\rikkahub-source\.integration-wt` (untracked in main repo; keep it)
+- Base: `origin/codex/sync-upstream-2026-06-17` @ `59325fa9` (remote has advanced past `98d9a339` recorded above)
+- Safety tag on dirty workspace: `backup/private-main-20260720`
+
+Commit stack on the integration branch (5 commits):
+
+```
+10acec99 docs: record integration branch verification results
+05144b7c feat: wire status HUD into chat UI on sync branch
+15ecd95f docs: add status HUD integration note and wiring patches
+97461172 feat: add status HUD bar for status block display
+361a210c feat: expand status block tag family and add bare details fallback
+```
+
+The same 3-commit feature/docs stack also exists on dirty `private-main` (`5bf9d53e`, `fc970e7f`, `0df5fc8b`).
+
+Verification already done on the integration branch:
+
+1. 44/44 status/richtext unit tests pass.
+2. `./gradlew :app:assembleDebug` BUILD SUCCESSFUL.
+3. Emulator smoke (DB-injection method): 6/6 tag variants (`status_block`, `statusblock`/`<StatusBlock>`, `statusbar`/`<STATUSBAR>`, `<status!>`, `<状态栏>`) + bare `<details>` fallback all render the HUD correctly; evidence in `verification-screenshots/integration/` + `VERIFICATION-REPORT.md`.
+
+Accepted adaptations/caveats on the integration branch (full detail in `docs/superpowers/plans/2026-07-20-status-hud-integration-note.md` section 7):
+
+- `RichTextRenderPolicy.kt` kept as dormant infra (modify/delete conflict; stable-DOM renderer absent on sync base).
+- `StatusHudBar` tavern args dropped (option b): HUD HTML sections lose chat-scope tavern variables.
+- `!isManualGroup` guard omitted (group-chat WIP not on sync base).
+- Room 29→25 downgrade crash when downgrade-installing over private-main data is expected; `pm clear` + re-inject.
+
+Remaining last step (NOT done): after `private-main`'s WIP (author-note, tavern runtime, group chat) is committed, merge/rebase `codex/integrate-status-hud-20260720` back into `private-main`, resolving the known hot files listed above. Do not merge into the dirty tree.

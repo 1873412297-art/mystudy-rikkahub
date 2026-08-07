@@ -34,7 +34,12 @@ class TavernRuntimeControllerTest {
 
     @Test
     fun `variables set then get returns value`() {
-        val setResponse = controller.dispatch(
+        val writeController = TavernRuntimeController(
+            permissionStore = TavernRuntimePermissionStore(
+                initial = TavernRuntimePermissions(allowVariablesWrite = true)
+            )
+        )
+        val setResponse = writeController.dispatch(
             TavernRuntimeRequest(
                 id = "3",
                 method = "variables.set",
@@ -47,7 +52,7 @@ class TavernRuntimeControllerTest {
                 ),
             )
         )
-        val getResponse = controller.dispatch(
+        val getResponse = writeController.dispatch(
             TavernRuntimeRequest(
                 id = "4",
                 method = "variables.get",

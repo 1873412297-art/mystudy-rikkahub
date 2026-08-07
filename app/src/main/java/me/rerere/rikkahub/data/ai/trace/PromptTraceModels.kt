@@ -32,6 +32,7 @@ enum class PromptTraceSectionKind {
 enum class PromptInjectionSourceType {
     MODE,
     LOREBOOK,
+    AUTHOR_NOTE,
 }
 
 @Serializable
@@ -39,6 +40,7 @@ enum class PromptInjectionMatchType {
     CONSTANT,
     KEYWORD,
     REGEX,
+    STICKY,
 }
 
 @Serializable
@@ -107,6 +109,10 @@ data class PromptInjectionMatch(
     val scannedMessageIds: List<Uuid>,
     val caseSensitive: Boolean,
     val regexEnabled: Boolean,
+    val selective: Boolean = false,                       // 是否为 selective 条目
+    val secondaryMatchedTerms: List<String> = emptyList(), // selective 模式下次关键词命中项
+    val probability: Int = 100,                            // 条目配置的触发概率
+    val recursiveRound: Int = 0,                           // 递归扫描命中轮次（0 = 直接命中）
 )
 
 @Serializable

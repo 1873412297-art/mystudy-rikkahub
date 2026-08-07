@@ -7,6 +7,7 @@ import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.status.StatusRenderer
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
+import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.service.ChatNotificationManager
@@ -75,6 +76,10 @@ val appModule = module {
     }
 
     single {
+        TavernHostEventBus()
+    }
+
+    single {
         StatusRenderer()
     }
 
@@ -97,6 +102,7 @@ val appModule = module {
             workspaceRepository = get(),
             folderRepository = get(),
             statusVariableStore = get(),
+            tavernHostEventBus = get(),
         )
     }
 

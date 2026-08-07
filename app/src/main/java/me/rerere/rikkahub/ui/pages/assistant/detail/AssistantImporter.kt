@@ -28,7 +28,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -189,6 +191,15 @@ private data class CharacterBookEntryData(
     val priority: Int?,
     val constant: Boolean?,
     val position: String?, // "before_char" or "after_char"
+    val selective: Boolean?,
+    val secondaryKeys: List<String>,
+    val probability: Int?, // ST: entry.extensions.probability，0-100 整数
+    val depth: Int?, // ST: entry.depth（@Depth 语义，从最新消息往前数）
+    val extensionsPosition: Int?, // ST: entry.extensions.position 数值枚举
+    val extensionsRole: Int?, // ST: entry.extensions.role（0=system, 1=user, 2=assistant）
+    val sticky: Int?, // ST: entry.extensions.sticky
+    val cooldown: Int?, // ST: entry.extensions.cooldown
+    val delay: Int?, // ST: entry.extensions.delay
 )
 
 /**
@@ -202,6 +213,7 @@ private fun extractCardExtras(data: JsonObject): CardExtras {
             scanDepth = bookJson["scan_depth"]?.jsonPrimitive?.intOrNull,
             entries = bookJson["entries"]?.jsonArray?.mapNotNull { entryJson ->
                 val entryObj = entryJson.jsonObject
+                val extensionsObj = entryObj["extensions"] as? JsonObject
                 CharacterBookEntryData(
                     keys = entryObj["keys"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(),
                     content = entryObj["content"]?.jsonPrimitiveOrNull?.contentOrNull ?: "",
@@ -212,6 +224,25 @@ private fun extractCardExtras(data: JsonObject): CardExtras {
                     priority = entryObj["priority"]?.jsonPrimitive?.intOrNull,
                     constant = entryObj["constant"]?.jsonPrimitive?.booleanOrNull,
                     position = entryObj["position"]?.jsonPrimitiveOrNull?.contentOrNull,
+                    selective = entryObj["selective"]?.jsonPrimitiveOrNull?.booleanOrNull,
+                    secondaryKeys = (entryObj["secondary_keys"] as? JsonArray)?.mapNotNull {
+                        it.jsonPrimitiveOrNull?.contentOrNull
+                    } ?: emptyList(),
+                    // ST 把触发概率放在 entry.extensions.probability（0-100），部分导出也写到顶层
+                    probability = extensionsObj?.get("probability")?.jsonPrimitiveOrNull?.intOrNull
+                        ?: entryObj["probability"]?.jsonPrimitiveOrNull?.intOrNull,
+                    // ST @Depth 语义：顶层 entry.depth，部分导出放在 extensions.depth
+                    depth = entryObj["depth"]?.jsonPrimitiveOrNull?.intOrNull
+                        ?: extensionsObj?.get("depth")?.jsonPrimitiveOrNull?.intOrNull,
+                    extensionsPosition = extensionsObj?.get("position")?.jsonPrimitiveOrNull?.intOrNull,
+                    extensionsRole = extensionsObj?.get("role")?.jsonPrimitiveOrNull?.intOrNull,
+                    // ST 触发装饰器放在 entry.extensions.sticky/cooldown/delay，部分导出写到顶层
+                    sticky = extensionsObj?.get("sticky")?.jsonPrimitiveOrNull?.intOrNull
+                        ?: entryObj["sticky"]?.jsonPrimitiveOrNull?.intOrNull,
+                    cooldown = extensionsObj?.get("cooldown")?.jsonPrimitiveOrNull?.intOrNull
+                        ?: entryObj["cooldown"]?.jsonPrimitiveOrNull?.intOrNull,
+                    delay = extensionsObj?.get("delay")?.jsonPrimitiveOrNull?.intOrNull
+                        ?: entryObj["delay"]?.jsonPrimitiveOrNull?.intOrNull,
                 )
             } ?: emptyList()
         )
@@ -225,32 +256,7 @@ private fun extractCardExtras(data: JsonObject): CardExtras {
         val regexArray = extensions["regex"]?.jsonArray
         if (regexArray != null) {
             for (regexJson in regexArray) {
-                val obj = regexJson.jsonObject
-                val findRegex = obj["regex"]?.jsonPrimitiveOrNull?.contentOrNull ?: continue
-                val replaceString = obj["replacement"]?.jsonPrimitiveOrNull?.contentOrNull ?: ""
-                val scope = obj["scope"]?.jsonPrimitiveOrNull?.contentOrNull
-                val enabled = obj["enabled"]?.jsonPrimitive?.booleanOrNull ?: true
-                val name = obj["name"]?.jsonPrimitiveOrNull?.contentOrNull ?: findRegex.take(30)
-                val visualOnly = obj["visual_only"]?.jsonPrimitive?.booleanOrNull ?: false
-
-                val affectingScope = when (scope) {
-                    "global" -> setOf(AssistantAffectScope.USER, AssistantAffectScope.ASSISTANT)
-                    "user" -> setOf(AssistantAffectScope.USER)
-                    "assistant" -> setOf(AssistantAffectScope.ASSISTANT)
-                    else -> setOf(AssistantAffectScope.ASSISTANT) // default: affect assistant output
-                }
-
-                regexes.add(
-                    AssistantRegex(
-                        id = Uuid.random(),
-                        name = name,
-                        enabled = enabled,
-                        findRegex = findRegex,
-                        replaceString = replaceString,
-                        affectingScope = affectingScope,
-                        visualOnly = visualOnly,
-                    )
-                )
+                parseStRegexScript(regexJson.jsonObject)?.let { regexes.add(it) }
             }
         }
     }
@@ -272,8 +278,10 @@ private fun extractCardExtras(data: JsonObject): CardExtras {
                     description = worldJson.jsonObject["description"]?.jsonPrimitiveOrNull?.contentOrNull,
                     scanDepth = worldJson.jsonObject["scan_depth"]?.jsonPrimitive?.intOrNull,
                     entries = worldEntries.map { entry ->
+                        val entryExtensions = entry["extensions"] as? JsonObject
                         CharacterBookEntryData(
-                            keys = entry["key"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(),
+                            keys = entry["key"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }
+                                ?: emptyList(),
                             content = entry["content"]?.jsonPrimitiveOrNull?.contentOrNull ?: "",
                             enabled = entry["disable"]?.jsonPrimitive?.booleanOrNull?.not() ?: true,
                             insertionOrder = entry["order"]?.jsonPrimitive?.intOrNull ?: 0,
@@ -285,7 +293,26 @@ private fun extractCardExtras(data: JsonObject): CardExtras {
                                 "before_char" -> "before_char"
                                 "after_char" -> "after_char"
                                 else -> null
-                            }
+                            },
+                            selective = entry["selective"]?.jsonPrimitiveOrNull?.booleanOrNull,
+                            // ST 世界书次关键词：keysecondary / secondary_keys 两种命名都兼容
+                            secondaryKeys = (entry["keysecondary"] as? JsonArray)?.mapNotNull {
+                                it.jsonPrimitiveOrNull?.contentOrNull
+                            } ?: (entry["secondary_keys"] as? JsonArray)?.mapNotNull {
+                                it.jsonPrimitiveOrNull?.contentOrNull
+                            } ?: emptyList(),
+                            // 该路径条目为 ST 世界书风格：probability/depth 位于顶层，position 为数值枚举
+                            probability = entry["probability"]?.jsonPrimitiveOrNull?.intOrNull,
+                            depth = entry["depth"]?.jsonPrimitiveOrNull?.intOrNull,
+                            extensionsPosition = entry["position"]?.jsonPrimitiveOrNull?.intOrNull,
+                            extensionsRole = entryExtensions?.get("role")?.jsonPrimitiveOrNull?.intOrNull,
+                            // 触发装饰器：extensions 优先，顶层兜底
+                            sticky = entryExtensions?.get("sticky")?.jsonPrimitiveOrNull?.intOrNull
+                                ?: entry["sticky"]?.jsonPrimitiveOrNull?.intOrNull,
+                            cooldown = entryExtensions?.get("cooldown")?.jsonPrimitiveOrNull?.intOrNull
+                                ?: entry["cooldown"]?.jsonPrimitiveOrNull?.intOrNull,
+                            delay = entryExtensions?.get("delay")?.jsonPrimitiveOrNull?.intOrNull
+                                ?: entry["delay"]?.jsonPrimitiveOrNull?.intOrNull,
                         )
                     }
                 )
@@ -318,6 +345,74 @@ private fun extractCardExtras(data: JsonObject): CardExtras {
         statusRenderJs = statusRenderJs,
         statusCss = statusCss,
     )
+}
+
+/**
+ * 解析单条 ST 正则脚本（extensions.regex 数组元素）。
+ * 容忍字段缺失；flags 与 depth 字段见 [parseStRegexFlags]。
+ */
+internal fun parseStRegexScript(obj: JsonObject): AssistantRegex? {
+    val findRegex = obj["regex"]?.jsonPrimitiveOrNull?.contentOrNull ?: return null
+    val replaceString = obj["replacement"]?.jsonPrimitiveOrNull?.contentOrNull ?: ""
+    val scope = obj["scope"]?.jsonPrimitiveOrNull?.contentOrNull
+    val enabled = obj["enabled"]?.jsonPrimitive?.booleanOrNull ?: true
+    val name = obj["name"]?.jsonPrimitiveOrNull?.contentOrNull ?: findRegex.take(30)
+    val visualOnly = obj["visual_only"]?.jsonPrimitive?.booleanOrNull ?: false
+
+    val affectingScope = when (scope) {
+        "global" -> setOf(AssistantAffectScope.USER, AssistantAffectScope.ASSISTANT)
+        "user" -> setOf(AssistantAffectScope.USER)
+        "assistant" -> setOf(AssistantAffectScope.ASSISTANT)
+        else -> setOf(AssistantAffectScope.ASSISTANT) // default: affect assistant output
+    }
+
+    return AssistantRegex(
+        id = Uuid.random(),
+        name = name,
+        enabled = enabled,
+        findRegex = findRegex,
+        replaceString = replaceString,
+        affectingScope = affectingScope,
+        visualOnly = visualOnly,
+        options = parseStRegexFlags(obj),
+        minDepth = obj["minDepth"]?.jsonPrimitiveOrNull?.intOrNull
+            ?: obj["min_depth"]?.jsonPrimitiveOrNull?.intOrNull,
+        maxDepth = obj["maxDepth"]?.jsonPrimitiveOrNull?.intOrNull
+            ?: obj["max_depth"]?.jsonPrimitiveOrNull?.intOrNull,
+    )
+}
+
+/**
+ * 解析 ST 正则脚本的修饰标志字段 flags，容忍多种格式：
+ * - JS 风格字符串，如 "i"、"ms"、"ims"（i=忽略大小写，m=多行，s=点匹配换行）
+ * - 字符串数组，如 ["IGNORE_CASE", "MULTILINE"]（枚举名，大小写不敏感）
+ * - 缺失或无法识别时返回空集合
+ */
+internal fun parseStRegexFlags(obj: JsonObject): Set<RegexOption> {
+    val element = obj["flags"] ?: return emptySet()
+    val tokens: List<String> = when (element) {
+        is JsonArray -> element.mapNotNull { it.jsonPrimitiveOrNull?.contentOrNull }
+        is JsonPrimitive -> {
+            // JsonNull 也是 JsonPrimitive，contentOrNull 可能为 null，统一按空串处理
+            val content = element.contentOrNull.orEmpty()
+            if (content.length > 1 && content.all { it.lowercaseChar() in "ims" }) {
+                // JS 风格连续字母，如 "ims"
+                content.map { it.toString() }
+            } else {
+                listOf(content)
+            }
+        }
+
+        else -> emptyList()
+    }
+    return tokens.mapNotNull { token ->
+        when (token.trim().lowercase()) {
+            "i", "ignore_case", "ignorecase" -> RegexOption.IGNORE_CASE
+            "m", "multiline" -> RegexOption.MULTILINE
+            "s", "dot_matches_all", "dotmatchesall", "dotall" -> RegexOption.DOT_MATCHES_ALL
+            else -> null
+        }
+    }.toSet()
 }
 
 // endregion
@@ -547,16 +642,35 @@ private fun convertCharacterBookToLorebook(
             position = when (entry.position) {
                 "before_char" -> InjectionPosition.BEFORE_SYSTEM_PROMPT
                 "after_char" -> InjectionPosition.AFTER_SYSTEM_PROMPT
-                else -> InjectionPosition.AFTER_SYSTEM_PROMPT // default
+                // 字符串 position 缺席时回退到 extensions.position（ST 数值枚举，
+                // 映射规则与 ExportSerializer.mapSillyTavernPosition 保持一致）
+                else -> when (entry.extensionsPosition) {
+                    0 -> InjectionPosition.BEFORE_SYSTEM_PROMPT
+                    2, 3 -> InjectionPosition.TOP_OF_CHAT
+                    4 -> InjectionPosition.AT_DEPTH
+                    else -> InjectionPosition.AFTER_SYSTEM_PROMPT // 1 及未知值
+                }
             },
             content = entry.content,
-            injectDepth = book.scanDepth ?: 4,
-            role = MessageRole.USER,
+            // ST depth（@Depth，从最新消息往前数）与本项目 injectDepth 语义一致；缺席时用 ST 默认 4
+            // （不用 book.scanDepth 兜底：scanDepth 是匹配扫描范围，与注入深度语义不同）
+            injectDepth = entry.depth ?: 4,
+            role = when (entry.extensionsRole) {
+                0 -> MessageRole.SYSTEM
+                2 -> MessageRole.ASSISTANT
+                else -> MessageRole.USER // 1 及未知值
+            },
             keywords = entry.keys,
             useRegex = false,
             caseSensitive = entry.caseSensitive ?: false,
             scanDepth = book.scanDepth ?: 4,
             constantActive = entry.constant == true,
+            secondaryKeywords = entry.secondaryKeys,
+            selective = entry.selective ?: false,
+            probability = entry.probability?.coerceIn(0, 100) ?: 100,
+            sticky = entry.sticky?.coerceAtLeast(0) ?: 0,
+            cooldown = entry.cooldown?.coerceAtLeast(0) ?: 0,
+            delay = entry.delay?.coerceAtLeast(0) ?: 0,
         )
     }
 

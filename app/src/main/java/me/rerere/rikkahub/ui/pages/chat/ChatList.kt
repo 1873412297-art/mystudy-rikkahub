@@ -92,6 +92,7 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.model.AssistantType
+import me.rerere.rikkahub.data.model.AuthorNote
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.service.ChatError
@@ -136,6 +137,7 @@ fun ChatList(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
+    onConversationAuthorNoteChange: ((AuthorNote?) -> Unit)? = null,
     onMentionRole: ((String) -> Unit)? = null,
 ) {
     AnimatedContent(
@@ -179,6 +181,7 @@ fun ChatList(
                 onToolAnswer = onToolAnswer,
                 onToggleFavorite = onToggleFavorite,
                 onConversationSystemPromptChange = onConversationSystemPromptChange,
+                onConversationAuthorNoteChange = onConversationAuthorNoteChange,
                 onMentionRole = onMentionRole,
             )
         }
@@ -210,6 +213,7 @@ private fun ChatListNormal(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
+    onConversationAuthorNoteChange: ((AuthorNote?) -> Unit)? = null,
     onMentionRole: ((String) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
@@ -337,6 +341,7 @@ private fun ChatListNormal(
                             node = node,
                             model = node.currentMessage.modelId?.let(modelById::get),
                             assistant = assistant,
+                            tavernConversationId = conversation.id,
                             runtimeState = if (assistant?.assistantType == AssistantType.GROUP) {
                                 conversation.groupRuntimeState
                             } else {
@@ -384,6 +389,15 @@ private fun ChatListNormal(
                     ConversationSystemPromptButton(
                         customSystemPrompt = conversation.customSystemPrompt,
                         onSystemPromptChange = onConversationSystemPromptChange,
+                    )
+                }
+            }
+
+            if (!loading && assistant?.allowConversationAuthorNote == true && onConversationAuthorNoteChange != null) {
+                item(key = "ConversationAuthorNote") {
+                    ConversationAuthorNoteButton(
+                        authorNote = conversation.authorNote,
+                        onAuthorNoteChange = onConversationAuthorNoteChange,
                     )
                 }
             }

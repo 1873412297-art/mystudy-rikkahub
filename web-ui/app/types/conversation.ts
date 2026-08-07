@@ -1,4 +1,17 @@
 import type { UIMessage } from "./message";
+import type { MessageRole } from "./core";
+
+/**
+ * Author's Note (@ Depth)
+ * @see app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt - AuthorNote
+ */
+export interface AuthorNote {
+  enabled: boolean;
+  content: string;
+  depth: number;
+  role: MessageRole;
+  interval: number;
+}
 
 /**
  * Message node - container for message branching
@@ -28,6 +41,8 @@ export interface Conversation {
   workspaceCwd?: string | null;
   /** 所属文件夹（助手内分组），null 表示未归入任何文件夹 */
   folderId?: string | null;
+  /** 会话级作者注释，仅在助手允许时生效 */
+  authorNote?: AuthorNote | null;
   createAt: number;
   updateAt: number;
 }

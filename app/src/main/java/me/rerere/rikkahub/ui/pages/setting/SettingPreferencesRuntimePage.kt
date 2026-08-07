@@ -64,69 +64,66 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                     modifier = Modifier.padding(horizontal = 8.dp),
                     title = { Text("Tavern Helper") },
                 ) {
-                    item(
-                        headlineContent = { Text("允许脚本运行") },
-                        supportingContent = {
-                            Text("关闭后，兼容运行时会直接拒绝脚本调用，保留只读预览路径。")
-                        },
+                    fun permissionSwitch(
+                        title: String,
+                        description: String,
+                        checked: Boolean,
+                        onCheckedChange: (Boolean) -> Unit,
+                    ) = item(
+                        headlineContent = { Text(title) },
+                        supportingContent = { Text(description) },
                         trailingContent = {
-                            Switch(
-                                checked = runtimePermissions.allowScripts,
-                                onCheckedChange = {
-                                    updateRuntimePermissions(
-                                        runtimePermissions.copy(allowScripts = it)
-                                    )
-                                }
-                            )
+                            Switch(checked = checked, onCheckedChange = onCheckedChange)
+                        },
+                    )
+
+                    permissionSwitch(
+                        title = "允许脚本运行",
+                        description = "关闭后，兼容运行时会直接拒绝脚本调用，保留只读预览路径。",
+                        checked = runtimePermissions.allowScripts,
+                        onCheckedChange = {
+                            updateRuntimePermissions(runtimePermissions.copy(allowScripts = it))
                         },
                     )
                     if (runtimePermissions.allowScripts) {
-                        item(
-                            headlineContent = { Text("允许写入世界书") },
-                            supportingContent = {
-                                Text("允许脚本增删改世界书条目。默认关闭。")
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = runtimePermissions.allowWorldWrite,
-                                    onCheckedChange = {
-                                        updateRuntimePermissions(
-                                            runtimePermissions.copy(allowWorldWrite = it)
-                                        )
-                                    }
-                                )
+                        permissionSwitch(
+                            title = "允许写入世界书",
+                            description = "允许脚本增删改世界书条目。默认关闭。",
+                            checked = runtimePermissions.allowWorldWrite,
+                            onCheckedChange = {
+                                updateRuntimePermissions(runtimePermissions.copy(allowWorldWrite = it))
                             },
                         )
-                        item(
-                            headlineContent = { Text("允许写入消息") },
-                            supportingContent = {
-                                Text("允许脚本修改当前消息内容。默认关闭。")
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = runtimePermissions.allowMessageWrite,
-                                    onCheckedChange = {
-                                        updateRuntimePermissions(
-                                            runtimePermissions.copy(allowMessageWrite = it)
-                                        )
-                                    }
-                                )
+                        permissionSwitch(
+                            title = "允许写入消息",
+                            description = "允许脚本修改当前消息内容。默认关闭。",
+                            checked = runtimePermissions.allowMessageWrite,
+                            onCheckedChange = {
+                                updateRuntimePermissions(runtimePermissions.copy(allowMessageWrite = it))
                             },
                         )
-                        item(
-                            headlineContent = { Text("允许网络访问") },
-                            supportingContent = {
-                                Text("为后续网络类脚本接口预留。默认关闭。")
+                        permissionSwitch(
+                            title = "允许写入变量",
+                            description = "允许脚本修改聊天/全局变量并持久化。默认关闭。",
+                            checked = runtimePermissions.allowVariablesWrite,
+                            onCheckedChange = {
+                                updateRuntimePermissions(runtimePermissions.copy(allowVariablesWrite = it))
                             },
-                            trailingContent = {
-                                Switch(
-                                    checked = runtimePermissions.allowNetwork,
-                                    onCheckedChange = {
-                                        updateRuntimePermissions(
-                                            runtimePermissions.copy(allowNetwork = it)
-                                        )
-                                    }
-                                )
+                        )
+                        permissionSwitch(
+                            title = "允许订阅宿主事件",
+                            description = "允许脚本接收消息发送、生成完成、渲染完成等宿主事件推送。默认关闭。",
+                            checked = runtimePermissions.allowEventSubscribe,
+                            onCheckedChange = {
+                                updateRuntimePermissions(runtimePermissions.copy(allowEventSubscribe = it))
+                            },
+                        )
+                        permissionSwitch(
+                            title = "允许网络访问",
+                            description = "为后续网络类脚本接口预留。默认关闭。",
+                            checked = runtimePermissions.allowNetwork,
+                            onCheckedChange = {
+                                updateRuntimePermissions(runtimePermissions.copy(allowNetwork = it))
                             },
                         )
                     }

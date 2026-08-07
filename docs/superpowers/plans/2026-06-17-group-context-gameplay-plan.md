@@ -1692,3 +1692,59 @@ git commit -m "docs: record group context gameplay manual test results"
 - Database upgrade: the old private v25 database migrated to v26 with `folder_id`, `conversation_folder`, and Room identity hash `f0b200e6a24ae0931995e0b76fecfa13` preserved.
 - Instrumentation: `./gradlew connectedDebugAndroidTest --console=plain` passed across all modules after adding the missing AndroidX Test dependencies to `material3`, `highlight`, and `search`, and updating the renamed `speech` module's package assertion.
 - APK: `C:\Users\18734\Desktop\HTML\rikkahub-port-2.4.1\app\build\outputs\apk\debug\app-universal-debug.apk`.
+
+### 2026-07-22 Execution Result (post-director re-verification on private-main)
+
+Re-verified all four scenarios on the current private-main build, which includes the
+2026-07-15 automatic-turn normalization, the 2026-07-16 group director state machine,
+and the 2026-07-17 handoff hardening that landed after the 2026-07-01 pass.
+
+- Approach: no user credentials were available on the emulator (app data had been
+  `pm clear`'d earlier), so generation was driven through a local mock
+  OpenAI-compatible provider on the host (`http://10.0.2.2:8787/v1`,
+  `verification-screenshots/group/mock_openai_server.py`). Provider, model
+  selection, two member assistants (辉夜 / 八千代), and the group assistant were
+  injected by patching `settings.preferences_pb` directly
+  (`verification-screenshots/group/patch_prefs.py`, generic wire-format
+  pass-through preserving all other keys). The mock logs every request to
+  `mock_requests.jsonl` and answers moderator prompts with a rotating member UUID.
+- Manual mode: pass, `emulator-5554`; selected both members via the
+  `GroupMemberSelector` chips, sent `hello`; both members replied left-side in
+  selection order, user bubble right, no `[User]`/`[member]` prefixes visible.
+  Mock log proves the transport rewrite: 八千代's request shows 辉夜's reply as
+  `[辉夜] ...`. Screenshots `g02`–`g03`.
+- Addressing/IME automation note: Gboard pinyin composition must be committed by
+  tapping the first candidate strip item (not `keyevent 4` alone); after that the
+  send affordance tap dispatches reliably. This supersedes the 2026-06-17 blocker
+  note for ASCII single-word prompts.
+- Round-robin mode: pass, `emulator-5554`; `maxAutoRepliesPerUserTurn=2`,
+  `allowConsecutiveSameSpeaker=false`; unaddressed `round fix` produced 辉夜 then
+  八千代 and stopped at the cap. Screenshot `g09`, mock log sequence.
+- Moderator mode: pass, `emulator-5554`; unaddressed message produced two
+  model-driven moderator decisions (mock log: non-stream single-message calls
+  with the exact `You are a conversation moderator` prompt; first without STOP,
+  second with STOP allowed), 辉夜 then 八千代 replied, chain stopped at cap 2
+  without fallback. Screenshot `g10`. STOP/invalid-output fallback remains
+  covered by `GroupModeratorDecisionTest`.
+- Runtime state: pass, `emulator-5554`; neutral `hello` turn kept tension 0,
+  layer `ISOLATED`, 2 event records (screenshot `g04b`); conflict `betrayal` turn
+  raised 场景紧张度 to 2, added the 活跃秘密 line, 近期事件数 4, 焦点秘密
+  `betrayal / 背叛 / 秘密 / 不能说`, 焦点情绪 `怀疑`, 焦点冲突
+  `betrayal / 危险 / 怀疑`, layer escalated to `CORE` with resolver score
+  `event=14, recent=1, relation=0, total=15` (screenshots `g07`, `g07b`).
+  No serialization crash; logcat clean of FATAL entries for the whole session.
+- Emulator: `emulator-5554`, Android 15, package `me.rerere.rikkahub.debug`,
+  activity `me.rerere.rikkahub.RouteActivity`.
+- APK: `C:\Users\18734\Desktop\HTML\rikkahub-source\app\build\outputs\apk\debug\app-universal-debug.apk`
+  (built 2026-07-20 04:26, newer than all group sources; installed as an upgrade
+  over the integration-branch build — Room migrated v25 → v29 without error).
+- Evidence: `verification-screenshots/group/g00`–`g10*.png`,
+  `verification-screenshots/group/mock_requests.jsonl`.
+- Blockers: none. The 2026-06-17 blockers are fully resolved by the
+  candidate-strip IME commit + node-bounds send tap; non-ASCII prompts were not
+  needed (ASCII single-word prompts plus mock-side Chinese replies covered every
+  scenario).
+- Caveat: mock-driven generation proves the app's group pipeline
+  (addressing, scheduler, director, moderator prompt, transport rewrite, runtime
+  state updater, debug sheet, rendering) but not real-provider streaming quirks;
+  member reply text is mock-canned by design.

@@ -34,6 +34,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -75,6 +76,8 @@ import me.rerere.hugeicons.stroke.MusicNote03
 import me.rerere.hugeicons.stroke.Video01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
+import me.rerere.rikkahub.data.ai.status.StatusBlockExtractor
+import me.rerere.rikkahub.data.ai.transformers.replaceResidualUserName
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.MessageNode
@@ -121,8 +124,17 @@ fun ChatMessage(
     onClearTranslation: (UIMessage) -> Unit = {},
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
+    /**
+     * 酒馆脚本运行时上下文：消息所属会话 ID。
+     * 传入后消息内的 Tavern WebView 才能读写 chat 作用域变量、接收宿主事件，
+     * 且 messages.getCurrent 返回当前消息 JSON。
+     */
+    tavernConversationId: kotlin.uuid.Uuid? = null,
 ) {
     val message = node.messages[node.selectIndex]
+    val tavernCurrentMessage = remember(message) {
+        runCatching { JsonInstant.encodeToJsonElement(UIMessage.serializer(), message) }.getOrNull()
+    }
     val fullSettings = LocalSettings.current
     val settings = fullSettings.displaySetting
     val chatFontFamily = LocalChatFontFamily.current ?: rememberChatFontFamily(settings)
@@ -142,12 +154,30 @@ fun ChatMessage(
     val isRealUserMessage = message.role == MessageRole.USER && message.memberId == null && !hasGroupSpeakerPrefix
     val displayRole = if (isRealUserMessage) MessageRole.USER else MessageRole.ASSISTANT
     val displayParts = remember(message.parts, assistant, message.memberId, settings.userNickname) {
+        val userDisplayName = settings.userNickname.ifBlank { "你" }
         message.parts.stripVisibleSpeakerPrefixes(
             assistant = assistant,
             memberId = message.memberId,
             userName = settings.userNickname,
             messageName = message.name,
-        )
+        ).map { part ->
+            if (part is UIMessagePart.Text) {
+                part.copy(text = replaceResidualUserName(part.text, userDisplayName))
+            } else {
+                part
+            }
+        }.mapNotNull { part ->
+            // 状态块清理：气泡只留叙事正文，状态内容由 StatusHudBar 展示（仅动显示层）
+            if (part is UIMessagePart.Text &&
+                (part.text.contains("<status", ignoreCase = true) ||
+                    part.text.contains("<maintext", ignoreCase = true))
+            ) {
+                val cleaned = StatusBlockExtractor.extract(part.text).cleanedText
+                if (cleaned.isBlank()) null else part.copy(text = cleaned)
+            } else {
+                part
+            }
+        }
     }
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -179,17 +209,28 @@ fun ChatMessage(
             }
         }
         ProvideTextStyle(textStyle) {
-            MessagePartsBlock(
-                assistant = assistant,
-                role = displayRole,
-                parts = displayParts,
-                annotations = message.annotations,
-                loading = loading,
-                model = model,
-                onToolApproval = onToolApproval,
-                onToolAnswer = onToolAnswer,
-                onUserMessageClick = if (isRealUserMessage) onEdit else null,
-            )
+            // 通用自动折叠：任何消息内容超高时收进容器，流式生成中不触发
+            var autoCollapseExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
+            AutoCollapseContent(
+                enabled = !loading,
+                expanded = autoCollapseExpanded,
+                onExpandedChange = { autoCollapseExpanded = it },
+                horizontalAlignment = if (isRealUserMessage) Alignment.End else Alignment.Start,
+            ) {
+                MessagePartsBlock(
+                    assistant = assistant,
+                    role = displayRole,
+                    parts = displayParts,
+                    annotations = message.annotations,
+                    loading = loading,
+                    model = model,
+                    onToolApproval = onToolApproval,
+                    onToolAnswer = onToolAnswer,
+                    onUserMessageClick = if (isRealUserMessage) onEdit else null,
+                    tavernConversationId = tavernConversationId,
+                    tavernCurrentMessage = tavernCurrentMessage,
+                )
+            }
 
             message.translation?.let { translation ->
                 CollapsibleTranslationText(
@@ -357,6 +398,8 @@ private fun MessagePartsBlock(
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onUserMessageClick: (() -> Unit)? = null,
+    tavernConversationId: kotlin.uuid.Uuid? = null,
+    tavernCurrentMessage: kotlinx.serialization.json.JsonElement? = null,
 ) {
     val context = LocalContext.current
     val contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
@@ -444,6 +487,8 @@ private fun MessagePartsBlock(
                         if (part.renderMode == UIMessagePart.RenderMode.HTML) {
                             MarkdownWebView(
                                 content = part.text,
+                                tavernConversationId = tavernConversationId,
+                                tavernCurrentMessage = tavernCurrentMessage,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp),
@@ -661,6 +706,8 @@ private fun MessagePartsBlock(
                             MarkdownWebView(
                                 content = part.htmlContent,
                                 isRawHtml = true,
+                                tavernConversationId = tavernConversationId,
+                                tavernCurrentMessage = tavernCurrentMessage,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp),

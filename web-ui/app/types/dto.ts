@@ -1,6 +1,7 @@
 import type { TokenUsage } from "./core";
 import type { UIMessageAnnotation } from "./annotations";
 import type { UIMessagePart } from "./parts";
+import type { AuthorNote } from "./conversation";
 
 export interface ConversationListDto {
   id: string;
@@ -92,6 +93,7 @@ export interface ConversationDto {
   lorebookIds?: string[];
   workspaceCwd?: string | null;
   folderId?: string | null;
+  authorNote?: AuthorNote | null;
   createAt: number;
   updateAt: number;
   isGenerating: boolean;

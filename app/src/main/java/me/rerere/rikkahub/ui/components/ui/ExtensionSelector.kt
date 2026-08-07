@@ -132,6 +132,15 @@ fun ExtensionSelector(
                                 onUpdate(assistant.copy(quickMessageIds = newIds))
                             },
                             onManage = onNavigateToQuickMessages,
+                            hiddenIds = assistant.hiddenQuickMessageIds,
+                            onToggleHidden = { id, hidden ->
+                                val newHiddenIds = if (hidden) {
+                                    assistant.hiddenQuickMessageIds + id
+                                } else {
+                                    assistant.hiddenQuickMessageIds - id
+                                }
+                                onUpdate(assistant.copy(hiddenQuickMessageIds = newHiddenIds))
+                            },
                         )
                     } else {
                         ExtensionEmptyState(

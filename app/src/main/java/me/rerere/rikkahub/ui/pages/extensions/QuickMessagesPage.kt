@@ -11,10 +11,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -22,6 +24,7 @@ import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -35,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -46,11 +50,18 @@ import me.rerere.hugeicons.stroke.MoreVertical
 import me.rerere.hugeicons.stroke.Zap
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.QuickMessage
+import me.rerere.rikkahub.data.model.QuickMessageMode
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.RikkaConfirmDialog
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.plus
 import org.koin.androidx.compose.koinViewModel
+
+/** 快捷指令填入模式选项（枚举值 → 显示名） */
+private val FillModeOptions = listOf(
+    QuickMessageMode.APPEND to "追加",
+    QuickMessageMode.REPLACE to "替换",
+)
 
 @Composable
 fun QuickMessagesPage(vm: QuickMessagesVM = koinViewModel()) {
@@ -126,8 +137,14 @@ fun QuickMessagesPage(vm: QuickMessagesVM = koinViewModel()) {
             title = stringResource(R.string.quick_messages_page_add_title),
             initialQuickMessage = null,
             onDismiss = { showAddDialog = false },
-            onConfirm = { title, content ->
-                vm.addQuickMessage(title, content)
+            onConfirm = { title, content, autoSend, mode, order ->
+                vm.addQuickMessage(
+                    title = title,
+                    content = content,
+                    autoSend = autoSend,
+                    mode = mode,
+                    order = order,
+                )
                 showAddDialog = false
             },
         )
@@ -138,11 +155,14 @@ fun QuickMessagesPage(vm: QuickMessagesVM = koinViewModel()) {
             title = stringResource(R.string.quick_messages_page_edit_title),
             initialQuickMessage = quickMessage,
             onDismiss = { editTarget = null },
-            onConfirm = { title, content ->
+            onConfirm = { title, content, autoSend, mode, order ->
                 vm.updateQuickMessage(
                     quickMessage.copy(
                         title = title,
                         content = content,
+                        autoSend = autoSend,
+                        mode = mode,
+                        order = order,
                     )
                 )
                 editTarget = null
@@ -258,13 +278,22 @@ private fun EditQuickMessageDialog(
     title: String,
     initialQuickMessage: QuickMessage?,
     onDismiss: () -> Unit,
-    onConfirm: (title: String, content: String) -> Unit,
+    onConfirm: (title: String, content: String, autoSend: Boolean, mode: QuickMessageMode, order: Int) -> Unit,
 ) {
     var quickMessageTitle by rememberSaveable(initialQuickMessage?.id) {
         mutableStateOf(initialQuickMessage?.title ?: "")
     }
     var quickMessageContent by rememberSaveable(initialQuickMessage?.id) {
         mutableStateOf(initialQuickMessage?.content ?: "")
+    }
+    var autoSend by rememberSaveable(initialQuickMessage?.id) {
+        mutableStateOf(initialQuickMessage?.autoSend ?: false)
+    }
+    var mode by rememberSaveable(initialQuickMessage?.id) {
+        mutableStateOf(initialQuickMessage?.mode ?: QuickMessageMode.APPEND)
+    }
+    var orderText by rememberSaveable(initialQuickMessage?.id) {
+        mutableStateOf((initialQuickMessage?.order ?: 0).toString())
     }
 
     AlertDialog(
@@ -287,11 +316,58 @@ private fun EditQuickMessageDialog(
                     minLines = 4,
                     maxLines = 8,
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("填入后立即发送", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "点击该快捷指令后直接发送",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = autoSend,
+                        onCheckedChange = { autoSend = it },
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("填入模式", style = MaterialTheme.typography.bodyMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FillModeOptions.forEach { (option, label) ->
+                            FilterChip(
+                                selected = mode == option,
+                                onClick = { mode = option },
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = orderText,
+                    onValueChange = { input ->
+                        orderText = input.filter { it.isDigit() || it == '-' }.take(6)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("排序（越小越靠前）") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(quickMessageTitle.trim(), quickMessageContent.trim()) },
+                onClick = {
+                    onConfirm(
+                        quickMessageTitle.trim(),
+                        quickMessageContent.trim(),
+                        autoSend,
+                        mode,
+                        orderText.toIntOrNull() ?: 0,
+                    )
+                },
                 enabled = quickMessageTitle.isNotBlank() && quickMessageContent.isNotBlank(),
             ) {
                 Text(stringResource(R.string.assistant_page_save))

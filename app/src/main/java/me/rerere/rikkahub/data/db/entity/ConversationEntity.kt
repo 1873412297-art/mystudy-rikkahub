@@ -42,4 +42,6 @@ data class ConversationEntity(
     val groupMemberQueue: String = "[]",
     @ColumnInfo("group_member_queue_index", defaultValue = "0")
     val groupMemberQueueIndex: Int = 0,
+    @ColumnInfo("author_note")
+    val authorNote: String? = null,
 )
