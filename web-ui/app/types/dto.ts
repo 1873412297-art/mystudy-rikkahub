@@ -94,6 +94,7 @@ export interface ConversationDto {
   workspaceCwd?: string | null;
   folderId?: string | null;
   authorNote?: AuthorNote | null;
+  statusVariables?: Record<string, unknown> | null;
   createAt: number;
   updateAt: number;
   isGenerating: boolean;
@@ -130,4 +131,12 @@ export interface MessageSearchResultDto {
   title: string;
   updateAt: number;
   snippet: string;
+}
+
+export interface StatusVariablesEventDto {
+  type: "status_variables";
+  seq: number;
+  conversationId: string;
+  variables: Record<string, unknown>;
+  serverTime: number;
 }
