@@ -196,6 +196,7 @@ data class ConversationDto(
     val workspaceCwd: String? = null,
     val folderId: String? = null,
     val authorNote: AuthorNote? = null,
+    val statusVariables: kotlinx.serialization.json.JsonObject? = null,
     val createAt: Long,
     val updateAt: Long,
     val isGenerating: Boolean = false
@@ -344,6 +345,7 @@ fun Conversation.toDto(isGenerating: Boolean = false) = ConversationDto(
     workspaceCwd = workspaceCwd,
     folderId = folderId?.toString(),
     authorNote = authorNote,
+    statusVariables = statusVariables,
     createAt = createAt.toEpochMilli(),
     updateAt = updateAt.toEpochMilli(),
     isGenerating = isGenerating
