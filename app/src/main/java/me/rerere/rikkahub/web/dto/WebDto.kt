@@ -287,6 +287,15 @@ data class ConversationNodeUpdateEvent(
 )
 
 @Serializable
+data class ConversationStatusVariablesEvent(
+    val type: String = "status_variables",
+    val seq: Long,
+    val conversationId: String,
+    val variables: kotlinx.serialization.json.JsonObject,
+    val serverTime: Long = System.currentTimeMillis()
+)
+
+@Serializable
 data class GenerationDoneEvent(
     val type: String = "done",
     val conversationId: String

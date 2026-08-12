@@ -299,6 +299,10 @@ class ChatService(
     private val _errors = MutableStateFlow<List<ChatError>>(emptyList())
     val errors: StateFlow<List<ChatError>> = _errors.asStateFlow()
 
+    /** 供 web 层订阅每会话状态变量变化（status_variables SSE 事件）。 */
+    fun getStatusVariablesFlow(conversationId: Uuid): StateFlow<JsonObject> =
+        statusVariableStore.getState(conversationId)
+
     fun addError(
         error: Throwable,
         conversationId: Uuid? = null,
