@@ -19,7 +19,7 @@
 ### 2.2 `ConversationDto.statusVariables`
 
 - 加 `statusVariables: JsonObject?`（`WebDto.kt`），映射 `Conversation.statusVariables` 持久化字段。
-- `snapshot` / `node_update` 事件自动携带。
+- `snapshot` 事件自动携带（`node_update` 只携带 `MessageNodeDto`，不含 statusVariables；实时变量变化由 §2.3 的 `status_variables` 事件覆盖）。
 
 ### 2.3 对话 stream 新事件 `status_variables`
 
