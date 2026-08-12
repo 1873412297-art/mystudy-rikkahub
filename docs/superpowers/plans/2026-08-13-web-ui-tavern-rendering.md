@@ -580,7 +580,7 @@ git commit -m "chore: add vitest to web-ui"
 **Interfaces:**
 - Produces: `STATUS_TAG_NAMES`、`openTagRegex()`、`closeTagRegex()`、`segmentRegex()`、`wrapperRegex()`（Task 7 消费）
 
-- [ ] **Step 1: 写失败测试（样例与 Kotlin `StatusTagsTest` 对齐）**
+- [x] **Step 1: 写失败测试（样例与 Kotlin `StatusTagsTest` 对齐）**
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -614,12 +614,12 @@ describe("status-tags", () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `pnpm test status-tags`
 Expected: FAIL（模块不存在）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 ```ts
 /**
@@ -652,12 +652,12 @@ export function wrapperRegex(): RegExp {
 }
 ```
 
-- [ ] **Step 4: 运行确认通过**
+- [x] **Step 4: 运行确认通过**
 
 Run: `pnpm test status-tags`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web-ui/app/lib/tavern/status-tags.ts web-ui/app/lib/tavern/status-tags.test.ts
@@ -1193,6 +1193,8 @@ export interface StatusVariablesEventDto {
 
 Run: `pnpm typecheck`
 Expected: PASS（若 `message-part.tsx` switch 出现「not all code paths return」类报错，属预期，Task 12 加分支后消除；其他报错需修复）
+
+> **实施注记（Task 9 已执行）：** typecheck 实际出现 3 处 TS2366 穷尽性报错，位置为 `chat-message.tsx`（`hasRenderablePart`、`formatPartForCopy` 两处 switch）与 `conversations.tsx`（`getQuickJumpPreview` switch），而非计划预期的 `message-part.tsx`（其 `renderContentPart` 返回推断类型不触发 TS2366）。**Task 12 需额外给这三处 switch 补 `status_placeholder` case**（见 Task 12 注记）。`TavernRenderDto` 类型按计划由 Task 10 在 `services/tavern.ts` 中定义，不放入 types/。
 
 - [ ] **Step 4: Commit**
 
@@ -1730,6 +1732,12 @@ export function TextPart({ text, renderMode, isAnimating, onClickCitation }: Tex
 - [ ] **Step 4: 检查 `chat-message.tsx` 调用链并透传 tavernContext**
 
 读取 `web-ui/app/components/message/chat-message.tsx`，找到 `MessageParts` 调用处。若其 props 中已有 `assistant`（含 id）与 conversation 信息，则在其 props 上加可选 `tavernContext` 并从 `conversations.tsx:654` 传 `tavernContext={{ conversationId: detail.id, assistantId: detail.assistantId }}`；若无现成信息，给 `ChatMessage` props 加可选 `tavernContext?: { conversationId: string; assistantId: string }` 并透传到 `MessageParts`。
+
+> **实施注记（Task 9 遗留，本步骤顺带修复）：** Task 9 后 typecheck 有 3 处 TS2366，本任务修复：
+> - `web-ui/app/components/message/chat-message.tsx` `hasRenderablePart` switch → `case "status_placeholder": return true;`
+> - `chat-message.tsx` `formatPartForCopy` switch → `case "status_placeholder": return null;`（HTML 不进复制文本）
+> - `web-ui/app/routes/conversations.tsx` `getQuickJumpPreview` 的 `fallbackPart.type` switch → `case "status_placeholder": return t("conversations.preview.empty_message");`（复用既有 i18n key）
+> 修复后 Step 5 的 `pnpm typecheck` 应为 0 报错。
 
 - [ ] **Step 5: typecheck + lint + test**
 
