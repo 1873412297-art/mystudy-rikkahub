@@ -483,6 +483,8 @@ data class ConversationStatusVariablesEvent(
                     }
 ```
 
+> **实施注记（Task 4 已执行）：** 本项目 kotlinx-coroutines 1.11.0 将 `StateFlow.distinctUntilChanged()` 声明为 ERROR 级 deprecation（对 StateFlow 无效果），照抄将编译失败。**实现时删除该调用**——StateFlow 自带 equality 去重，语义等价。
+
 `merge(conversationEvents, errorEvents)` 改为 `merge(conversationEvents, errorEvents, statusVariableEvents)`；when 分支加：
 
 ```kotlin
