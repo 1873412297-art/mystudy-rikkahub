@@ -138,12 +138,13 @@ export function RenderStatusFrame({
       if (frameRef.current && event.source !== frameRef.current.contentWindow) return;
       const data = event.data as { type?: string; html?: string; error?: boolean };
       if (data?.type !== RENDER_RESULT_MESSAGE) return;
+      if (done) return;
       setDone(true);
       onResult(typeof data.html === "string" ? data.html : fallbackHtml);
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [fallbackHtml, onResult]);
+  }, [done, fallbackHtml, onResult]);
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => {

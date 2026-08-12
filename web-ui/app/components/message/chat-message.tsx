@@ -55,6 +55,7 @@ interface ChatMessageProps {
   onDelete?: (messageId: string) => void | Promise<void>;
   onFork?: (messageId: string) => void | Promise<void>;
   onToolApproval?: (toolCallId: string, approved: boolean, reason: string, answer?: string) => void | Promise<void>;
+  tavernContext?: { conversationId: string; assistantId: string };
 }
 
 function hasRenderablePart(part: UIMessagePart): boolean {
@@ -70,6 +71,8 @@ function hasRenderablePart(part: UIMessagePart): boolean {
     case "reasoning":
       return part.reasoning.trim().length > 0;
     case "tool":
+      return true;
+    case "status_placeholder":
       return true;
   }
 }
@@ -90,6 +93,8 @@ function formatPartForCopy(part: UIMessagePart, t: TFunction): string | null {
       return part.reasoning;
     case "tool":
       return `[${t("chat_message.copy_tool")}] ${part.toolName}`;
+    case "status_placeholder":
+      return null;
   }
 }
 
@@ -524,6 +529,7 @@ export const ChatMessage = React.memo(({
   onDelete,
   onFork,
   onToolApproval,
+  tavernContext,
 }: ChatMessageProps) => {
   const isUser = message.role === "USER";
   const hasMessageContent = message.parts.some(hasRenderablePart);
@@ -566,6 +572,7 @@ export const ChatMessage = React.memo(({
               loading={loading}
               onToolApproval={onToolApproval}
               onClickCitation={handleClickCitation}
+              tavernContext={tavernContext}
             />
           </div>
         </div>

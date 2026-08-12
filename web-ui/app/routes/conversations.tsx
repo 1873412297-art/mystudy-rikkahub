@@ -139,6 +139,8 @@ function getQuickJumpPreview(
         : t("conversations.preview.tool_call");
     case "text":
       return t("conversations.preview.empty_message");
+    case "status_placeholder":
+      return t("conversations.preview.empty_message");
   }
 }
 
@@ -673,6 +675,11 @@ const ConversationTimeline = React.memo(
                     isLastMessage={index === selectedNodeMessages.length - 1}
                     assistant={assistant}
                     model={model}
+                    tavernContext={
+                      conversationAssistantId
+                        ? { conversationId: activeId, assistantId: conversationAssistantId }
+                        : undefined
+                    }
                     onEdit={onEdit}
                     onDelete={onDelete}
                     onFork={onFork}
