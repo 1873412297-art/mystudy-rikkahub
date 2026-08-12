@@ -27,9 +27,14 @@ class StatusVariableStore {
     /**
      * Initialize the variable store for a conversation from persisted state.
      * Called when a conversation is first loaded.
+     *
+     * 原地更新 value，保持 StateFlow 身份稳定：web 层 SSE stream 订阅 getState 返回的流，
+     * 若替换 map 条目会导致订阅孤儿化（后续 applyPatch 写入新条目、订阅者收不到更新）。
      */
     fun init(conversationId: Uuid, initial: JsonObject) {
-        stores[conversationId] = MutableStateFlow(initial)
+        stores.getOrPut(conversationId) {
+            MutableStateFlow(JsonObject(emptyMap()))
+        }.value = initial
     }
 
     /**
