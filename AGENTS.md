@@ -96,6 +96,41 @@
 
 ## Current Status
 
+**2026-08-13：web-ui 酒馆渲染栈（子项目 A）。**
+
+- 后端：`GET /api/assistant/{id}/tavern-render` 端点（`TavernCardCssExtractor` 共享抽取自 StatusPlaceholderTransformer）；
+  `ConversationDto.statusVariables`（snapshot/node_update 自动携带）；对话 stream 新增 `status_variables` SSE 事件
+  （`ChatService.getStatusVariablesFlow` 订阅 StatusVariableStore StateFlow；注：coroutines 1.11.0 中
+  `StateFlow.distinctUntilChanged()` 为 ERROR 级 deprecation，勿加）
+- web-ui：TS 移植 StatusTags/StatusBlockExtractor/StatusFallbackHtml（vitest 覆盖，与 Kotlin 测试样例对齐）；
+  sandboxed iframe 统一渲染（`HtmlFrame` 展示模式 allow-same-origin 无脚本 + `RenderStatusFrame` 重渲染模式
+  allow-scripts opaque origin + done 守卫 + key 重挂载）；`StatusPlaceholderView`（多角色 tabs + 实时重渲染）、
+  TextPart renderMode/状态标签剥离、`StatusHudBar` + 选项 chips 点击发送；`useTavernStore`（变量树/角色卡）+ SSE 接线
+- 验证：`:app:testDebugUnitTest :app:compileDebugKotlin :app:assembleDebug` ✅（80 类 / 575 测试 0 失败）；
+  `pnpm test`（41）/`typecheck`/`lint`/`build` 全绿
+- 已知 Minor（final review 待裁决）：Task 10 无 seq 水位（快照旧值可能短暂覆盖新变量，自愈）；角色卡加载失败永久缓存无重试；
+  JS 整数键序 vs Kotlin LinkedHashMap（fallback HTML 行序）
+- 待办：子项目 B（Android 渲染器提升：样式/性能/主题/脚本 API）；Task 14 浏览器冒烟（需运行中 app web 服务）
+- 计划/设计：`docs/superpowers/specs/2026-08-13-web-ui-tavern-rendering-design.md`、
+  `docs/superpowers/plans/2026-08-13-web-ui-tavern-rendering.md`
+
+**2026-08-08：酒馆功能整体优化 + 整词匹配（TDD）。**
+
+- 工作区路径注意拼写：`C:\Users\18734\Desktop\HTML\rikkahub-source`（`rikkahub`，1 个 h）。
+- 整体优化（去重 + 健壮性）：
+  - `StatusTags` 单一事实来源：状态块标签族正则去重（StatusBlockExtractor / RichTextRenderPolicy / Markdown 三处共用）
+  - `StatusFallbackHtml` 共享构建器：StatusRenderer 与 StatusPlaceholderTransformer 两份 HTML 构建合并 + 修复 `>` 转义
+  - `StatusPlaceholderTransformer` 移除每 chunk 调试日志/全量扫描（行为不变）
+  - `StatusVariableStore` 会话删除时清理接线（`ConversationRepository.deleteConversation` → `remove(id)`）
+- UI 一致性：统一 `EmptyState` 组件（5 个酒馆/扩展页面复用）；`TavernCardEditorPage` TopBar 补 `CustomColors.topBarColors`
+- 新功能（TDD）：世界书关键词「整词匹配」`matchWholeWords`（ST Match Whole Words 对齐）：
+  模型 + 匹配逻辑（ASCII 词边界，CJK 子串语义，正则不叠加）+ 世界书编辑器开关 +
+  TavernRuntimeWorldBinding / ExportSerializer（ST 两种拼写）/ PromptInjectionMatch trace 同步
+- 验证：`:app:testDebugUnitTest` **74 类 / 556 测试 0 失败** ✅、`:app:compileDebugKotlin` ✅、`:app:assembleDebug` ✅
+- 计划文档：`docs/superpowers/plans/2026-08-08-tavern-optimization-pass.md`
+- 说明：历史若干回合误报"工作区不可访问"，实为路径拼写错误（rikkahhub vs rikkahub）；本轮全部改动已验证通过。
+
+
 **2026-08-07：私有 fork 已全量移植到官方最新版 2.4.5（versionCode 172）。**
 
 - 合并提交：`62787dce`（`merge: integrate 2.4.5 port (all private features) into private-main`）
