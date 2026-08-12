@@ -29,7 +29,7 @@ import { getAssistantDisplayName, getModelDisplayName } from "~/lib/display";
 import { convertConversationToMarkdown, downloadMarkdown } from "~/lib/export-markdown";
 import { cn } from "~/lib/utils";
 import api, { sse } from "~/services/api";
-import { useChatInputStore, useAppStore } from "~/stores";
+import { useChatInputStore, useAppStore, useTavernStore } from "~/stores";
 import { WorkbenchHost } from "~/components/workbench/workbench-host";
 import {
   useWorkbench,
@@ -43,6 +43,7 @@ import {
   type ConversationNodeUpdateEventDto,
   type ConversationErrorEventDto,
   type ConversationSnapshotEventDto,
+  type StatusVariablesEventDto,
   type ProviderModel,
   type Settings,
   type UIMessagePart,
@@ -58,7 +59,8 @@ import i18n from "~/i18n";
 type ConversationStreamEvent =
   | ConversationSnapshotEventDto
   | ConversationNodeUpdateEventDto
-  | ConversationErrorEventDto;
+  | ConversationErrorEventDto
+  | StatusVariablesEventDto;
 
 interface SelectedNodeMessage {
   node: MessageNodeDto;
@@ -338,6 +340,10 @@ function useConversationDetail(activeId: string | null, updateSummary: Conversat
       .then((data) => {
         if (!mounted) return;
         setDetail(data);
+        if (data.statusVariables) {
+          useTavernStore.getState().setVariables(data.id, data.statusVariables);
+        }
+        useTavernStore.getState().ensureCardLoaded(data.assistantId);
         updateSummary(toConversationSummaryUpdate(data));
       })
       .catch((err: Error) => {
@@ -361,9 +367,18 @@ function useConversationDetail(activeId: string | null, updateSummary: Conversat
             return;
           }
 
+          if (event === "status_variables" && data.type === "status_variables") {
+            useTavernStore.getState().setVariables(data.conversationId, data.variables);
+            return;
+          }
+
           if (event === "snapshot" && data.type === "snapshot") {
             useAppStore.getState().setClockOffset(data.serverTime);
             setDetail(data.conversation);
+            if (data.conversation.statusVariables) {
+              useTavernStore.getState().setVariables(data.conversation.id, data.conversation.statusVariables);
+            }
+            useTavernStore.getState().ensureCardLoaded(data.conversation.assistantId);
             updateSummary(toConversationSummaryUpdate(data.conversation));
             setDetailError(null);
             setDetailLoading(false);
