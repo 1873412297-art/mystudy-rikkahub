@@ -15,6 +15,7 @@ import {
 } from "~/components/extended/conversation";
 import { ChatInput } from "~/components/input/chat-input";
 import { ChatMessage } from "~/components/message/chat-message";
+import { StatusHudBar } from "~/components/tavern/status-hud";
 import { Button } from "~/components/ui/button";
 import { Drawer, DrawerContent } from "~/components/ui/drawer";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "~/components/ui/resizable";
@@ -654,6 +655,18 @@ const ConversationTimeline = React.memo(
               icon={<MessageSquare className="size-10" />}
               title={t("conversations.empty_state.no_message_title")}
               description={t("conversations.empty_state.no_message_description")}
+            />
+          )}
+          {activeId && selectedNodeMessages.length > 0 && (
+            <StatusHudBar
+              messages={selectedNodeMessages.map(({ message }) => message)}
+              onOptionClick={(optionText) => {
+                void api
+                  .post<{ status: string }>(`conversations/${activeId}/messages`, {
+                    parts: [{ type: "text", text: optionText }],
+                  })
+                  .catch(() => undefined);
+              }}
             />
           )}
           {!detailLoading &&
