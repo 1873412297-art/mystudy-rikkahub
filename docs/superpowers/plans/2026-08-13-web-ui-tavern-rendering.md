@@ -1544,6 +1544,10 @@ export function RenderStatusFrame({
 Run: `pnpm typecheck && pnpm lint`
 Expected: PASS
 
+> **实施注记（Task 11 审查遗留，Task 12 修复）：**
+> 1. `RenderStatusFrame` 消息 handler 需加 done 守卫：`if (done) return;` 后再处理（防异步定时器异常经 window error 发 error 消息触发二次 `onResult(fallbackHtml)` 覆盖成功结果）。
+> 2. `StatusPlaceholderView` 挂载 `RenderStatusFrame` 时必须 `key={renderNonce}`（变量变化强制重挂载，重置 done，否则超时降级只对第一次渲染有效）。
+
 - [ ] **Step 3: Commit**
 
 ```bash
