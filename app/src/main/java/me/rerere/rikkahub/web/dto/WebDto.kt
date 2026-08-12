@@ -242,6 +242,12 @@ data class WebAuthTokenResponse(
     val expiresAt: Long,
 )
 
+@Serializable
+data class TavernRenderDto(
+    val statusRenderJs: String? = null,
+    val css: String? = null,
+)
+
 // ========== Error Response ==========
 
 @Serializable
