@@ -7,53 +7,67 @@
   {{VENDOR_STYLES}}
   {{VENDOR_LIBS}}
   <style>
-    html, body { margin: 0; padding: 0; background: transparent; color: inherit; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; }
-    .mes { border-radius: 12px; padding: 10px 12px; line-height: 1.55; word-break: break-word; }
-    .mes.assistant { background: rgba(127,127,127,.08); }
-    .mes.user { background: rgba(80,120,255,.10); }
-    .mes_header { margin-bottom: 6px; }
-    .ch_name { font-weight: 600; font-size: 13px; opacity: .78; }
-    .mes_text { display: flex; flex-direction: column; gap: 8px; }
-    .mes_segment { min-width: 0; }
-    .mes_segment[data-kind="STATUS_BLOCK"],
-    .mes_segment[data-kind="JSON_PATCH"],
-    .mes_segment[data-kind="JSON_PATCH_DIAGNOSTIC"] {
-      border: 1px solid rgba(127,127,127,.25);
+    :root {
+      --rikkahub-bg: {{CSS_VAR_BG}};
+      --rikkahub-surface: {{CSS_VAR_SURFACE}};
+      --rikkahub-surface-variant: {{CSS_VAR_SURFACE_VARIANT}};
+      --rikkahub-text: {{CSS_VAR_TEXT}};
+      --rikkahub-text-secondary: {{CSS_VAR_TEXT_SECONDARY}};
+      --rikkahub-border: {{CSS_VAR_BORDER}};
+      --rikkahub-accent: {{CSS_VAR_ACCENT}};
+    }
+    html, body { margin: 0; padding: 0; background: transparent; color: var(--rikkahub-text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; }
+    #chat { width: 100%; }
+    /* ── ST 默认形状：接近 SillyTavern 原生 DOM，主流主题选择器可用 ── */
+    .mes { display: flex; flex-direction: column; border-radius: 12px; padding: 10px 12px; line-height: 1.55; word-break: break-word; }
+    .mes.assistant { background: var(--rikkahub-surface); }
+    .mes.user { background: var(--rikkahub-surface-variant); }
+    .mes_block { display: flex; flex-direction: column; min-width: 0; }
+    .name_text { margin-bottom: 4px; }
+    .name_text .name, .name_text .ch_name { font-weight: 600; font-size: 13px; opacity: .78; color: var(--rikkahub-text-secondary); }
+    .mes_text { display: flex; flex-direction: column; gap: 6px; }
+    .mes_text > p { margin: 0 0 8px; }
+    .mes_text > p:last-child { margin-bottom: 0; }
+    .mes_text h1, .mes_text h2, .mes_text h3, .mes_text h4, .mes_text h5, .mes_text h6 { margin: 12px 0 8px; font-weight: 600; line-height: 1.3; }
+    .mes_text h1 { font-size: 1.5em; }
+    .mes_text h2 { font-size: 1.3em; border-bottom: 1px solid var(--rikkahub-border); padding-bottom: 4px; }
+    .mes_text h3 { font-size: 1.15em; }
+    .mes_text ul, .mes_text ol { margin: 0 0 10px; padding-left: 22px; }
+    .mes_text li { margin: 2px 0; }
+    .mes_text a { color: var(--rikkahub-accent); }
+    .mes_text code { background: var(--rikkahub-surface-variant); border-radius: 4px; padding: .15em .35em; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: .88em; }
+    .mes_text pre { background: rgba(20,20,20,.75); border-radius: 8px; padding: 10px 12px; overflow: auto; margin: 0 0 10px; }
+    .mes_text pre code { background: transparent; padding: 0; font-size: .86em; }
+    .mes_text blockquote { margin: 0 0 10px; padding: 2px 12px; border-left: 3px solid var(--rikkahub-border); opacity: .85; }
+    .mes_text table { border-collapse: collapse; margin: 0 0 10px; width: auto; max-width: 100%; }
+    .mes_text th, .mes_text td { border: 1px solid var(--rikkahub-border); padding: 4px 8px; font-size: .92em; }
+    .mes_text th { background: var(--rikkahub-surface-variant); font-weight: 600; }
+    .mes_text img { max-width: 100%; height: auto; border-radius: 8px; }
+    .mes_text hr { border: none; border-top: 1px solid var(--rikkahub-border); margin: 12px 0; }
+    .mes_text input[type="checkbox"] { margin-right: 4px; vertical-align: middle; }
+    .mes_text .task-list-item { list-style-type: none; margin-left: -22px; }
+    /* 状态块/JSON Patch 段：转义 <pre> 展示 */
+    .mes_text .status_block, .mes_text .json_patch {
+      border: 1px solid var(--rikkahub-border);
       border-radius: 10px;
       padding: 8px;
       overflow: auto;
     }
-    .mes_segment > pre { white-space: pre-wrap; margin: 0; font-family: 'SF Mono', Monaco, Consolas, 'Roboto Mono', monospace; font-size: 13px; }
-    .mes_segment p { margin: 0 0 10px; }
-    .mes_segment p:last-child { margin-bottom: 0; }
-    .mes_segment h1, .mes_segment h2, .mes_segment h3, .mes_segment h4, .mes_segment h5, .mes_segment h6 { margin: 12px 0 8px; font-weight: 600; line-height: 1.3; }
-    .mes_segment h1 { font-size: 1.5em; }
-    .mes_segment h2 { font-size: 1.3em; border-bottom: 1px solid rgba(127,127,127,.25); padding-bottom: 4px; }
-    .mes_segment h3 { font-size: 1.15em; }
-    .mes_segment ul, .mes_segment ol { margin: 0 0 10px; padding-left: 22px; }
-    .mes_segment li { margin: 2px 0; }
-    .mes_segment a { color: #4a90d9; }
-    .mes_segment code { background: rgba(127,127,127,.16); border-radius: 4px; padding: .15em .35em; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: .88em; }
-    .mes_segment pre { background: rgba(20,20,20,.75); border-radius: 8px; padding: 10px 12px; overflow: auto; margin: 0 0 10px; }
-    .mes_segment pre code { background: transparent; padding: 0; font-size: .86em; }
-    .mes_segment blockquote { margin: 0 0 10px; padding: 2px 12px; border-left: 3px solid rgba(127,127,127,.4); color: inherit; opacity: .85; }
-    .mes_segment table { border-collapse: collapse; margin: 0 0 10px; width: auto; max-width: 100%; }
-    .mes_segment th, .mes_segment td { border: 1px solid rgba(127,127,127,.35); padding: 4px 8px; font-size: .92em; }
-    .mes_segment th { background: rgba(127,127,127,.14); font-weight: 600; }
-    .mes_segment img { max-width: 100%; height: auto; border-radius: 8px; }
-    .mes_segment hr { border: none; border-top: 1px solid rgba(127,127,127,.3); margin: 12px 0; }
-    .mes_segment input[type="checkbox"] { margin-right: 4px; vertical-align: middle; }
-    .mes_segment .task-list-item { list-style-type: none; margin-left: -22px; }
+    .mes_text .status_block > pre, .mes_text .json_patch > pre { white-space: pre-wrap; margin: 0; background: transparent; font-family: 'SF Mono', Monaco, Consolas, 'Roboto Mono', monospace; font-size: 13px; }
+    /* ST 兼容：mes_buttons 占位（视觉由 Compose 层控制） */
+    .mes_buttons, .mes_edit_buttons { display: none; }
+    {{EXTRA_CSS}}
   </style>
 </head>
 <body>
-  <div data-rikkahub-st-message></div>
+  <div id="chat"></div>
   <script>
     window.__RIKKAHUB_ST_MESSAGE__ = {{MESSAGE_JSON}};
     (function(){
       var message = window.__RIKKAHUB_ST_MESSAGE__;
-      var root = document.querySelector('[data-rikkahub-st-message]');
+      var root = document.getElementById('chat');
       var pendingMarkdown = [];
+      var libs = {};
 
       function esc(text){
         return String(text).replace(/[&<>"']/g, function(ch){
@@ -66,144 +80,184 @@
           window.RikkahubBridge && window.RikkahubBridge.reportHeight(Math.ceil(h * (window.devicePixelRatio || 1)));
         } catch(e){}
       }
-      function renderPlain(segment, div){
-        div.innerHTML = esc(segment.raw).replace(/\n/g, '<br>');
+      function renderPlain(segment, el){
+        el.innerHTML = esc(segment.raw).replace(/\n/g, '<br>');
       }
-      function renderPre(segment, div){
-        div.innerHTML = '<pre>' + esc(segment.raw) + '</pre>';
+      function renderPre(segment, el){
+        el.innerHTML = '<pre>' + esc(segment.raw) + '</pre>';
       }
 
-      var mes = document.createElement('div');
-      mes.className = 'mes ' + String(message.role || 'assistant').toLowerCase();
-      mes.dataset.messageId = message.id;
-      mes.dataset.rikkahubRole = String(message.role || 'assistant').toLowerCase();
-      var block = document.createElement('div');
-      block.className = 'mes_block';
-      if (message.name) {
-        var header = document.createElement('div');
-        header.className = 'mes_header';
-        var nameSpan = document.createElement('span');
-        nameSpan.className = 'ch_name';
-        nameSpan.textContent = message.name;
-        header.appendChild(nameSpan);
-        block.appendChild(header);
-      }
-      var text = document.createElement('div');
-      text.className = 'mes_text';
-      (message.segments || []).forEach(function(segment){
-        var div = document.createElement('div');
-        div.className = 'mes_segment';
-        div.dataset.kind = segment.kind;
-        if (segment.id) { div.dataset.segmentId = segment.id; }
-        if (segment.kind === 'MARKDOWN') {
-          renderPlain(segment, div);
-          pendingMarkdown.push({ div: div, raw: segment.raw });
-        } else {
-          renderPre(segment, div);
-        }
-        text.appendChild(div);
-      });
-      block.appendChild(text);
-      mes.appendChild(block);
-      root.appendChild(mes);
-      report();
-
-      (async function(){
-        var libs = {};
-        var loadErrors = [];
-        try { libs.MarkdownIt = window.MarkdownIt; if (!libs.MarkdownIt) throw 0; } catch(e){ loadErrors.push('markdown-it'); }
-        try { libs.DOMPurify = window.DOMPurify; if (!libs.DOMPurify) throw 0; } catch(e){ loadErrors.push('dompurify'); }
-        try { libs.hljs = window.hljs; if (!libs.hljs) throw 0; } catch(e){ loadErrors.push('highlight.js'); }
-        try { libs.taskLists = window.MarkdownItTaskLists; if (!libs.taskLists) throw 0; } catch(e){ loadErrors.push('task-lists'); }
-        try { libs.katex = window.katex; if (!libs.katex) throw 0; } catch(e){ loadErrors.push('katex'); }
-        try { libs.mermaid = window.mermaid; if (!libs.mermaid) throw 0; } catch(e){ loadErrors.push('mermaid'); }
-        window.__stLoadErrors = loadErrors;
-        if (!libs.MarkdownIt || !libs.DOMPurify) { report(); return; }
-
-        try {
-          var md = new libs.MarkdownIt({
-            html: true,
-            xhtmlOut: false,
-            breaks: true,
-            langPrefix: 'language-',
-            linkify: true,
-            typographer: true,
-            quotes: '\u201C\u201D\u2018\u2019',
-            highlight: function(str, lang){
-              if (lang && libs.hljs && libs.hljs.getLanguage(lang)) {
-                try {
-                  return '<pre class="hljs"><code>' +
-                    libs.hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
-                    '</code></pre>';
-                } catch(e){}
+      // ── RikkahubDomBridge：宿主增量更新接口（纯文本，esc 后 textContent 替换，无 XSS） ──
+      window.RikkahubDomBridge = {
+        applySegmentPatch: function(patchJson){
+          try {
+            var patches = JSON.parse(patchJson);
+            (patches || []).forEach(function(p){
+              var el = root.querySelector('[data-segment-id="' + p.segmentId + '"]');
+              if (!el) {
+                el = document.createElement(p.kind === 'MARKDOWN' ? 'p' : 'div');
+                el.dataset.segmentId = p.segmentId;
+                el.dataset.kind = p.kind;
+                if (p.kind !== 'MARKDOWN') { el.className = p.kind === 'STATUS_BLOCK' ? 'status_block' : 'json_patch'; }
+                root.appendChild(el);
+                pendingMarkdown.push({ el: el, raw: p.raw });
               }
-              return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>';
-            }
-          });
-          if (libs.taskLists) { md.use(libs.taskLists, { enabled: true, label: true, labelAfter: true }); }
-          if (libs.katex) {
-            try {
-              var vscodeKatex = window.vscodeKatex;
-              md.use(vscodeKatex, { katex: libs.katex });
-            } catch(e){}
-          }
-          var defaultFenceRenderer = md.renderer.rules.fence || function(tokens, idx, options, env, renderer){
-            return renderer.renderToken(tokens, idx, options);
-          };
-          md.renderer.rules.fence = function(tokens, idx, options, env, renderer){
-            var token = tokens[idx];
-            var info = token.info ? md.utils.unescapeAll(token.info).trim() : '';
-            if (info === 'mermaid') {
-              return '<div class="mermaid" id="m-' + Math.random().toString(36).substr(2, 9) + '">' + token.content.trim() + '</div>';
-            }
-            return defaultFenceRenderer(tokens, idx, options, env, renderer);
-          };
-          if (libs.mermaid) {
-            libs.mermaid.initialize({
-              startOnLoad: false,
-              theme: (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'default',
-              securityLevel: 'strict',
-              fontFamily: 'inherit'
+              if (p.kind === 'MARKDOWN') {
+                el.textContent = p.raw;
+                el.dataset.rendered = 'plain';
+              } else {
+                el.innerHTML = '<pre>' + esc(p.raw) + '</pre>';
+              }
             });
-          }
+            report();
+          } catch(e){}
+        },
+        renderMarkdownAll: function(){
+          renderPendingMarkdown();
+          report();
+        }
+      };
 
-          pendingMarkdown.forEach(function(item){
-            var rawHtml = md.render(item.raw);
-            var cleanHtml = libs.DOMPurify.sanitize(rawHtml, {
-              USE_PROFILES: { html: true, svg: false, mathMl: false },
-              ADD_TAGS: ['details', 'summary', 'font', 'mark', 'kbd'],
-              ADD_ATTR: ['open', 'color', 'face', 'size', 'target', 'class'],
-              FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'frame', 'frameset', 'noframes', 'meta', 'base', 'link', 'form', 'input', 'button', 'textarea', 'select', 'option'],
-              FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onmouseout', 'onfocus', 'onblur', 'onchange', 'onsubmit', 'formaction', 'srcdoc'],
-              ALLOW_DATA_ATTR: false,
-              ALLOW_UNKNOWN_PROTOCOLS: false
-            });
-            item.div.innerHTML = cleanHtml;
-            item.div.dataset.rendered = 'rich';
-          });
+      function buildDom(){
+        var mes = document.createElement('div');
+        mes.className = 'mes ' + String(message.role || 'assistant').toLowerCase();
+        mes.dataset.messageId = message.id;
+        mes.dataset.rikkahubRole = String(message.role || 'assistant').toLowerCase();
+        var block = document.createElement('div');
+        block.className = 'mes_block';
+        if (message.name) {
+          var nameText = document.createElement('div');
+          nameText.className = 'name_text';
+          var nameEl = document.createElement('span');
+          nameEl.className = 'name ch_name';
+          nameEl.textContent = message.name;
+          nameText.appendChild(nameEl);
+          block.appendChild(nameText);
+        }
+        var text = document.createElement('div');
+        text.className = 'mes_text';
+        (message.segments || []).forEach(function(segment){
+          if (segment.kind === 'MARKDOWN') {
+            var p = document.createElement('p');
+            p.dataset.kind = segment.kind;
+            if (segment.id) { p.dataset.segmentId = segment.id; }
+            renderPlain(segment, p);
+            text.appendChild(p);
+            pendingMarkdown.push({ el: p, raw: segment.raw });
+          } else {
+            var div = document.createElement('div');
+            div.dataset.kind = segment.kind;
+            if (segment.id) { div.dataset.segmentId = segment.id; }
+            div.className = segment.kind === 'STATUS_BLOCK' ? 'status_block' : 'json_patch';
+            renderPre(segment, div);
+            text.appendChild(div);
+          }
+        });
+        block.appendChild(text);
+        mes.appendChild(block);
+        root.appendChild(mes);
+        report();
+      }
 
-          if (libs.mermaid) {
-            var mermaidNodes = document.querySelectorAll('.mermaid');
-            if (mermaidNodes.length > 0) {
-              try { await libs.mermaid.run({ nodes: mermaidNodes }); } catch(e){}
+      function renderPendingMarkdown(){
+        if (!libs.MarkdownIt || !libs.DOMPurify) { return; }
+        var md = buildMarkdownRenderer();
+        pendingMarkdown.forEach(function(item){
+          if (item.el.dataset.rendered === 'rich') return;
+          var rawHtml = md.render(item.raw);
+          var cleanHtml = libs.DOMPurify.sanitize(rawHtml, {
+            USE_PROFILES: { html: true, svg: false, mathMl: false },
+            ADD_TAGS: ['details', 'summary', 'font', 'mark', 'kbd'],
+            ADD_ATTR: ['open', 'color', 'face', 'size', 'target', 'class'],
+            FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'frame', 'frameset', 'noframes', 'meta', 'base', 'link', 'form', 'input', 'button', 'textarea', 'select', 'option'],
+            FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onmouseout', 'onfocus', 'onblur', 'onchange', 'onsubmit', 'formaction', 'srcdoc'],
+            ALLOW_DATA_ATTR: false,
+            ALLOW_UNKNOWN_PROTOCOLS: false
+          });
+          item.el.innerHTML = cleanHtml;
+          item.el.dataset.rendered = 'rich';
+        });
+        if (libs.mermaid) {
+          var mermaidNodes = root.querySelectorAll('.mermaid');
+          if (mermaidNodes.length > 0) {
+            try { libs.mermaid.run({ nodes: mermaidNodes }); } catch(e){}
+          }
+        }
+        if (libs.katex) {
+          root.querySelectorAll('.math.inline').forEach(function(el){
+            try { libs.katex.render(el.textContent, el, { throwOnError: false, errorColor: '#cc0000' }); } catch(e){}
+          });
+          root.querySelectorAll('.math.block').forEach(function(el){
+            try { libs.katex.render(el.textContent, el, { displayMode: true, throwOnError: false, errorColor: '#cc0000' }); } catch(e){}
+          });
+        }
+        root.querySelectorAll('a[href^="http"]').forEach(function(link){
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+        });
+      }
+
+      function buildMarkdownRenderer(){
+        var md = new libs.MarkdownIt({
+          html: true,
+          xhtmlOut: false,
+          breaks: true,
+          langPrefix: 'language-',
+          linkify: true,
+          typographer: true,
+          quotes: '\u201C\u201D\u2018\u2019',
+          highlight: function(str, lang){
+            if (lang && libs.hljs && libs.hljs.getLanguage(lang)) {
+              try {
+                return '<pre class="hljs"><code>' +
+                  libs.hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
+                  '</code></pre>';
+              } catch(e){}
             }
+            return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>';
           }
-          if (libs.katex) {
-            document.querySelectorAll('.math.inline').forEach(function(el){
-              try { libs.katex.render(el.textContent, el, { throwOnError: false, errorColor: '#cc0000' }); } catch(e){}
-            });
-            document.querySelectorAll('.math.block').forEach(function(el){
-              try { libs.katex.render(el.textContent, el, { displayMode: true, throwOnError: false, errorColor: '#cc0000' }); } catch(e){}
-            });
+        });
+        if (libs.taskLists) { md.use(libs.taskLists, { enabled: true, label: true, labelAfter: true }); }
+        if (libs.katex && window.vscodeKatex) {
+          try { md.use(window.vscodeKatex, { katex: libs.katex }); } catch(e){}
+        }
+        var defaultFenceRenderer = md.renderer.rules.fence || function(tokens, idx, options, env, renderer){
+          return renderer.renderToken(tokens, idx, options);
+        };
+        md.renderer.rules.fence = function(tokens, idx, options, env, renderer){
+          var token = tokens[idx];
+          var info = token.info ? md.utils.unescapeAll(token.info).trim() : '';
+          if (info === 'mermaid') {
+            return '<div class="mermaid" id="m-' + Math.random().toString(36).substr(2, 9) + '">' + token.content.trim() + '</div>';
           }
-          document.querySelectorAll('a[href^="http"]').forEach(function(link){
-            link.target = '_blank';
-            link.rel = 'noopener noreferrer';
+          return defaultFenceRenderer(tokens, idx, options, env, renderer);
+        };
+        return md;
+      }
+
+      // 库从内联全局取（Task 1 已本地化）
+      try { libs.MarkdownIt = window.MarkdownIt; } catch(e){}
+      try { libs.DOMPurify = window.DOMPurify; } catch(e){}
+      try { libs.hljs = window.hljs; } catch(e){}
+      try { libs.taskLists = window.MarkdownItTaskLists; } catch(e){}
+      try { libs.katex = window.katex; } catch(e){}
+      try { libs.mermaid = window.mermaid; } catch(e){}
+      if (libs.mermaid) {
+        try {
+          libs.mermaid.initialize({
+            startOnLoad: false,
+            theme: (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'default',
+            securityLevel: 'strict',
+            fontFamily: 'inherit'
           });
         } catch(e){}
-        report();
-      })();
+      }
 
+      buildDom();
+      if (libs.MarkdownIt && libs.DOMPurify) {
+        try { renderPendingMarkdown(); } catch(e){}
+      }
+      report();
       window.addEventListener('load', report);
       setTimeout(report, 100);
       setTimeout(report, 400);

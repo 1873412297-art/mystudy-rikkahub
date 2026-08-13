@@ -51,5 +51,13 @@ internal fun buildStableMessageHtml(
     return template
         .replace(VENDOR_LIBS_PLACEHOLDER, vendorScripts)
         .replace(VENDOR_STYLES_PLACEHOLDER, vendorStyles)
+        .replace("{{CSS_VAR_BG}}", "transparent")
+        .replace("{{CSS_VAR_SURFACE}}", "rgba(127,127,127,.08)")
+        .replace("{{CSS_VAR_SURFACE_VARIANT}}", "rgba(80,120,255,.10)")
+        .replace("{{CSS_VAR_TEXT}}", "inherit")
+        .replace("{{CSS_VAR_TEXT_SECONDARY}}", "inherit")
+        .replace("{{CSS_VAR_BORDER}}", "rgba(127,127,127,.25)")
+        .replace("{{CSS_VAR_ACCENT}}", "#4a90d9")
+        .replace("{{EXTRA_CSS}}", "")
         .replace(MESSAGE_JSON_PLACEHOLDER, messageJson)
 }

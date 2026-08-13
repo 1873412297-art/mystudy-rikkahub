@@ -40,8 +40,15 @@ class StableMessageTemplateContractTest {
         assertTrue(template.contains("mes_block"))
         assertTrue(template.contains("mes_text"))
         assertTrue(template.contains("dataset.segmentId"))
-        assertTrue(template.contains("ch_name"))
+        assertTrue(template.contains("'name ch_name'"))
         assertTrue(template.contains("dataset.messageId"))
+        assertTrue(template.contains("{{CSS_VAR_BG}}"))
+        assertTrue(template.contains("{{EXTRA_CSS}}"))
+        assertTrue(template.contains("RikkahubDomBridge"))
+        assertTrue(template.contains("applySegmentPatch"))
+        assertTrue(template.contains("renderMarkdownAll"))
+        assertFalse(template.contains("mes_segment"))
+        assertFalse(template.contains("mes_header"))
     }
 
     @Test
