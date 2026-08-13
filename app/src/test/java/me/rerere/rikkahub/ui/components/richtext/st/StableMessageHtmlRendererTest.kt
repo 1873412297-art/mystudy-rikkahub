@@ -71,5 +71,46 @@ class StableMessageHtmlRendererTest {
         assertTrue(html.contains("/* */ style>"))
         assertFalse(html.contains("</style><script>"))
     }
+
+    @Test
+    fun messageTextWithPlaceholderSyntaxIsNotReplacedByExtraCss() {
+        val message = StableDomMessage(
+            id = "m",
+            role = StableDomRole.ASSISTANT,
+            segments = listOf(StableDomSegment("s1", RichTextSegment.Kind.MARKDOWN, "literal {{EXTRA_CSS}} text")),
+            streaming = false,
+        )
+        val template = "<style>{{EXTRA_CSS}}</style>{{MESSAGE_JSON}}"
+        val html = buildStableMessageHtml(
+            message = message,
+            template = template,
+            extraCss = "body{color:red}",
+        )
+        // 消息文本中的占位符字样保持原样（单遍替换不污染 JSON）
+        assertTrue(html.contains("literal {{EXTRA_CSS}} text"))
+        // 真实占位符仍被替换
+        assertFalse(html.contains("<style>{{EXTRA_CSS}}</style>"))
+        assertTrue(html.contains("body{color:red}"))
+    }
+
+    @Test
+    fun extraCssContainingPlaceholderSyntaxDoesNotPolluteMessageJson() {
+        val message = StableDomMessage(
+            id = "m",
+            role = StableDomRole.ASSISTANT,
+            segments = listOf(StableDomSegment("s1", RichTextSegment.Kind.MARKDOWN, "hello")),
+            streaming = false,
+        )
+        val template = "<style>{{EXTRA_CSS}}</style>{{MESSAGE_JSON}}"
+        val html = buildStableMessageHtml(
+            message = message,
+            template = template,
+            extraCss = ".x::after{content:\"{{MESSAGE_JSON}}\"}",
+        )
+        // 卡 CSS 中的 {{MESSAGE_JSON}} 字样不被替换成消息 JSON
+        assertTrue(html.contains("content:\"{{MESSAGE_JSON}}\""))
+        assertTrue(html.contains("\"id\":\"m\""))
+        assertFalse(html.contains("<style>{{EXTRA_CSS}}</style>"))
+    }
 }
 

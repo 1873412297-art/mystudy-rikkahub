@@ -9,11 +9,6 @@ private val json = Json {
     encodeDefaults = true
 }
 
-private const val MESSAGE_JSON_PLACEHOLDER = "{{MESSAGE_JSON}}"
-private const val VENDOR_LIBS_PLACEHOLDER = "{{VENDOR_LIBS}}"
-private const val VENDOR_STYLES_PLACEHOLDER = "{{VENDOR_STYLES}}"
-private const val EXTRA_CSS_PLACEHOLDER = "{{EXTRA_CSS}}"
-
 /** CSS 变量默认值：调用方（MarkdownBlock 传 Material 色值）未提供时回退到中性值。 */
 private val DEFAULT_CSS_VARIABLES = mapOf(
     "CSS_VAR_BG" to "transparent",
@@ -58,6 +53,9 @@ internal fun buildStableMessageHtml(
     return buildStableMessageHtml(message, template, vendorScripts, vendorStyles, cssVariables, extraCss)
 }
 
+/** 单遍占位符正则：一次遍历替换所有 {{XXX}}，替换值不会再次被扫描（双向防碰撞）。 */
+private val PLACEHOLDER_REGEX = Regex("\\{\\{([A-Z_0-9]+)}}")
+
 /** 纯函数版本：给定模板与内联产物注入（JVM 测试用）。 */
 internal fun buildStableMessageHtml(
     message: StableDomMessage,
@@ -70,14 +68,15 @@ internal fun buildStableMessageHtml(
     // 安全嵌入 JSON：HTML 对 script 闭合不区分大小写，把 < 转义为 \u003c（JSON 字符串内的
     // \u003c 会被解析回 <），彻底阻断 </script / </SCRIPT / </ScRiPt 等变体逃逸。
     val messageJson = json.encodeToString(message).replace("<", "\\u003c")
-    val variablesInjected = (DEFAULT_CSS_VARIABLES + cssVariables).entries.fold(template) { acc, (key, value) ->
-        acc.replace("{{$key}}", value)
+    // 单遍替换：消息文本/卡 CSS 中出现的 "{{XXX}}" 字样不会被后序替换污染，
+    // 替换值（含 CSS 中的 {{MESSAGE_JSON}} 等）也不会被再次扫描。
+    val values = (DEFAULT_CSS_VARIABLES + cssVariables) + mapOf(
+        "VENDOR_LIBS" to vendorScripts,
+        "VENDOR_STYLES" to vendorStyles,
+        "MESSAGE_JSON" to messageJson,
+        "EXTRA_CSS" to (extraCss?.let { CssSanitizer.sanitize(it) } ?: ""),
+    )
+    return PLACEHOLDER_REGEX.replace(template) { match ->
+        values[match.groupValues[1]] ?: match.value
     }
-    // 顺序要求：MESSAGE_JSON 必须先于 EXTRA_CSS 替换——EXTRA_CSS 来自角色卡 CSS，若其中
-    // 含 "{{MESSAGE_JSON}}" 字样，后替换的 MESSAGE_JSON 会污染已注入的 CSS。
-    return variablesInjected
-        .replace(VENDOR_LIBS_PLACEHOLDER, vendorScripts)
-        .replace(VENDOR_STYLES_PLACEHOLDER, vendorStyles)
-        .replace(MESSAGE_JSON_PLACEHOLDER, messageJson)
-        .replace(EXTRA_CSS_PLACEHOLDER, extraCss?.let { CssSanitizer.sanitize(it) } ?: "")
 }
