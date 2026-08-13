@@ -294,6 +294,13 @@ fun MarkdownBlock(
                 "CSS_VAR_BORDER" to hex(colorScheme.outlineVariant),
                 "CSS_VAR_ACCENT" to hex(colorScheme.primary),
             )
+            val stableSegments = segments.mapIndexed { index, segment ->
+                StableDomSegment(
+                    id = "segment-$index",
+                    kind = segment.kind,
+                    raw = segment.raw,
+                )
+            }
             MarkdownWebView(
                 content = buildStableMessageHtml(
                     context,
@@ -301,20 +308,16 @@ fun MarkdownBlock(
                         id = normalizedContent.hashCode().toString(),
                         role = stableRole?.toStableDomRole() ?: StableDomRole.ASSISTANT,
                         name = roleName,
-                        segments = segments.mapIndexed { index, segment ->
-                            StableDomSegment(
-                                id = "segment-$index",
-                                kind = segment.kind,
-                                raw = segment.raw,
-                            )
-                        },
-                        streaming = false,
+                        segments = stableSegments,
+                        streaming = streaming,
                     ),
                     cssVariables = cssVariables,
                     extraCss = tavernCardStyle?.css,
                 ),
                 modifier = modifier,
                 isRawHtml = true,
+                streaming = streaming,
+                streamSegments = stableSegments,
                 tavernStyleVersionKey = tavernCardStyle?.versionKey,
             )
             return

@@ -514,6 +514,7 @@ private fun MessagePartsBlock(
                                                 roleName = settings.displaySetting.userNickname.ifBlank { null },
                                                 stableRole = role,
                                                 tavernCardStyle = remember(assistant) { TavernCardStyleResolver.resolve(assistant) },
+                                                streaming = loading,
                                             )
                                         }
                                     }
@@ -535,6 +536,7 @@ private fun MessagePartsBlock(
                                                     roleName = assistant?.name,
                                                     stableRole = role,
                                                     tavernCardStyle = remember(assistant) { TavernCardStyleResolver.resolve(assistant) },
+                                                    streaming = loading,
                                                 )
                                             }
                                         }
@@ -549,6 +551,7 @@ private fun MessagePartsBlock(
                                             roleName = assistant?.name,
                                             stableRole = role,
                                             tavernCardStyle = remember(assistant) { TavernCardStyleResolver.resolve(assistant) },
+                                            streaming = loading,
                                             modifier = Modifier
                                                 .animateContentSize()
                                         )

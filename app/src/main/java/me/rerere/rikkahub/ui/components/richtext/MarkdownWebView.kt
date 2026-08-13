@@ -42,6 +42,8 @@ import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernVari
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernWorldGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.StatusStoreTavernVariableGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScript
+import me.rerere.rikkahub.ui.components.richtext.st.StableDomSegment
+import me.rerere.rikkahub.ui.components.richtext.st.StableSegmentSnapshot
 import org.json.JSONObject
 import org.koin.compose.koinInject
 
@@ -56,7 +58,7 @@ import org.koin.compose.koinInject
  */
 @SuppressLint("ClickableViewAccessibility", "SetJavaScriptEnabled")
 @Composable
-fun MarkdownWebView(
+internal fun MarkdownWebView(
     content: String,
     modifier: Modifier = Modifier,
     isRawHtml: Boolean = false,
@@ -89,6 +91,18 @@ fun MarkdownWebView(
      * 卡样式版本键（变化时触发整文档重载）。
      */
     tavernStyleVersionKey: String? = null,
+    /**
+     * 流式生成中：true 时内容变化走 applySegmentPatch 增量，false 时整文档重载
+     */
+    streaming: Boolean = false,
+    /**
+     * streaming=true 时必传：当前内容的分段（用于段 diff）
+     */
+    streamSegments: List<StableDomSegment>? = null,
+    /**
+     * 初始最小高度（dp），首次上报前占位，避免 0dp 闪烁或 100dp 假高
+     */
+    minHeightDp: Int = 24,
 ) {
     val context = LocalContext.current
     val settingsStore: SettingsStore = koinInject()
@@ -97,7 +111,7 @@ fun MarkdownWebView(
     val appSettings by settingsStore.settingsFlow.collectAsStateWithLifecycle()
     val colorScheme = MaterialTheme.colorScheme
     val density = LocalDensity.current
-    var viewHeight by remember { mutableStateOf(100) }
+    var viewHeight by remember { mutableStateOf(0) }
 
     val bg = colorScheme.surfaceContainerLow
     val text = colorScheme.onSurface
@@ -142,6 +156,17 @@ fun MarkdownWebView(
     }
     // 脚本/宿主事件 → WebView 内 th:<name> DOM CustomEvent
     val tavernWebViewRef = remember { mutableStateOf<WebView?>(null) }
+    // WebView 销毁治理：离开组合时移除 JS 桥、停止加载并销毁原生 WebView。
+    DisposableEffect(Unit) {
+        onDispose {
+            val webView = tavernWebViewRef.value ?: return@onDispose
+            runCatching { webView.removeJavascriptInterface("RikkahubBridge") }
+            runCatching { webView.removeJavascriptInterface("TavernRuntimeBridge") }
+            runCatching { webView.stopLoading() }
+            runCatching { webView.destroy() }
+            tavernWebViewRef.value = null
+        }
+    }
     LaunchedEffect(runtimeController) {
         runtimeController.outboundEvents.collect { (name, payload) ->
             val view = tavernWebViewRef.value ?: return@collect
@@ -156,11 +181,10 @@ fun MarkdownWebView(
 
     val useIframeSandbox = isRawHtml || looksLikeHtmlDocument(content)
     val maxHeightPx = maxHeightDp?.let { with(density) { it.dp.toPx().toInt() } }
-    val renderKey = listOf(
+    // baseKey 不含 content：路径/主题/角色/卡样式变化才整文档重载
+    val baseKey = listOf(
         useIframeSandbox,
         fixedHeight,
-        content.length,
-        content.hashCode(),
         bgHex,
         textHex,
         primaryHex,
@@ -170,7 +194,9 @@ fun MarkdownWebView(
         onSurfaceVariantHex,
         tavernExtraCss,
         tavernStyleVersionKey,
+        streaming,
     ).joinToString("|")
+    val contentKey = "${content.length}|${content.hashCode()}"
 
     Surface(
         modifier = modifier,
@@ -178,10 +204,12 @@ fun MarkdownWebView(
         color = bg,
         tonalElevation = 1.dp,
     ) {
-        // 记录已加载的 (content, useIframeSandbox) 组合，避免 update 块每次 recompose
-        // 都触发 loadDataWithBaseURL —— 重 load 会让 iframe 被推倒重建，高度从 100dp
+        // 记录已加载的 (baseKey, contentKey) 组合，避免 update 块每次 recompose
+        // 都触发 loadDataWithBaseURL —— 重 load 会让 iframe 被推倒重建，高度从占位值
         // 起步重新测量，造成「渲染一半不动」的视觉假象。
-        val lastLoadedKey = remember { mutableStateOf<String?>(null) }
+        val lastBaseKey = remember { mutableStateOf<String?>(null) }
+        val lastContentKey = remember { mutableStateOf<String?>(null) }
+        val lastSegments = remember { mutableStateOf<List<StableDomSegment>>(emptyList()) }
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
@@ -401,29 +429,57 @@ fun MarkdownWebView(
                         buildMarkdownPreviewHtml(context, normalizeRichTextContent(content), colorScheme)
                     }
                     loadDataWithBaseURL("https://rikkahub.local/", html, "text/html", "UTF-8", null)
-                    lastLoadedKey.value = renderKey
+                    lastBaseKey.value = baseKey
+                    lastContentKey.value = contentKey
+                    lastSegments.value = streamSegments.orEmpty()
                 }
             },
             update = { webView ->
-                // 只有 content 或路径模式真正变了才重 load。同 key 的 recompose（比如外层
-                // viewHeight 变化触发的）跳过，让 iframe 自然完成首次加载和高度测量。
-                val key = renderKey
-                if (lastLoadedKey.value != key) {
+                // baseKey（路径/主题/角色/卡样式）变了才整文档重载；
+                // 否则 contentKey 变化时：streaming 走段 diff 增量 patch，非 streaming 才重 load。
+                if (lastBaseKey.value != baseKey) {
                     val html = if (useIframeSandbox) {
                         buildSandboxHostHtml(content, bgHex, textHex, fixedHeight)
                     } else {
                         buildMarkdownPreviewHtml(context, normalizeRichTextContent(content), colorScheme)
                     }
                     webView.loadDataWithBaseURL("https://rikkahub.local/", html, "text/html", "UTF-8", null)
-                    lastLoadedKey.value = key
+                    lastBaseKey.value = baseKey
+                    lastContentKey.value = contentKey
+                    lastSegments.value = streamSegments.orEmpty()
+                    return@AndroidView
+                }
+                if (lastContentKey.value == contentKey) return@AndroidView
+                if (streaming) {
+                    val old = lastSegments.value
+                    val new = streamSegments.orEmpty()
+                    val patches = StableSegmentSnapshot.diff(old, new)
+                    lastSegments.value = new
+                    lastContentKey.value = contentKey
+                    if (patches.isEmpty()) return@AndroidView
+                    val patchJson = JSONObject.quote(StableSegmentSnapshot.encodePatches(patches))
+                    webView.postEvaluateJavascript(
+                        "window.RikkahubDomBridge && window.RikkahubDomBridge.applySegmentPatch($patchJson);"
+                    )
+                } else {
+                    val html = if (useIframeSandbox) {
+                        buildSandboxHostHtml(content, bgHex, textHex, fixedHeight)
+                    } else {
+                        buildMarkdownPreviewHtml(context, normalizeRichTextContent(content), colorScheme)
+                    }
+                    webView.loadDataWithBaseURL("https://rikkahub.local/", html, "text/html", "UTF-8", null)
+                    lastContentKey.value = contentKey
+                    lastSegments.value = streamSegments.orEmpty()
                 }
             },
             // fixedHeight：让 WebView 占满外层 modifier 给的空间（如调用方写了 .height(300.dp)）
-            // 否则按内容自适应到 viewHeight。
+            // 否则按内容自适应到 viewHeight（首次上报前用 minHeightDp 占位）。
             modifier = if (fixedHeight) {
                 Modifier.fillMaxWidth().fillMaxHeight()
             } else {
-                Modifier.fillMaxWidth().height(with(density) { viewHeight.toDp() })
+                Modifier.fillMaxWidth().height(with(density) {
+                    maxOf(viewHeight, with(density) { minHeightDp.dp.toPx() }.toInt()).toDp()
+                })
             },
         )
     }

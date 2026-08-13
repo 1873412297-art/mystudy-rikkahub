@@ -87,6 +87,7 @@ class StableMessageHtmlRenderInstrumentedTest {
 
         assertEquals("爱丽丝", result.getString("name"))
         assertTrue("mes_block", result.getBoolean("hasMesBlock"))
+        assertTrue("name_text", result.getBoolean("hasNameText"))
         assertTrue("segment-id", result.getBoolean("hasSegmentId"))
         val segments = result.getJSONArray("segments")
         assertEquals(3, segments.length())
@@ -116,16 +117,17 @@ class StableMessageHtmlRenderInstrumentedTest {
             view.evaluateJavascript(
                 """
                 (function(){
-                  var result = { ready: false, segments: [], name: '', hasMesBlock: false, hasSegmentId: false, errors: [], jsError: '' };
+                  var result = { ready: false, segments: [], name: '', hasMesBlock: false, hasNameText: false, hasSegmentId: false, errors: [], jsError: '' };
                   try {
-                    var segs = Array.prototype.map.call(document.querySelectorAll('.mes_segment'), function(s){
+                    var segs = Array.prototype.map.call(document.querySelectorAll('.mes_text > [data-kind]'), function(s){
                       return { kind: s.dataset.kind, rendered: s.dataset.rendered || '', innerHTML: s.innerHTML.slice(0, 600) };
                     });
                     var richCount = segs.filter(function(s){ return s.kind === 'MARKDOWN' && s.rendered === 'rich'; }).length;
                     result.segments = segs;
                     result.ready = richCount > 0;
-                    result.name = (document.querySelector('.ch_name') || {}).textContent || '';
+                    result.name = (document.querySelector('.name_text .ch_name') || {}).textContent || '';
                     result.hasMesBlock = !!document.querySelector('.mes_block');
+                    result.hasNameText = !!document.querySelector('.name_text');
                     result.hasSegmentId = !!document.querySelector('[data-segment-id]');
                     result.errors = window.__stLoadErrors || [];
                   } catch(e){ result.jsError = String(e && e.message || e); }
