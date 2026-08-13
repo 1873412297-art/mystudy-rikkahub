@@ -96,6 +96,37 @@
 
 ## Current Status
 
+**2026-08-14：酒馆脚本 API 兼容（子项目 B2a：上下文与事件）。**
+
+- `SillyTavern.getContext()`：宿主推送快照（ChatList 构建 → controller.setContext 哈希去重 → th:context_updated → JS 缓存同步返回）；
+  数据面：chat（最近 50 条/isCurrent/纯文本 2000 截断）+ character/user/worldInfo/variables/onlineStatus
+- `window.event_types` 常量表（ST 命名）；`window.SillyTavern.getContext/eventSource/event_types`
+- 宿主事件扩面：GENERATION_STARTED/MESSAGE_SENT/MESSAGE_RECEIVED/MESSAGE_EDITED/MESSAGE_DELETED/MESSAGE_SWIPED/
+  CHARACTER_MESSAGE_RENDERED/USER_MESSAGE_RENDERED；旧事件名保留并列
+- messages.getCurrent 数据源切换到快照 chat 当前消息（无快照回退单消息注入）
+- 验证：`:app:testDebugUnitTest`/`:app:compileDebugKotlin`/`:app:assembleDebug` 全绿
+  （**86 类 / 606 测试 0 失败**，2026-08-14）
+- 模拟器冒烟 ✅（2026-08-14，emulator-5554 + 临时 TavernRuntimeSmokeActivity 脚本订阅法，临时代码已还原）：
+  - 酒馆对话（Yes, My Liege / Mock-1）发送消息 → 用户消息气泡渲染、assistant 回复持久化（DB message_node 校验
+    messageId 与 MESSAGE_RECEIVED 事件载荷一致）、全程 logcat 无 FATAL
+  - getContext 端到端：宿主 setContext → th:context_updated → `SillyTavern.getContext()` 同步返回
+    chat(2)/character/user/variables.hp/onlineStatus ✅；messages.getCurrent 返回快照 isCurrent 条目 ✅；
+    event_types 9 常量 ✅
+  - 宿主事件端到端（真实 ChatService 发送路径 → 总线 → controller 订阅过滤 → DOM th:<name> → 脚本）：
+    MESSAGE_SENDING/MESSAGE_SENT/GENERATION_STARTED/GENERATION_FINISHED/MESSAGE_RECEIVED 全部送达 ✅
+  - 未覆盖：MESSAGE_EDITED/DELETED/SWIPED 脚本侧端到端（发射点已接入，冒烟未逐条触发 UI 操作）；
+    render 族事件（MESSAGE_RENDERED/CHARACTER_MESSAGE_RENDERED/USER_MESSAGE_RENDERED）未在冒烟中观察到
+- 已知待办（B2b 或后续）：
+  - render 族事件接线缺口：普通 markdown 文本消息走 MarkdownBlock → 内部 MarkdownWebView 调用未传
+    `tavernConversationId`/`tavernMessageRole`（仅 HTML 模式/状态块路径传了）→ onPageFinished 渲染事件对常规消息
+    实际不发射，需在 MarkdownBlock 增加透传参数（Task 5 收尾遗漏）
+  - 快照推送时机：WebView 整文档重载后新文档 stContext 为 null，宿主不重推（快照哈希未变）——脚本在重载后首次
+    getContext 返回 null，直到快照下次变化；与 ST「更新即推送」语义一致，是否补「加载后重推」待议
+- 待办：子项目 B2b（MacroHelper/registerMacro、SlashCommandParser/registerSlashCommand、内建斜杠命令、
+  getRequestHeaders、MESSAGE_SENDING mutate 语义）
+- 计划/设计：`docs/superpowers/specs/2026-08-14-tavern-script-api-compat-design.md`、
+  `docs/superpowers/plans/2026-08-14-tavern-script-api-compat.md`
+
 **2026-08-13：Android 渲染链路提升（子项目 B1）。**
 
 - st-message.html 重建为 ST 默认形状（.mes_text > p 分段、.name_text/.ch_name、mes_buttons 占位、CSS 变量默认主题）；
