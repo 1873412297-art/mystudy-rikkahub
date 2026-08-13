@@ -66,6 +66,31 @@ internal fun buildTavernRuntimeScript(): String = """
     emit: function(name, payload){ return call('events.emit', { name: name, payload: payload || null }); }
   };
 
+  // ── SillyTavern.getContext()：宿主推送快照（th:context_updated 内部订阅，无需权限） ──
+  var stContext = null;
+  (function(){
+    var listener = function(ev){ stContext = ev.detail; };
+    document.addEventListener('th:context_updated', listener);
+  })();
+
+  window.event_types = {
+    GENERATION_STARTED: 'GENERATION_STARTED',
+    MESSAGE_SENT: 'MESSAGE_SENT',
+    MESSAGE_RECEIVED: 'MESSAGE_RECEIVED',
+    MESSAGE_EDITED: 'MESSAGE_EDITED',
+    MESSAGE_DELETED: 'MESSAGE_DELETED',
+    MESSAGE_SWIPED: 'MESSAGE_SWIPED',
+    CHARACTER_MESSAGE_RENDERED: 'CHARACTER_MESSAGE_RENDERED',
+    USER_MESSAGE_RENDERED: 'USER_MESSAGE_RENDERED',
+    MESSAGE_RENDERED: 'MESSAGE_RENDERED'
+  };
+
+  window.SillyTavern = window.SillyTavern || {
+    getContext: function(){ return stContext; },
+    eventSource: eventSource,
+    event_types: window.event_types
+  };
+
   var api = {
     runtime: {
       ping: function(){ return call('runtime.ping', {}); }
