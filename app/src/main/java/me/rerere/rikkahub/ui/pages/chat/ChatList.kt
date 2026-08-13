@@ -82,6 +82,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceAtLeast
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.CoroutineScope
@@ -89,14 +90,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.data.model.AuthorNote
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
+import me.rerere.rikkahub.data.model.TavernCharacterCard
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.components.message.ChatMessage
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernContextSnapshotInput
+import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernContextSnapshot
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
 import me.rerere.rikkahub.ui.components.ui.ListSelectableItem
 import me.rerere.rikkahub.ui.components.ui.RabbitLoadingIndicator
@@ -106,6 +111,7 @@ import me.rerere.rikkahub.ui.theme.ChatFontProvider
 import me.rerere.rikkahub.utils.plus
 import kotlin.math.roundToInt
 import kotlin.uuid.Uuid
+import org.koin.compose.koinInject
 
 private const val TAG = "ChatList"
 private const val LoadingIndicatorKey = "LoadingIndicator"
@@ -278,6 +284,39 @@ private fun ChatListNormal(
     }
     val lastMessageIndex = conversation.messageNodes.lastIndex
 
+    // 酒馆上下文快照（会话级构建一次）：SillyTavern.getContext 数据源，经 ChatMessage →
+    // MarkdownWebView 传入 TavernRuntimeController.setContext（哈希去重后推送 WebView）。
+    val statusVariableStore: StatusVariableStore = koinInject()
+    val statusVariables by statusVariableStore.getState(conversation.id).collectAsStateWithLifecycle()
+    val tavernCharacterCard = remember(assistant) {
+        assistant?.tavernCardJson?.let { TavernCharacterCard.fromJson(it) }
+    }
+    val tavernContextSnapshot = remember(
+        conversation.messageNodes,
+        conversation.id,
+        assistant,
+        settings.displaySetting.userNickname,
+        settings.lorebooks,
+        conversation.lorebookIds,
+        statusVariables,
+        loading,
+    ) {
+        val worldEntries = settings.lorebooks
+            .filter { lorebook -> conversation.lorebookIds.contains(lorebook.id) }
+            .flatMap { lorebook -> lorebook.entries.map { it.name to it.content } }
+        buildTavernContextSnapshot(
+            TavernContextSnapshotInput(
+                conversation = conversation,
+                assistant = assistant,
+                characterCard = tavernCharacterCard,
+                userName = settings.displaySetting.userNickname.ifBlank { "User" },
+                isGenerating = loading,
+                variables = statusVariables,
+                worldEntries = worldEntries,
+            )
+        )
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize(),
@@ -343,6 +382,7 @@ private fun ChatListNormal(
                             model = node.currentMessage.modelId?.let(modelById::get),
                             assistant = assistant,
                             tavernConversationId = conversation.id,
+                            tavernContextSnapshot = tavernContextSnapshot,
                             runtimeState = if (assistant?.assistantType == AssistantType.GROUP) {
                                 conversation.groupRuntimeState
                             } else {

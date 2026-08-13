@@ -30,6 +30,7 @@ import kotlin.math.abs
 import kotlin.uuid.Uuid
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.core.MessageRole
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
@@ -84,6 +85,11 @@ internal fun MarkdownWebView(
     /** 消息角色（渲染事件细分：assistant → CHARACTER_MESSAGE_RENDERED，user → USER_MESSAGE_RENDERED） */
     tavernMessageRole: MessageRole? = null,
     tavernCurrentMessage: JsonElement? = null,
+    /**
+     * 上下文快照（SillyTavern.getContext 数据源；null 时不推送）。
+     * 宿主 ChatList 构建 → controller.setContext 哈希去重 → th:context_updated DOM 事件。
+     */
+    tavernContextSnapshot: JsonObject? = null,
     /**
      * STABLE_DOM 文档追加注入的角色卡 CSS（经 CssSanitizer 清洗后内联 <style>）。
      * 目前 CSS 实际注入发生在 MarkdownBlock 的 buildStableMessageHtml 构建期（成品 HTML 已含
@@ -153,8 +159,10 @@ internal fun MarkdownWebView(
     DisposableEffect(runtimeController) {
         onDispose { runtimeController.cancelHostEventCollection() }
     }
-    // 宿主注入当前消息（messages.getCurrent 的数据源）
-    LaunchedEffect(runtimeController, tavernCurrentMessage) {
+    // 宿主注入当前消息（messages.getCurrent 的数据源）与上下文快照（getContext 数据源）。
+    // setContext 内部按内容哈希去重，LaunchedEffect 每次 key 变化调用即可。
+    LaunchedEffect(runtimeController, tavernCurrentMessage, tavernContextSnapshot) {
+        tavernContextSnapshot?.let { runtimeController.setContext(it) }
         tavernCurrentMessage?.let { runtimeController.setCurrentMessage(it) }
     }
     // 脚本/宿主事件 → WebView 内 th:<name> DOM CustomEvent

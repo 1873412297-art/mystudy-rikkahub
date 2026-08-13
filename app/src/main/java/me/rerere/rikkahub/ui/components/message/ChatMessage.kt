@@ -131,6 +131,11 @@ fun ChatMessage(
      * 且 messages.getCurrent 返回当前消息 JSON。
      */
     tavernConversationId: kotlin.uuid.Uuid? = null,
+    /**
+     * 酒馆上下文快照（SillyTavern.getContext 数据源，会话级由 ChatList 构建）。
+     * 透传给消息内的 Tavern WebView，经 TavernRuntimeController.setContext 推送。
+     */
+    tavernContextSnapshot: kotlinx.serialization.json.JsonObject? = null,
 ) {
     val message = node.messages[node.selectIndex]
     val tavernCurrentMessage = remember(message) {
@@ -230,6 +235,7 @@ fun ChatMessage(
                     onUserMessageClick = if (isRealUserMessage) onEdit else null,
                     tavernConversationId = tavernConversationId,
                     tavernCurrentMessage = tavernCurrentMessage,
+                    tavernContextSnapshot = tavernContextSnapshot,
                 )
             }
 
@@ -401,6 +407,7 @@ private fun MessagePartsBlock(
     onUserMessageClick: (() -> Unit)? = null,
     tavernConversationId: kotlin.uuid.Uuid? = null,
     tavernCurrentMessage: kotlinx.serialization.json.JsonElement? = null,
+    tavernContextSnapshot: kotlinx.serialization.json.JsonObject? = null,
 ) {
     val context = LocalContext.current
     val contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
@@ -490,6 +497,7 @@ private fun MessagePartsBlock(
                                 content = part.text,
                                 tavernConversationId = tavernConversationId,
                                 tavernCurrentMessage = tavernCurrentMessage,
+                                tavernContextSnapshot = tavernContextSnapshot,
                                 tavernMessageRole = role,
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -722,6 +730,7 @@ private fun MessagePartsBlock(
                                 isRawHtml = true,
                                 tavernConversationId = tavernConversationId,
                                 tavernCurrentMessage = tavernCurrentMessage,
+                                tavernContextSnapshot = tavernContextSnapshot,
                                 tavernMessageRole = role,
                                 modifier = Modifier
                                     .fillMaxWidth()
