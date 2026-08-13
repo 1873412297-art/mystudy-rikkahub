@@ -636,6 +636,16 @@ class ChatService(
                     },
                 )
 
+                // 酒馆脚本宿主事件：消息已发送（ST 命名）
+                tavernHostEventBus.emit(
+                    type = TavernHostEventType.MESSAGE_SENT,
+                    conversationId = conversationId,
+                    payload = buildJsonObject {
+                        put("role", userMessage.role.name.lowercase())
+                        put("preview", userMessage.toText().take(500))
+                    },
+                )
+
                 // 开始补全
                 if (answer) {
                     handleMessageComplete(conversationId)
@@ -646,6 +656,19 @@ class ChatService(
                         conversationId = conversationId,
                         payload = buildJsonObject {
                             put("role", "assistant")
+                        },
+                    )
+
+                    // 酒馆脚本宿主事件：assistant 消息完成（ST 命名）
+                    val latestAssistantId = getConversationFlow(conversationId).value.messageNodes
+                        .lastOrNull { it.role == MessageRole.ASSISTANT }
+                        ?.messages?.lastOrNull()?.id?.toString()
+                    tavernHostEventBus.emit(
+                        type = TavernHostEventType.MESSAGE_RECEIVED,
+                        conversationId = conversationId,
+                        payload = buildJsonObject {
+                            put("role", "assistant")
+                            latestAssistantId?.let { put("messageId", it) }
                         },
                     )
                 }
@@ -968,6 +991,11 @@ class ChatService(
         memberId: Uuid? = null,
         allowAutoChain: Boolean = true,
     ) {
+        // 酒馆脚本宿主事件：生成开始（ST 命名）
+        tavernHostEventBus.emit(
+            type = TavernHostEventType.GENERATION_STARTED,
+            conversationId = conversationId,
+        )
         val generationJob = coroutineContext[Job]
         val settings = settingsStore.settingsFlow.first()
         val initialConversation = getConversationFlow(conversationId).value
@@ -1825,6 +1853,12 @@ class ChatService(
         if (!edited) return
 
         saveConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
+
+        tavernHostEventBus.emit(
+            type = TavernHostEventType.MESSAGE_EDITED,
+            conversationId = conversationId,
+            payload = buildJsonObject { put("messageId", messageId.toString()) },
+        )
     }
 
     suspend fun forkConversationAtMessage(
@@ -1868,6 +1902,15 @@ class ChatService(
         }
 
         saveConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
+
+        tavernHostEventBus.emit(
+            type = TavernHostEventType.MESSAGE_SWIPED,
+            conversationId = conversationId,
+            payload = buildJsonObject {
+                put("nodeId", nodeId.toString())
+                put("selectIndex", selectIndex)
+            },
+        )
     }
 
     suspend fun deleteMessage(
@@ -1889,6 +1932,12 @@ class ChatService(
             conversationId = conversationId,
             before = currentConversation,
             after = updatedConversation,
+        )
+
+        tavernHostEventBus.emit(
+            type = TavernHostEventType.MESSAGE_DELETED,
+            conversationId = conversationId,
+            payload = buildJsonObject { put("messageId", messageId.toString()) },
         )
     }
 

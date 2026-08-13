@@ -12,6 +12,16 @@ import kotlin.uuid.Uuid
  * 以 th:<name> 的 DOM CustomEvent 形式送达脚本。
  */
 enum class TavernHostEventType {
+    // SillyTavern event_types 对齐（B2a）
+    GENERATION_STARTED,
+    MESSAGE_SENT,
+    MESSAGE_RECEIVED,
+    MESSAGE_EDITED,
+    MESSAGE_DELETED,
+    MESSAGE_SWIPED,
+    CHARACTER_MESSAGE_RENDERED,
+    USER_MESSAGE_RENDERED,
+    // 旧事件名（兼容保留）
     MESSAGE_SENDING,
     GENERATION_FINISHED,
     MESSAGE_RENDERED,
