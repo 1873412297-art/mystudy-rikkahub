@@ -110,7 +110,13 @@
   `pnpm test`（41）/`typecheck`/`lint`/`build` 全绿
 - 已知 Minor（final review 待裁决）：Task 10 无 seq 水位（快照旧值可能短暂覆盖新变量，自愈）；角色卡加载失败永久缓存无重试；
   JS 整数键序 vs Kotlin LinkedHashMap（fallback HTML 行序）
-- 待办：子项目 B（Android 渲染器提升：样式/性能/主题/脚本 API）；Task 14 浏览器冒烟（需运行中 app web 服务）
+- Task 14 浏览器冒烟 ✅（2026-08-13，模拟器 + DB 注入法）：
+  - 后端：tavern-render 端点三态（null 字段/空卡/404）；snapshot 携带 statusVariables；SSE stream 初始即发 `status_variables` 事件（seq 递增）
+  - web-ui（agent-browser 验证）：状态块文本剥离（气泡无标签泄漏）；HUD 出现/展开（headerLine + HTML section 经无脚本 iframe 渲染
+    「HP 100/100」）；选项 chips 点击 → USER 消息进入对话树；多角色 tabs 切换（艾莉娅/守卫队长分页正确）；无 renderStatus JS 时
+    直接展示服务端 htmlContent（降级路径）
+  - 未覆盖：renderStatus JS 实时重渲染（现有角色卡均无 statusRenderJs）；生成期间变量更新驱动（需真实模型输出 `<UpdateVariable>`）
+- 待办：子项目 B（Android 渲染器提升：样式/性能/主题/脚本 API）
 - 计划/设计：`docs/superpowers/specs/2026-08-13-web-ui-tavern-rendering-design.md`、
   `docs/superpowers/plans/2026-08-13-web-ui-tavern-rendering.md`
 
