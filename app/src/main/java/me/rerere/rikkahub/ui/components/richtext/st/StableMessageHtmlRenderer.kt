@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.components.richtext.st
 
+import android.content.Context
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -7,74 +8,48 @@ private val json = Json {
     encodeDefaults = true
 }
 
-internal fun buildStableMessageHtml(message: StableDomMessage): String {
+private const val MESSAGE_JSON_PLACEHOLDER = "{{MESSAGE_JSON}}"
+private const val VENDOR_LIBS_PLACEHOLDER = "{{VENDOR_LIBS}}"
+private const val VENDOR_STYLES_PLACEHOLDER = "{{VENDOR_STYLES}}"
+
+/**
+ * 从 assets 读取 st-message.html 模板，把本地 vendor 库（assets/html/vendor/）内联为
+ * <script>/<style> 块后注入消息 JSON。运行时无 CDN/file:// 依赖。
+ */
+internal fun buildStableMessageHtml(context: Context, message: StableDomMessage): String {
+    val template = context.assets
+        .open("html/st-message.html")
+        .bufferedReader()
+        .use { it.readText() }
+    val vendorScripts = context.assets.list("html/vendor")
+        .orEmpty()
+        .filter { it.endsWith(".js") }
+        .sorted()
+        .joinToString("\n") { name ->
+            val code = context.assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
+            "<script>$code</script>"
+        }
+    val vendorStyles = context.assets.list("html/vendor")
+        .orEmpty()
+        .filter { it.endsWith(".css") }
+        .sorted()
+        .joinToString("\n") { name ->
+            val css = context.assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
+            "<style>$css</style>"
+        }
+    return buildStableMessageHtml(message, template, vendorScripts, vendorStyles)
+}
+
+/** 纯函数版本：给定模板与内联产物注入（JVM 测试用）。 */
+internal fun buildStableMessageHtml(
+    message: StableDomMessage,
+    template: String,
+    vendorScripts: String = "",
+    vendorStyles: String = "",
+): String {
     val messageJson = json.encodeToString(message).replace("</script>", "<\\/script>")
-    return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width,initial-scale=1.0">
-          <style>
-            html, body { margin: 0; padding: 0; background: transparent; color: inherit; font-family: sans-serif; }
-            .mes { border-radius: 12px; padding: 10px 12px; line-height: 1.55; word-break: break-word; }
-            .mes.assistant { background: rgba(127,127,127,.08); }
-            .mes.user { background: rgba(80,120,255,.10); }
-            .mes_text { display: flex; flex-direction: column; gap: 8px; }
-            .mes_segment[data-kind="STATUS_BLOCK"], .mes_segment[data-kind="JSON_PATCH"] {
-              border: 1px solid rgba(127,127,127,.25);
-              border-radius: 10px;
-              padding: 8px;
-              overflow: auto;
-            }
-            pre { white-space: pre-wrap; margin: 0; }
-          </style>
-        </head>
-        <body>
-          <div data-rikkahub-st-message></div>
-          <script>
-            window.__RIKKAHUB_ST_MESSAGE__ = $messageJson;
-            (function(){
-              var message = window.__RIKKAHUB_ST_MESSAGE__;
-              var root = document.querySelector('[data-rikkahub-st-message]');
-              function esc(text){
-                return String(text).replace(/[&<>"']/g, function(ch){
-                  return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch];
-                });
-              }
-              function renderSegment(segment){
-                var div = document.createElement('div');
-                div.className = 'mes_segment';
-                div.dataset.kind = segment.kind;
-                if (segment.kind === 'MARKDOWN') {
-                  div.innerHTML = esc(segment.raw).replace(/\n/g, '<br>');
-                } else {
-                  div.innerHTML = '<pre>' + esc(segment.raw) + '</pre>';
-                }
-                return div;
-              }
-              var mes = document.createElement('div');
-              mes.className = 'mes ' + String(message.role || 'assistant').toLowerCase();
-              mes.dataset.messageId = message.id;
-              mes.dataset.rikkahubRole = String(message.role || 'assistant').toLowerCase();
-              var text = document.createElement('div');
-              text.className = 'mes_text';
-              (message.segments || []).forEach(function(segment){ text.appendChild(renderSegment(segment)); });
-              mes.appendChild(text);
-              root.appendChild(mes);
-              function report(){
-                try {
-                  var h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
-                  window.RikkahubBridge && window.RikkahubBridge.reportHeight(Math.ceil(h * (window.devicePixelRatio || 1)));
-                } catch(e) {}
-              }
-              report();
-              window.addEventListener('load', report);
-              setTimeout(report, 100);
-              setTimeout(report, 400);
-            })();
-          </script>
-        </body>
-        </html>
-    """.trimIndent()
+    return template
+        .replace(VENDOR_LIBS_PLACEHOLDER, vendorScripts)
+        .replace(VENDOR_STYLES_PLACEHOLDER, vendorStyles)
+        .replace(MESSAGE_JSON_PLACEHOLDER, messageJson)
 }

@@ -3,59 +3,207 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com https://fontsapi.zeoseven.com; connect-src 'self'; frame-src 'self' data: blob:; child-src 'self' data: blob:;">
+  {{VENDOR_STYLES}}
+  {{VENDOR_LIBS}}
   <style>
-    html, body { margin: 0; padding: 0; background: transparent; color: inherit; font-family: sans-serif; }
+    html, body { margin: 0; padding: 0; background: transparent; color: inherit; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; }
     .mes { border-radius: 12px; padding: 10px 12px; line-height: 1.55; word-break: break-word; }
     .mes.assistant { background: rgba(127,127,127,.08); }
     .mes.user { background: rgba(80,120,255,.10); }
+    .mes_header { margin-bottom: 6px; }
+    .ch_name { font-weight: 600; font-size: 13px; opacity: .78; }
     .mes_text { display: flex; flex-direction: column; gap: 8px; }
-    .mes_segment[data-kind="STATUS_BLOCK"], .mes_segment[data-kind="JSON_PATCH"] {
+    .mes_segment { min-width: 0; }
+    .mes_segment[data-kind="STATUS_BLOCK"],
+    .mes_segment[data-kind="JSON_PATCH"],
+    .mes_segment[data-kind="JSON_PATCH_DIAGNOSTIC"] {
       border: 1px solid rgba(127,127,127,.25);
       border-radius: 10px;
       padding: 8px;
       overflow: auto;
     }
-    pre { white-space: pre-wrap; margin: 0; }
+    .mes_segment > pre { white-space: pre-wrap; margin: 0; font-family: 'SF Mono', Monaco, Consolas, 'Roboto Mono', monospace; font-size: 13px; }
+    .mes_segment p { margin: 0 0 10px; }
+    .mes_segment p:last-child { margin-bottom: 0; }
+    .mes_segment h1, .mes_segment h2, .mes_segment h3, .mes_segment h4, .mes_segment h5, .mes_segment h6 { margin: 12px 0 8px; font-weight: 600; line-height: 1.3; }
+    .mes_segment h1 { font-size: 1.5em; }
+    .mes_segment h2 { font-size: 1.3em; border-bottom: 1px solid rgba(127,127,127,.25); padding-bottom: 4px; }
+    .mes_segment h3 { font-size: 1.15em; }
+    .mes_segment ul, .mes_segment ol { margin: 0 0 10px; padding-left: 22px; }
+    .mes_segment li { margin: 2px 0; }
+    .mes_segment a { color: #4a90d9; }
+    .mes_segment code { background: rgba(127,127,127,.16); border-radius: 4px; padding: .15em .35em; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: .88em; }
+    .mes_segment pre { background: rgba(20,20,20,.75); border-radius: 8px; padding: 10px 12px; overflow: auto; margin: 0 0 10px; }
+    .mes_segment pre code { background: transparent; padding: 0; font-size: .86em; }
+    .mes_segment blockquote { margin: 0 0 10px; padding: 2px 12px; border-left: 3px solid rgba(127,127,127,.4); color: inherit; opacity: .85; }
+    .mes_segment table { border-collapse: collapse; margin: 0 0 10px; width: auto; max-width: 100%; }
+    .mes_segment th, .mes_segment td { border: 1px solid rgba(127,127,127,.35); padding: 4px 8px; font-size: .92em; }
+    .mes_segment th { background: rgba(127,127,127,.14); font-weight: 600; }
+    .mes_segment img { max-width: 100%; height: auto; border-radius: 8px; }
+    .mes_segment hr { border: none; border-top: 1px solid rgba(127,127,127,.3); margin: 12px 0; }
+    .mes_segment input[type="checkbox"] { margin-right: 4px; vertical-align: middle; }
+    .mes_segment .task-list-item { list-style-type: none; margin-left: -22px; }
   </style>
 </head>
 <body>
   <div data-rikkahub-st-message></div>
   <script>
+    window.__RIKKAHUB_ST_MESSAGE__ = {{MESSAGE_JSON}};
     (function(){
       var message = window.__RIKKAHUB_ST_MESSAGE__;
       var root = document.querySelector('[data-rikkahub-st-message]');
+      var pendingMarkdown = [];
+
       function esc(text){
         return String(text).replace(/[&<>"']/g, function(ch){
           return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch];
         });
       }
-      function renderSegment(segment){
-        var div = document.createElement('div');
-        div.className = 'mes_segment';
-        div.dataset.kind = segment.kind;
-        if (segment.kind === 'MARKDOWN') {
-          div.innerHTML = esc(segment.raw).replace(/\n/g, '<br>');
-        } else {
-          div.innerHTML = '<pre>' + esc(segment.raw) + '</pre>';
-        }
-        return div;
-      }
-      var mes = document.createElement('div');
-      mes.className = 'mes ' + String(message.role || 'assistant').toLowerCase();
-      mes.dataset.messageId = message.id;
-      mes.dataset.rikkahubRole = String(message.role || 'assistant').toLowerCase();
-      var text = document.createElement('div');
-      text.className = 'mes_text';
-      (message.segments || []).forEach(function(segment){ text.appendChild(renderSegment(segment)); });
-      mes.appendChild(text);
-      root.appendChild(mes);
       function report(){
         try {
           var h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
           window.RikkahubBridge && window.RikkahubBridge.reportHeight(Math.ceil(h * (window.devicePixelRatio || 1)));
-        } catch(e) {}
+        } catch(e){}
       }
+      function renderPlain(segment, div){
+        div.innerHTML = esc(segment.raw).replace(/\n/g, '<br>');
+      }
+      function renderPre(segment, div){
+        div.innerHTML = '<pre>' + esc(segment.raw) + '</pre>';
+      }
+
+      var mes = document.createElement('div');
+      mes.className = 'mes ' + String(message.role || 'assistant').toLowerCase();
+      mes.dataset.messageId = message.id;
+      mes.dataset.rikkahubRole = String(message.role || 'assistant').toLowerCase();
+      var block = document.createElement('div');
+      block.className = 'mes_block';
+      if (message.name) {
+        var header = document.createElement('div');
+        header.className = 'mes_header';
+        var nameSpan = document.createElement('span');
+        nameSpan.className = 'ch_name';
+        nameSpan.textContent = message.name;
+        header.appendChild(nameSpan);
+        block.appendChild(header);
+      }
+      var text = document.createElement('div');
+      text.className = 'mes_text';
+      (message.segments || []).forEach(function(segment){
+        var div = document.createElement('div');
+        div.className = 'mes_segment';
+        div.dataset.kind = segment.kind;
+        if (segment.id) { div.dataset.segmentId = segment.id; }
+        if (segment.kind === 'MARKDOWN') {
+          renderPlain(segment, div);
+          pendingMarkdown.push({ div: div, raw: segment.raw });
+        } else {
+          renderPre(segment, div);
+        }
+        text.appendChild(div);
+      });
+      block.appendChild(text);
+      mes.appendChild(block);
+      root.appendChild(mes);
       report();
+
+      (async function(){
+        var libs = {};
+        var loadErrors = [];
+        try { libs.MarkdownIt = window.MarkdownIt; if (!libs.MarkdownIt) throw 0; } catch(e){ loadErrors.push('markdown-it'); }
+        try { libs.DOMPurify = window.DOMPurify; if (!libs.DOMPurify) throw 0; } catch(e){ loadErrors.push('dompurify'); }
+        try { libs.hljs = window.hljs; if (!libs.hljs) throw 0; } catch(e){ loadErrors.push('highlight.js'); }
+        try { libs.taskLists = window.MarkdownItTaskLists; if (!libs.taskLists) throw 0; } catch(e){ loadErrors.push('task-lists'); }
+        try { libs.katex = window.katex; if (!libs.katex) throw 0; } catch(e){ loadErrors.push('katex'); }
+        try { libs.mermaid = window.mermaid; if (!libs.mermaid) throw 0; } catch(e){ loadErrors.push('mermaid'); }
+        window.__stLoadErrors = loadErrors;
+        if (!libs.MarkdownIt || !libs.DOMPurify) { report(); return; }
+
+        try {
+          var md = new libs.MarkdownIt({
+            html: true,
+            xhtmlOut: false,
+            breaks: true,
+            langPrefix: 'language-',
+            linkify: true,
+            typographer: true,
+            quotes: '\u201C\u201D\u2018\u2019',
+            highlight: function(str, lang){
+              if (lang && libs.hljs && libs.hljs.getLanguage(lang)) {
+                try {
+                  return '<pre class="hljs"><code>' +
+                    libs.hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
+                    '</code></pre>';
+                } catch(e){}
+              }
+              return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>';
+            }
+          });
+          if (libs.taskLists) { md.use(libs.taskLists, { enabled: true, label: true, labelAfter: true }); }
+          if (libs.katex) {
+            try {
+              var vscodeKatex = window.vscodeKatex;
+              md.use(vscodeKatex, { katex: libs.katex });
+            } catch(e){}
+          }
+          var defaultFenceRenderer = md.renderer.rules.fence || function(tokens, idx, options, env, renderer){
+            return renderer.renderToken(tokens, idx, options);
+          };
+          md.renderer.rules.fence = function(tokens, idx, options, env, renderer){
+            var token = tokens[idx];
+            var info = token.info ? md.utils.unescapeAll(token.info).trim() : '';
+            if (info === 'mermaid') {
+              return '<div class="mermaid" id="m-' + Math.random().toString(36).substr(2, 9) + '">' + token.content.trim() + '</div>';
+            }
+            return defaultFenceRenderer(tokens, idx, options, env, renderer);
+          };
+          if (libs.mermaid) {
+            libs.mermaid.initialize({
+              startOnLoad: false,
+              theme: (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'default',
+              securityLevel: 'strict',
+              fontFamily: 'inherit'
+            });
+          }
+
+          pendingMarkdown.forEach(function(item){
+            var rawHtml = md.render(item.raw);
+            var cleanHtml = libs.DOMPurify.sanitize(rawHtml, {
+              USE_PROFILES: { html: true, svg: false, mathMl: false },
+              ADD_TAGS: ['details', 'summary', 'font', 'mark', 'kbd'],
+              ADD_ATTR: ['open', 'color', 'face', 'size', 'target', 'class'],
+              FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'frame', 'frameset', 'noframes', 'meta', 'base', 'link', 'form', 'input', 'button', 'textarea', 'select', 'option'],
+              FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onmouseout', 'onfocus', 'onblur', 'onchange', 'onsubmit', 'formaction', 'srcdoc'],
+              ALLOW_DATA_ATTR: false,
+              ALLOW_UNKNOWN_PROTOCOLS: false
+            });
+            item.div.innerHTML = cleanHtml;
+            item.div.dataset.rendered = 'rich';
+          });
+
+          if (libs.mermaid) {
+            var mermaidNodes = document.querySelectorAll('.mermaid');
+            if (mermaidNodes.length > 0) {
+              try { await libs.mermaid.run({ nodes: mermaidNodes }); } catch(e){}
+            }
+          }
+          if (libs.katex) {
+            document.querySelectorAll('.math.inline').forEach(function(el){
+              try { libs.katex.render(el.textContent, el, { throwOnError: false, errorColor: '#cc0000' }); } catch(e){}
+            });
+            document.querySelectorAll('.math.block').forEach(function(el){
+              try { libs.katex.render(el.textContent, el, { displayMode: true, throwOnError: false, errorColor: '#cc0000' }); } catch(e){}
+            });
+          }
+          document.querySelectorAll('a[href^="http"]').forEach(function(link){
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+          });
+        } catch(e){}
+        report();
+      })();
+
       window.addEventListener('load', report);
       setTimeout(report, 100);
       setTimeout(report, 400);
