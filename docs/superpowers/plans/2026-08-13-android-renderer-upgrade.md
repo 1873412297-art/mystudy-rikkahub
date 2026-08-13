@@ -350,6 +350,7 @@ git commit -m "feat: bundle markdown/katex/mermaid libs locally and inline into 
       var message = window.__RIKKAHUB_ST_MESSAGE__;
       var root = document.getElementById('chat');
       var pendingMarkdown = [];
+      var mesTextEl = null;
       var libs = {};
 
       function esc(text){
@@ -376,18 +377,23 @@ git commit -m "feat: bundle markdown/katex/mermaid libs locally and inline into 
           try {
             var patches = JSON.parse(patchJson);
             (patches || []).forEach(function(p){
-              var el = root.querySelector('[data-segment-id="' + p.segmentId + '"]');
+              var container = mesTextEl || root;
+              var el = container.querySelector('[data-segment-id="' + p.segmentId + '"]');
               if (!el) {
                 el = document.createElement(p.kind === 'MARKDOWN' ? 'p' : 'div');
                 el.dataset.segmentId = p.segmentId;
                 el.dataset.kind = p.kind;
                 if (p.kind !== 'MARKDOWN') { el.className = p.kind === 'STATUS_BLOCK' ? 'status_block' : 'json_patch'; }
-                root.appendChild(el);
-                pendingMarkdown.push({ el: el, raw: p.raw });
+                container.appendChild(el);
               }
               if (p.kind === 'MARKDOWN') {
                 el.textContent = p.raw;
                 el.dataset.rendered = 'plain';
+                var item = null;
+                for (var i = 0; i < pendingMarkdown.length; i++) {
+                  if (pendingMarkdown[i].el === el) { item = pendingMarkdown[i]; break; }
+                }
+                if (item) { item.raw = p.raw; } else { pendingMarkdown.push({ el: el, raw: p.raw }); }
               } else {
                 el.innerHTML = '<pre>' + esc(p.raw) + '</pre>';
               }
@@ -419,6 +425,7 @@ git commit -m "feat: bundle markdown/katex/mermaid libs locally and inline into 
         }
         var text = document.createElement('div');
         text.className = 'mes_text';
+        mesTextEl = text;
         (message.segments || []).forEach(function(segment){
           if (segment.kind === 'MARKDOWN') {
             var p = document.createElement('p');

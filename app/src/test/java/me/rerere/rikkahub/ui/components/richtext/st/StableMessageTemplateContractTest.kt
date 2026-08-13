@@ -4,6 +4,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import me.rerere.rikkahub.ui.components.richtext.RichTextSegment
 
 /**
  * 防止 st-message.html 模板回退为纯文本/CDN 渲染的契约测试。
@@ -68,5 +69,21 @@ class StableMessageTemplateContractTest {
         val html = buildStableMessageHtml(message, template, vendorScripts = "<script>fake-lib.js</script>")
         assertTrue(html.contains("fake-lib.js"))
         assertFalse(html.contains("{{VENDOR_LIBS}}"))
+    }
+
+    @Test
+    fun rendererOutputHasNoResidualPlaceholders() {
+        val message = StableDomMessage(
+            id = "m1",
+            role = StableDomRole.ASSISTANT,
+            segments = listOf(
+                StableDomSegment(id = "s0", kind = RichTextSegment.Kind.MARKDOWN, raw = "hello"),
+                StableDomSegment(id = "s1", kind = RichTextSegment.Kind.STATUS_BLOCK, raw = "<status_block>"),
+                StableDomSegment(id = "s2", kind = RichTextSegment.Kind.JSON_PATCH, raw = "<json_patch>"),
+            ),
+            streaming = false,
+        )
+        val html = buildStableMessageHtml(message, template)
+        assertFalse(html.contains("{{"))
     }
 }
