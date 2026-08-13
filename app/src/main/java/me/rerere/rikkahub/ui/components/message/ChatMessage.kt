@@ -77,6 +77,7 @@ import me.rerere.hugeicons.stroke.Video01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.ai.status.StatusBlockExtractor
+import me.rerere.rikkahub.data.ai.status.TavernCardStyleResolver
 import me.rerere.rikkahub.data.ai.transformers.replaceResidualUserName
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
@@ -509,7 +510,10 @@ private fun MessagePartsBlock(
                                                     scope = AssistantAffectScope.USER,
                                                     visual = true,
                                                 ),
-                                                onClickCitation = handleClickCitation
+                                                onClickCitation = handleClickCitation,
+                                                roleName = settings.displaySetting.userNickname.ifBlank { null },
+                                                stableRole = role,
+                                                tavernCardStyle = remember(assistant) { TavernCardStyleResolver.resolve(assistant) },
                                             )
                                         }
                                     }
@@ -528,6 +532,9 @@ private fun MessagePartsBlock(
                                                         visual = true,
                                                     ),
                                                     onClickCitation = handleClickCitation,
+                                                    roleName = assistant?.name,
+                                                    stableRole = role,
+                                                    tavernCardStyle = remember(assistant) { TavernCardStyleResolver.resolve(assistant) },
                                                 )
                                             }
                                         }
@@ -539,6 +546,9 @@ private fun MessagePartsBlock(
                                                 visual = true,
                                             ),
                                             onClickCitation = handleClickCitation,
+                                            roleName = assistant?.name,
+                                            stableRole = role,
+                                            tavernCardStyle = remember(assistant) { TavernCardStyleResolver.resolve(assistant) },
                                             modifier = Modifier
                                                 .animateContentSize()
                                         )

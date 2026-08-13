@@ -90,11 +90,14 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.ai.core.MessageRole
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Download04
 import me.rerere.hugeicons.stroke.Tick01
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.ai.transformers.findBareJsonPatch
+import me.rerere.rikkahub.data.ai.status.StatusTags
+import me.rerere.rikkahub.data.ai.status.TavernCardStyle
 import me.rerere.rikkahub.ui.components.table.DataTable
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.modifier.onClick
@@ -130,10 +133,7 @@ private val BLOCK_LATEX_REGEX = Regex("\\\\\\[(.+?)\\\\\\]", RegexOption.DOT_MAT
 private const val ENABLE_STABLE_DOM_RENDERER = true
 
 /** SillyTavern/status-prompt status blocks. Missing closing tags are tolerated to keep text visible. */
-private val STATUS_BLOCK_REGEX = Regex(
-    "<(?:status_block|statusblock|statusbar|status!?|状态栏)>[\\s\\S]*?(?:</(?:status_block|statusblock|statusbar|status!?|状态栏)>|$)",
-    RegexOption.IGNORE_CASE
-)
+private val STATUS_BLOCK_REGEX = StatusTags.segmentRegex()
 
 /** Standalone JSON Patch arrays. Used to route status-update payloads into the WebView renderer. */
 private val JSON_PATCH_TRIGGER_REGEX = Regex("""\[\s*\{[\s\S]*?"op"[\s\S]*?"path"[\s\S]*?\}\s*\]""")
@@ -235,6 +235,14 @@ private data class MarkdownParseResult(
     val hasHtml: Boolean,
 )
 
+/** MessageRole -> StableDomRole 映射（STABLE_DOM 渲染的角色类名）。 */
+private fun MessageRole.toStableDomRole(): StableDomRole = when (this) {
+    MessageRole.SYSTEM -> StableDomRole.SYSTEM
+    MessageRole.USER -> StableDomRole.USER
+    MessageRole.ASSISTANT -> StableDomRole.ASSISTANT
+    MessageRole.TOOL -> StableDomRole.TOOL
+}
+
 private fun ASTNode.containsHtml(): Boolean {
     if (type == MarkdownElementTypes.HTML_BLOCK || type == MarkdownTokenTypes.HTML_TAG) return true
     return children.any { it.containsHtml() }
@@ -260,18 +268,39 @@ fun MarkdownBlock(
     content: String,
     modifier: Modifier = Modifier,
     style: TextStyle = LocalTextStyle.current,
-    onClickCitation: (String) -> Unit = {}
+    onClickCitation: (String) -> Unit = {},
+    /** STABLE_DOM 渲染时显示在 .ch_name 中的角色名（SillyTavern DOM 兼容） */
+    roleName: String? = null,
+    /** STABLE_DOM 渲染时的消息角色（影响 .mes.<role> 类名），默认 ASSISTANT */
+    stableRole: MessageRole? = null,
+    /** 角色卡渲染样式（CSS 注入 st-message 文档，null 表示无卡样式） */
+    tavernCardStyle: TavernCardStyle? = null,
+    /** 流式生成中：true 时走增量 patch，false 时整文档渲染（Task 5 接线） */
+    streaming: Boolean = false,
 ) {
     val normalizedContent = remember(content) { normalizeRichTextContent(content) }
     val segments = remember(normalizedContent) { parseRichTextSegments(normalizedContent) }
     if (segments.size > 1 || segments.firstOrNull()?.kind != RichTextSegment.Kind.MARKDOWN) {
         val rendererMode = remember(normalizedContent) { chooseRendererMode(normalizedContent) }
         if (ENABLE_STABLE_DOM_RENDERER && rendererMode == RichTextRendererMode.STABLE_DOM) {
+            val context = LocalContext.current
+            val colorScheme = MaterialTheme.colorScheme
+            val cssVariables = mapOf(
+                "CSS_VAR_BG" to "transparent",
+                "CSS_VAR_SURFACE" to hex(colorScheme.surface),
+                "CSS_VAR_SURFACE_VARIANT" to hex(colorScheme.surfaceVariant),
+                "CSS_VAR_TEXT" to hex(colorScheme.onSurface),
+                "CSS_VAR_TEXT_SECONDARY" to hex(colorScheme.onSurfaceVariant),
+                "CSS_VAR_BORDER" to hex(colorScheme.outlineVariant),
+                "CSS_VAR_ACCENT" to hex(colorScheme.primary),
+            )
             MarkdownWebView(
                 content = buildStableMessageHtml(
+                    context,
                     StableDomMessage(
                         id = normalizedContent.hashCode().toString(),
-                        role = StableDomRole.ASSISTANT,
+                        role = stableRole?.toStableDomRole() ?: StableDomRole.ASSISTANT,
+                        name = roleName,
                         segments = segments.mapIndexed { index, segment ->
                             StableDomSegment(
                                 id = "segment-$index",
@@ -280,10 +309,13 @@ fun MarkdownBlock(
                             )
                         },
                         streaming = false,
-                    )
+                    ),
+                    cssVariables = cssVariables,
+                    extraCss = tavernCardStyle?.css,
                 ),
                 modifier = modifier,
                 isRawHtml = true,
+                tavernStyleVersionKey = tavernCardStyle?.versionKey,
             )
             return
         }

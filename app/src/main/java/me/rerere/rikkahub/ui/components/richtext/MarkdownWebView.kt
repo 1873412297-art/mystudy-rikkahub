@@ -79,6 +79,16 @@ fun MarkdownWebView(
      */
     tavernConversationId: Uuid? = null,
     tavernCurrentMessage: JsonElement? = null,
+    /**
+     * STABLE_DOM 文档追加注入的角色卡 CSS（经 CssSanitizer 清洗后内联 <style>）。
+     * 目前 CSS 实际注入发生在 MarkdownBlock 的 buildStableMessageHtml 构建期（成品 HTML 已含
+     * <style>），此参数预留用于未来路径；参与 renderKey 失效。
+     */
+    tavernExtraCss: String? = null,
+    /**
+     * 卡样式版本键（变化时触发整文档重载）。
+     */
+    tavernStyleVersionKey: String? = null,
 ) {
     val context = LocalContext.current
     val settingsStore: SettingsStore = koinInject()
@@ -158,6 +168,8 @@ fun MarkdownWebView(
         surfaceVariantHex,
         outlineVariantHex,
         onSurfaceVariantHex,
+        tavernExtraCss,
+        tavernStyleVersionKey,
     ).joinToString("|")
 
     Surface(
@@ -784,5 +796,5 @@ private fun buildIframeInjectScript(): String = """
 })();
 """.trimIndent()
 
-private fun hex(c: androidx.compose.ui.graphics.Color) =
+internal fun hex(c: androidx.compose.ui.graphics.Color) =
     String.format("#%02X%02X%02X", (c.red * 255).toInt(), (c.green * 255).toInt(), (c.blue * 255).toInt())

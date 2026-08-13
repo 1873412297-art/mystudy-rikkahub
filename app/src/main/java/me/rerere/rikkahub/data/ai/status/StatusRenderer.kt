@@ -106,7 +106,7 @@ class StatusRenderer {
                             // 安全：清洗 CSS 中可能逃出 <style> 块的序列。
                             // 第三方角色卡的 extensions.css 中若含 "</style><script>..."
                             // 会逃出样式块直接执行 JS。这里把所有 "</" 替换成无害形式。
-                            val safeCss = sanitizeCss(css)
+                            val safeCss = CssSanitizer.sanitize(css)
                             "<style>$safeCss</style>\n$html"
                         } else {
                             html
@@ -123,15 +123,6 @@ class StatusRenderer {
             }
         }
 
-    /**
-     * 清洗用户提供的 CSS，阻断逃出 <style> 块的注入。
-     * 浏览器 HTML 解析器在 <style> 内只识别 "</style" (不区分大小写) 作为结束标记，
-     * 所以核心是破坏这个序列。CSS 中正常情况下不会出现 "</"，把所有 "</" 替换为
-     * "/* */ " 是无害的（CSS 注释，几乎不影响任何合法选择器或值）。
-     */
-    private fun sanitizeCss(css: String): String =
-        Regex("</", RegexOption.IGNORE_CASE).replace(css, "/* */ ")
-
     fun destroy() {
         cleanup()
         executor.shutdown()
@@ -145,48 +136,8 @@ class StatusRenderer {
 
     // region Fallback rendering
 
-    private fun buildFallbackHtml(variables: Map<String, Any?>, metadata: Map<String, String>): String {
-        val sb = StringBuilder()
-        sb.append("<div style=\"font-family:sans-serif;font-size:13px;line-height:1.5;\">")
-        // Expression if present
-        metadata["expression"]?.let { expr ->
-            if (expr.isNotBlank()) {
-                sb.append("<div style=\"font-size:16px;font-weight:600;margin-bottom:4px;\">")
-                sb.append(escapeHtml(expr))
-                sb.append("</div>")
-            }
-        }
-        if (variables.isNotEmpty()) {
-            appendFallbackRows(sb, variables)
-        }
-        sb.append("</div>")
-        return sb.toString()
-    }
-
-    private fun appendFallbackRows(sb: StringBuilder, map: Map<String, Any?>, indent: Int = 0) {
-        for ((key, value) in map) {
-            when (value) {
-                is Map<*, *> -> {
-                    sb.append("<div style=\"font-weight:600;margin-top:4px;\">${escapeHtml(key)}</div>")
-                    sb.append("<div style=\"margin-left:${8 + indent * 8}px;\">")
-                    @Suppress("UNCHECKED_CAST")
-                    appendFallbackRows(sb, value as Map<String, Any?>, indent + 1)
-                    sb.append("</div>")
-                }
-                is List<*> -> {
-                    sb.append("<div><b>${escapeHtml(key)}:</b> ${escapeHtml(value.joinToString(", "))}</div>")
-                }
-                else -> {
-                    val displayValue = value?.toString() ?: "—"
-                    sb.append("<div><b>${escapeHtml(key)}:</b> ${escapeHtml(displayValue)}</div>")
-                }
-            }
-        }
-    }
-
-    private fun escapeHtml(s: String): String {
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    }
+    private fun buildFallbackHtml(variables: Map<String, Any?>, metadata: Map<String, String>): String =
+        StatusFallbackHtml.build(variables, metadata)
 
     // endregion
 
