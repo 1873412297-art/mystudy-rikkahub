@@ -96,6 +96,30 @@
 
 ## Current Status
 
+**2026-08-13：Android 渲染链路提升（子项目 B1）。**
+
+- st-message.html 重建为 ST 默认形状（.mes_text > p 分段、.name_text/.ch_name、mes_buttons 占位、CSS 变量默认主题）；
+  前端库（markdown-it/DOMPurify/hljs/katex/mermaid）经 esbuild IIFE 打包到 assets/html/vendor/ 并在构建期内联（无 CDN/file:// 依赖）
+- 主题通道：Material 色值 → CSS 变量（--rikkahub-*）；角色卡 CSS 经 TavernCardStyleResolver + CssSanitizer 注入消息气泡
+  （StatusRenderer 复用 CssSanitizer）；renderKey 含卡样式版本键
+- 流式增量：RikkahubDomBridge.applySegmentPatch + StableSegmentSnapshot 段 diff；streaming 经 ChatMessage→Markdown→MarkdownWebView 传递
+- 生命周期：onDispose destroy + removeJavascriptInterface；ChatList contentType；viewHeight 初始 0 + minHeight 占位
+- 性能修复（Task 5 审查 Important 并入）：MarkdownBlock STABLE_DOM 分支 buildStableMessageHtml（读 assets 模板 +
+  内联 ~5MB vendor）改为 remember 缓存，键含 normalizedContent/tavernCardStyle/streaming/cssVariables/roleName/stableRole
+  —— 无关 recompose 不再重建；主题切换时 cssVariables 键失效同步重建（与 MarkdownWebView baseKey 颜色失效一致）
+- 验证：`:app:testDebugUnitTest`/`:app:compileDebugKotlin`/`:app:assembleDebug` 全绿（84 类 / 592 测试 0 失败）；
+  `pnpm typecheck`/`test`（41）/`build` 全绿
+- 模拟器冒烟 ✅（2026-08-14，emulator-5554 + DB 注入法）：
+  - 消息气泡渲染：普通 markdown/状态占位符（多角色 tabs + WebView 状态页）/STABLE_DOM（st-message DOM：.ch_name
+    「Yes, My Liege」+ 叙事文本经 WebView 虚拟节点可见）均正常
+  - HUD：bar 出现/展开（HP 100/100、MP 50/50、随身物品、选项 chips）；HTML section 经 WebView 渲染
+  - 暗/亮切换：`cmd uimode night` 像素采样验证（背景 89→28、STABLE_DOM 气泡 250→18）；切换后内容完整无崩溃
+  - 滚动/后退复进：多次上下滚动、跨会话往返 3 轮无 FATAL；WebViews 计数稳定（6→6，无泄漏）
+  - 待验证：流式增量 patch（需真实模型/mock 服务器，本环境无）
+- 待办：子项目 B2（脚本 API 兼容性：SillyTavern.getContext/event_types/MacroHelper/SlashCommandParser）
+- 计划/设计：`docs/superpowers/specs/2026-08-13-android-renderer-upgrade-design.md`、
+  `docs/superpowers/plans/2026-08-13-android-renderer-upgrade.md`
+
 **2026-08-13：web-ui 酒馆渲染栈（子项目 A）。**
 
 - 后端：`GET /api/assistant/{id}/tavern-render` 端点（`TavernCardCssExtractor` 共享抽取自 StatusPlaceholderTransformer）；

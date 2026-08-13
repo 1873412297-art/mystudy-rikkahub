@@ -323,6 +323,7 @@ private fun ChatListNormal(
             itemsIndexed(
                 items = conversation.messageNodes,
                 key = { index, item -> item.id },
+                contentType = { _, _ -> "message" },
             ) { index, node ->
                 Column {
                     ListSelectableItem(
