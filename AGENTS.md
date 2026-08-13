@@ -116,6 +116,13 @@
   - 暗/亮切换：`cmd uimode night` 像素采样验证（背景 89→28、STABLE_DOM 气泡 250→18）；切换后内容完整无崩溃
   - 滚动/后退复进：多次上下滚动、跨会话往返 3 轮无 FATAL；WebViews 计数稳定（6→6，无泄漏）
   - 待验证：流式增量 patch（需真实模型/mock 服务器，本环境无）
+- 安全修复（final review 并入）：renderer 占位符改单遍正则替换——消息文本/卡 CSS 中的 `{{XXX}}` 字样不再被
+  后序替换污染（双向碰撞关闭，含 2 个新回归测试）
+- 已知待办（B2 或后续）：
+  - mark.html（纯 markdown 预览路径）本地化未做——仍依赖 esm.sh/cdn.jsdelivr CDN（spec §2.3 偏差，B2 立项）
+  - 流式期间 remember 仍每 token 重建 ~5MB assets HTML（主线程 I/O）——B2 首修：streaming 时用 segments 派生键跳过 html 重建
+  - renderMarkdownAll 桥方法无 Kotlin 调用方（完成态走整文档重载，功能等价，死代码待清理或接线）
+  - katex 字体未本地化（公式回退字体）；encodePatches 无序列化契约测试
 - 待办：子项目 B2（脚本 API 兼容性：SillyTavern.getContext/event_types/MacroHelper/SlashCommandParser）
 - 计划/设计：`docs/superpowers/specs/2026-08-13-android-renderer-upgrade-design.md`、
   `docs/superpowers/plans/2026-08-13-android-renderer-upgrade.md`
