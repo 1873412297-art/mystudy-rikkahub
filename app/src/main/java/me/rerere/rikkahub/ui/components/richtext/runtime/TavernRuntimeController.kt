@@ -11,6 +11,10 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import me.rerere.rikkahub.data.ai.status.TavernHostEvent
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.uuid.Uuid
@@ -30,9 +34,17 @@ internal class TavernRuntimeController(
     hostEventFlow: SharedFlow<TavernHostEvent>? = null,
     hostEventScope: CoroutineScope? = null,
 ) {
-    // dispatch 在 WebView JavaBridge 线程上读，setCurrentMessage 在宿主线程上写
+    // dispatch 在 WebView JavaBridge 线程上读，setContext/setCurrentMessage 在宿主线程上写
     @Volatile
     private var currentMessage: JsonElement = JsonNull
+
+    /** 宿主推送的上下文快照（SillyTavern.getContext 数据源） */
+    @Volatile
+    private var contextSnapshot: JsonObject? = null
+
+    /** 上次推送的上下文内容哈希（去重用） */
+    @Volatile
+    private var lastContextHash: Int? = null
 
     /** 脚本通过 events.subscribe 显式订阅的宿主事件名 */
     private val subscribedHostEvents = ConcurrentHashMap.newKeySet<String>()
@@ -77,6 +89,21 @@ internal class TavernRuntimeController(
         currentMessage = message
     }
 
+    /**
+     * 宿主推送上下文快照（SillyTavern.getContext 数据源）。
+     * 内容不变时跳过推送；变化时经 outbound 事件 th:context_updated 送达 WebView。
+     */
+    fun setContext(context: JsonObject?) {
+        contextSnapshot = context
+        val hash = context?.hashCode()
+        if (hash != lastContextHash) {
+            lastContextHash = hash
+            if (context != null) {
+                _outboundEvents.tryEmit("context_updated" to context)
+            }
+        }
+    }
+
     fun dispatch(request: TavernRuntimeRequest): TavernRuntimeResponse {
         return try {
             if (!permissionStore.current().allowScripts && request.method != "runtime.ping") {
@@ -95,7 +122,7 @@ internal class TavernRuntimeController(
                 "world.getEntries" -> getWorldEntries(request)
                 "world.upsertEntry" -> upsertWorldEntry(request)
                 "world.deleteEntry" -> deleteWorldEntry(request)
-                "messages.getCurrent" -> TavernRuntimeResponse.success(request.id, currentMessage)
+                "messages.getCurrent" -> getCurrentMessage(request)
                 "messages.updateCurrent" -> updateCurrentMessage(request)
                 else -> TavernRuntimeResponse.error(
                     id = request.id,
@@ -274,6 +301,13 @@ internal class TavernRuntimeController(
         return withRequiredStringParam(request, "id") { id ->
             TavernRuntimeResponse.success(request.id, JsonPrimitive(worldRepository.deleteEntry(id)))
         }
+    }
+
+    private fun getCurrentMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        val fromContext = contextSnapshot?.get("chat")?.jsonArray
+            ?.lastOrNull { it.jsonObject["isCurrent"]?.jsonPrimitive?.boolean == true }
+            ?: contextSnapshot?.get("chat")?.jsonArray?.lastOrNull()
+        return TavernRuntimeResponse.success(request.id, fromContext ?: currentMessage)
     }
 
     private fun updateCurrentMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {

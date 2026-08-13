@@ -1,8 +1,17 @@
 package me.rerere.rikkahub.ui.components.richtext.runtime
 
+import kotlin.uuid.Uuid
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -167,5 +176,63 @@ class TavernRuntimeControllerTest {
 
         assertTrue(response.ok)
         assertEquals("pong", response.result!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `setContext emits context_updated event and dedupes unchanged context`() = runBlocking {
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true)
+            ),
+        )
+        val received = mutableListOf<Pair<String, JsonElement?>>()
+        val job = launch {
+            controller.outboundEvents.collect { received.add(it) }
+        }
+        yield()
+        val ctx = buildJsonObject {
+            put("chat", JsonArray(emptyList()))
+            put("conversationId", "c1")
+        }
+        controller.setContext(ctx)
+        yield()
+        controller.setContext(ctx) // 相同内容 → 去重，不再发
+        yield()
+        job.cancel()
+        assertEquals(1, received.count { it.first == "context_updated" })
+    }
+
+    @Test
+    fun `messages getCurrent returns current chat entry from context when set`() {
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true)
+            ),
+        )
+        val m1 = buildJsonObject {
+            put("role", "user")
+            put("text", "hello")
+            put("messageId", "m1")
+            put("isCurrent", false)
+        }
+        val m2 = buildJsonObject {
+            put("role", "assistant")
+            put("text", "hi")
+            put("messageId", "m2")
+            put("isCurrent", true)
+        }
+        controller.setContext(
+            buildJsonObject {
+                put("chat", JsonArray(listOf(m1, m2)))
+                put("conversationId", "c1")
+            }
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(id = "1", method = "messages.getCurrent", params = JsonObject(emptyMap()))
+        )
+        assertTrue(response.ok)
+        assertEquals("m2", response.result!!.jsonObject["messageId"]!!.jsonPrimitive.content)
     }
 }
