@@ -54,8 +54,6 @@ import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Download01
 import me.rerere.hugeicons.stroke.Edit01
@@ -67,9 +65,6 @@ import me.rerere.rikkahub.data.export.PngCardWriter
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.CharacterBook
 import me.rerere.rikkahub.data.model.CharacterBookEntry
-import me.rerere.rikkahub.data.model.TavernCardV1
-import me.rerere.rikkahub.data.model.TavernCardV2
-import me.rerere.rikkahub.data.model.TavernCardV3
 import me.rerere.rikkahub.data.model.TavernCharacterCard
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
@@ -85,7 +80,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.ImageUtils
 import me.rerere.rikkahub.utils.base64Encode
-import me.rerere.common.http.jsonPrimitiveOrNull
 import org.koin.compose.koinInject
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -121,20 +115,25 @@ fun TavernCardViewerPage(
                         val mime = context.contentResolver.getType(uri)
                         if (mime == "image/png") {
                             val json = ImageUtils.getTavernCharacterMeta(context, uri).getOrThrow()
-                            json to parseCardFromJson(json)
+                            json to TavernCharacterCard.fromJson(json)
                         } else {
                             val json = context.contentResolver.openInputStream(uri)?.bufferedReader()
                                 .use { it?.readText() } ?: error("Cannot read file")
-                            json to parseCardFromJson(json)
+                            json to TavernCharacterCard.fromJson(json)
                         }
                     }
-                    cardJson != null -> cardJson to parseCardFromJson(cardJson)
+                    cardJson != null -> cardJson to TavernCharacterCard.fromJson(cardJson)
                     else -> null to null
                 }
             }
             if (result != null) {
                 rawCardJson.set(result.first)
                 card = result.second
+                // fromJson 解析失败返回 null（不再抛异常）——补一个错误提示，保持旧行为：
+                // 此前 parseCardFromJson 抛异常被下方 catch 转成 error 展示。
+                if (result.second == null) {
+                    error = defaultError
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -871,34 +870,6 @@ private fun CompactWebView(html: String) {
 }
 
 // region Parsing
-
-private val json = Json { ignoreUnknownKeys = true; isLenient = true }
-
-private fun parseCardFromJson(jsonString: String, sourceImageUri: String? = null): TavernCharacterCard? {
-    val jsonElement = json.parseToJsonElement(jsonString)
-
-    // Try V2/V3 (wrapped format)
-    val jsonObj = jsonElement.jsonObject
-    val spec = jsonObj["spec"]?.jsonPrimitiveOrNull?.content
-
-    return when (spec) {
-        "chara_card_v2" -> {
-            val wrapper = json.decodeFromJsonElement(TavernCardV2.serializer(), jsonElement)
-            TavernCharacterCard.fromWrapper(wrapper, sourceImageUri)
-        }
-
-        "chara_card_v3" -> {
-            val wrapper = json.decodeFromJsonElement(TavernCardV3.serializer(), jsonElement)
-            TavernCharacterCard.fromWrapper(wrapper, sourceImageUri)
-        }
-
-        else -> {
-            // Try V1 (flat format) or unknown
-            val v1 = json.decodeFromJsonElement(TavernCardV1.serializer(), jsonElement)
-            TavernCharacterCard.fromV1(v1).copy(sourceImageUri = sourceImageUri)
-        }
-    }
-}
 
 private fun createDefaultCardBitmap(): android.graphics.Bitmap {
     val size = 400

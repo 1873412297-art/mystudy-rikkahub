@@ -1,6 +1,8 @@
 package me.rerere.rikkahub.data.model
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -52,5 +54,46 @@ class TavernCharacterCardTest {
         assertFalse(prompt.contains("{{char}}"))
         assertFalse(prompt.contains("{{user}}"))
         assertFalse(prompt.contains("private note"))
+    }
+
+    @Test
+    fun `fromJson parses v2 wrapped card`() {
+        val json = """
+            {
+              "spec": "chara_card_v2",
+              "spec_version": "2.0",
+              "data": {
+                "name": "Elena",
+                "description": "An alchemist.",
+                "personality": "Curious.",
+                "scenario": "You enter the shop.",
+                "first_mes": "Welcome."
+              }
+            }
+        """.trimIndent()
+
+        val card = TavernCharacterCard.fromJson(json)
+
+        assertEquals("Elena", card?.name)
+        assertEquals("An alchemist.", card?.description)
+        assertEquals("chara_card_v2", card?.spec)
+        assertEquals("Welcome.", card?.firstMes)
+    }
+
+    @Test
+    fun `fromJson parses v1 flat card`() {
+        val json = """{"name":"Old","description":"Legacy","personality":"","scenario":""}"""
+
+        val card = TavernCharacterCard.fromJson(json)
+
+        assertEquals("Old", card?.name)
+        assertEquals("v1", card?.spec)
+    }
+
+    @Test
+    fun `fromJson returns null on invalid input`() {
+        assertNull(TavernCharacterCard.fromJson("not json at all"))
+        assertNull(TavernCharacterCard.fromJson(""))
+        assertNull(TavernCharacterCard.fromJson("[1,2,3]"))
     }
 }

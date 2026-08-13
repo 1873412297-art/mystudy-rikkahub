@@ -2,9 +2,11 @@ package me.rerere.rikkahub.data.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import me.rerere.common.http.jsonPrimitiveOrNull
 
 /**
  * SillyTavern 角色卡完整数据模型
@@ -164,6 +166,33 @@ data class TavernCharacterCard(
     val sourceImageUri: String? = null, // PNG 角色卡图片 URI
 ) {
     companion object {
+        private val parseJson = Json { ignoreUnknownKeys = true; isLenient = true }
+
+        /**
+         * 从角色卡 JSON 字符串解析统一模型（V1/V2/V3 自动识别）。
+         * 解析失败返回 null（原 TavernCardViewerPage.parseCardFromJson 提取到数据层共享）。
+         */
+        fun fromJson(jsonString: String, sourceImageUri: String? = null): TavernCharacterCard? {
+            return runCatching {
+                val jsonElement = parseJson.parseToJsonElement(jsonString)
+                val spec = jsonElement.jsonObject["spec"]?.jsonPrimitiveOrNull?.content
+                when (spec) {
+                    "chara_card_v2" -> fromWrapper(
+                        parseJson.decodeFromJsonElement(TavernCardV2.serializer(), jsonElement),
+                        sourceImageUri,
+                    )
+
+                    "chara_card_v3" -> fromWrapper(
+                        parseJson.decodeFromJsonElement(TavernCardV3.serializer(), jsonElement),
+                        sourceImageUri,
+                    )
+
+                    else -> fromV1(parseJson.decodeFromJsonElement(TavernCardV1.serializer(), jsonElement))
+                        .copy(sourceImageUri = sourceImageUri)
+                }
+            }.getOrNull()
+        }
+
         /**
          * 从 V1 数据创建统一模型
          */
