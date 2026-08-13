@@ -24,14 +24,16 @@ class TavernRuntimeSmokeActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val cardFiles = listOf("card1.json", "card2.json", "card3.json")
-        val cards = cardFiles.map { fileName ->
-            val raw = assets.open("cards/$fileName").bufferedReader().use { it.readText() }
-            val obj = JSONObject(raw)
-            CardRender(
-                name = obj.optString("name", fileName),
-                desc = obj.optString("description", ""),
-                first = obj.optString("first_mes", ""),
-            )
+        val cards = cardFiles.mapNotNull { fileName ->
+            runCatching {
+                val raw = assets.open("cards/$fileName").bufferedReader().use { it.readText() }
+                val obj = JSONObject(raw)
+                CardRender(
+                    name = obj.optString("name", fileName),
+                    desc = obj.optString("description", ""),
+                    first = obj.optString("first_mes", ""),
+                )
+            }.getOrNull()
         }
 
         val htmls = cards.mapIndexed { index, card ->
