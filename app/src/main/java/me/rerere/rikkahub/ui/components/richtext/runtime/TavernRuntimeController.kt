@@ -92,8 +92,12 @@ internal class TavernRuntimeController(
     /**
      * 宿主推送上下文快照（SillyTavern.getContext 数据源）。
      * 内容不变时跳过推送；变化时经 outbound 事件 th:context_updated 送达 WebView。
+     * 受 allowScripts 总开关保护：脚本禁用时丢弃快照且不更新哈希（启用后下次快照变化自愈）。
      */
     fun setContext(context: JsonObject?) {
+        if (!permissionStore.current().allowScripts) {
+            return
+        }
         contextSnapshot = context
         val hash = context?.hashCode()
         if (hash != lastContextHash) {

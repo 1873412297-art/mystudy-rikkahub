@@ -116,14 +116,20 @@
     MESSAGE_SENDING/MESSAGE_SENT/GENERATION_STARTED/GENERATION_FINISHED/MESSAGE_RECEIVED 全部送达 ✅
   - 未覆盖：MESSAGE_EDITED/DELETED/SWIPED 脚本侧端到端（发射点已接入，冒烟未逐条触发 UI 操作）；
     render 族事件（MESSAGE_RENDERED/CHARACTER_MESSAGE_RENDERED/USER_MESSAGE_RENDERED）未在冒烟中观察到
-- 已知待办（B2b 或后续）：
-  - render 族事件接线缺口：普通 markdown 文本消息走 MarkdownBlock → 内部 MarkdownWebView 调用未传
-    `tavernConversationId`/`tavernMessageRole`（仅 HTML 模式/状态块路径传了）→ onPageFinished 渲染事件对常规消息
-    实际不发射，需在 MarkdownBlock 增加透传参数（Task 5 收尾遗漏）
+- 已知待办（B2b 首修 + 后续）：
+  - **主路径 tavern 参数链缺失（final review A2，比 render 事件缺口更广）**：普通 markdown 文本与 STABLE_DOM 消息
+    走 ChatMessage → MarkdownBlock → Markdown.kt 内部 MarkdownWebView 调用，均未传
+    `tavernConversationId`/`tavernCurrentMessage`/`tavernContextSnapshot`/`tavernMessageRole`（仅 HTML 模式文本/状态块路径传了）→
+    酒馆主渲染路径中 getContext() 恒 null、宿主事件全部不转发（conversationId=null）、messages.getCurrent 返回 null。
+    需在 MarkdownBlock 增加 tavern 参数透传（约 30 行）；MultiCharacterStatusView 状态页同样缺参
+  - 注意：上条冒烟「getContext 端到端」是合成 SmokeActivity WebView 验证的（真实主路径当前不可用，待上条修复后复验）
+  - render 族事件接线缺口随上条一并修复（onPageFinished 渲染事件对常规消息不发射）
   - 快照推送时机：WebView 整文档重载后新文档 stContext 为 null，宿主不重推（快照哈希未变）——脚本在重载后首次
     getContext 返回 null，直到快照下次变化；与 ST「更新即推送」语义一致，是否补「加载后重推」待议
+  - 流式每 token 全快照重建 + 推送每个消息 WebView（哈希去重流式下失效；_outboundEvents 缓冲与宿主事件共享有竞争）——B2b 立项
+  - getContext 受 allowScripts 总开关保护（final review A1 已修：setContext 门控 + 测试）
 - 待办：子项目 B2b（MacroHelper/registerMacro、SlashCommandParser/registerSlashCommand、内建斜杠命令、
-  getRequestHeaders、MESSAGE_SENDING mutate 语义）
+  getRequestHeaders、MESSAGE_SENDING mutate 语义；另含主路径 tavern 参数链修复、流式快照优化）
 - 计划/设计：`docs/superpowers/specs/2026-08-14-tavern-script-api-compat-design.md`、
   `docs/superpowers/plans/2026-08-14-tavern-script-api-compat.md`
 

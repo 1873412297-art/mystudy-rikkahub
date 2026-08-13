@@ -235,4 +235,28 @@ class TavernRuntimeControllerTest {
         assertTrue(response.ok)
         assertEquals("m2", response.result!!.jsonObject["messageId"]!!.jsonPrimitive.content)
     }
+
+    @Test
+    fun `setContext is dropped when scripts are disabled`() = runBlocking {
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = false)
+            ),
+        )
+        val received = mutableListOf<Pair<String, JsonElement?>>()
+        val job = launch {
+            controller.outboundEvents.collect { received.add(it) }
+        }
+        yield()
+        controller.setContext(
+            buildJsonObject {
+                put("chat", JsonArray(emptyList()))
+                put("conversationId", "c1")
+            }
+        )
+        yield()
+        job.cancel()
+        assertEquals(0, received.count { it.first == "context_updated" })
+    }
 }
