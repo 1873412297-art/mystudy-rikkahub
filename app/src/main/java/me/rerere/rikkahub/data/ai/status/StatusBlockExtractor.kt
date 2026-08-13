@@ -45,13 +45,9 @@ data class StatusBlockExtraction(
  */
 object StatusBlockExtractor {
 
-    // 开/闭标签族：status!? / status_block / statusblock / statusbar / 状态栏（大小写不敏感）。
-    // alternation 把长名放前面（status_block 先于 statusblock/statusbar/status!?），保证整体匹配、
-    // 且 status!? 的 `!` 不会干扰 status 前缀匹配（statusblock/statusbar 已被更前的分支吃掉）。
-    private val openTagRegex =
-        Regex("<\\s*(status_block|statusblock|statusbar|status!?|状态栏)\\s*>", RegexOption.IGNORE_CASE)
-    private val closeTagRegex =
-        Regex("</\\s*(status_block|statusblock|statusbar|status!?|状态栏)\\s*>", RegexOption.IGNORE_CASE)
+    // 开/闭标签族由 StatusTags 单一提供（status_block / statusblock / statusbar / status!? / 状态栏）。
+    private val openTagRegex = StatusTags.openTagRegex()
+    private val closeTagRegex = StatusTags.closeTagRegex()
 
     // maintext 开/闭标签统一剥离（不要求配对）。
     private val maintextTagRegex = Regex("</?\\s*maintext\\s*>", RegexOption.IGNORE_CASE)

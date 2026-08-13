@@ -200,4 +200,43 @@ class LorebookSerializerTest {
         assertFalse(entry.selective)
         assertEquals(100, entry.probability)
     }
+
+    @Test
+    fun `sillytavern import maps match whole words with both spellings`() {
+        val stJson = """
+            {
+              "entries": {
+                "0": {
+                  "key": ["apple"],
+                  "content": "apple lore",
+                  "comment": "apple",
+                  "match_whole_words": true,
+                  "position": 1
+                },
+                "1": {
+                  "key": ["sword"],
+                  "content": "sword lore",
+                  "comment": "sword",
+                  "matchWholeWords": true,
+                  "position": 1
+                },
+                "2": {
+                  "key": ["inn"],
+                  "content": "inn lore",
+                  "comment": "inn",
+                  "position": 1
+                }
+              }
+            }
+        """.trimIndent()
+
+        val book = LorebookSerializer.tryImportSillyTavern(stJson, "imported")
+        assertNotNull(book)
+        val byKeyword = book!!.entries.associateBy { it.keywords.first() }
+        assertTrue(byKeyword.getValue("apple").matchWholeWords)
+        assertTrue(byKeyword.getValue("sword").matchWholeWords)
+        // 缺席时回退默认值 false（关闭）
+        assertFalse(byKeyword.getValue("inn").matchWholeWords)
+    }
+
 }

@@ -9,7 +9,9 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.ai.status.JsonPatchOp
 import me.rerere.rikkahub.data.ai.status.StatusRenderer
+import me.rerere.rikkahub.data.ai.status.StatusFallbackHtml
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
+import me.rerere.rikkahub.data.ai.status.TavernCardCssExtractor
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
 import kotlin.uuid.Uuid
@@ -117,25 +119,13 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
     private var loadedScriptKey: Int? = null
 
     override suspend fun transform(ctx: TransformerContext, messages: List<UIMessage>): List<UIMessage> {
-        android.util.Log.i("StatusPlhd", "▶ transform() ENTER convId=${ctx.conversationId} messages=${messages.size}")
-        // Pre-check: count tags in input
-        val beforeCount = messages.flatMap { it.parts }.filterIsInstance<UIMessagePart.Text>()
-            .sumOf { txt -> UPDATE_VARIABLE_REGEX.findAll(txt.text).count() + STATUS_PLACEHOLDER_REGEX.findAll(txt.text).count() }
-        if (beforeCount > 0) android.util.Log.i("StatusPlhd", "▶ transform() found $beforeCount tags in input text")
-
-        val result = try {
+        // 流式阶段每个 chunk 都会经过这里，避免每次做全量标签扫描/日志（历史遗留的调试开销）。
+        return try {
             visualTransform(ctx, messages)
         } catch (e: Exception) {
-            android.util.Log.wtf("StatusPlhd", "transform() CRASHED", e)
+            android.util.Log.w("StatusPlhd", "transform() failed, returning original messages", e)
             messages
         }
-        // Verification: log if any text part still has unprocessed tags
-        val remaining = result.flatMap { it.parts }.filterIsInstance<UIMessagePart.Text>()
-            .count { it.text.contains("StatusPlaceHolder") || it.text.contains("UpdateVariable") }
-        val placeholderCount = result.flatMap { it.parts }.count { it is UIMessagePart.StatusPlaceholder }
-        android.util.Log.i("StatusPlhd", "◀ transform() EXIT unprocessedTags=$remaining statusPlaceholders=$placeholderCount")
-        if (remaining > 0) android.util.Log.w("StatusPlhd", "UNPROCESSED tags remaining: $remaining")
-        return result
     }
 
     override suspend fun visualTransform(
@@ -162,9 +152,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                 if (part !is UIMessagePart.Text) return@flatMap listOf(part)
 
                 var text = part.text
-                val textLen = text.length
                 val resultParts = mutableListOf<UIMessagePart>()
-                var tagsFound = 0
 
                 // Process all tags in sequence
                 while (true) {
@@ -209,10 +197,8 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                                     if (ops.isNotEmpty()) {
                                         store.applyPatch(convId, ops)
                                         variablesChanged = true
-                                        android.util.Log.i("StatusPlhd", "  ✓ UpdateVariable: applied ${ops.size} patch ops")
                                     }
                                 }
-                                tagsFound++
                             } catch (e: Exception) {
                                 android.util.Log.e("StatusPlhd", "  ✗ UpdateVariable parse error: ${e.message}")
                                 resultParts.add(UIMessagePart.Text(rawContent))
@@ -220,11 +206,9 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                         }
                         "barePatch" -> {
                             try {
-                                android.util.Log.d("StatusPlhd", "  ✓ Bare patch matched: ${rawContent.take(120)}")
                                 val ops = json.decodeFromString<List<JsonPatchOp>>(rawContent)
                                 store.applyPatch(convId, ops)
                                 variablesChanged = true
-                                tagsFound++
                             } catch (e: Exception) {
                                 android.util.Log.e("StatusPlhd", "  ✗ Bare patch parse error", e)
                                 resultParts.add(UIMessagePart.Text(rawContent))
@@ -245,8 +229,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                                     )
                                     store.applyPatch(convId, listOf(exprOp))
                                     variablesChanged = true
-                                    tagsFound++
-                                } catch (e: Exception) {
+                                    } catch (e: Exception) {
                                     e.printStackTrace()
                                 }
                             }
@@ -255,11 +238,6 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                     }
                     // Advance past this tag
                     text = text.substring(first.end)
-                }
-
-                // Diagnostic: summarize what this text part processing did
-                if (tagsFound > 0 || textLen > 100) {
-                    android.util.Log.d("StatusPlhd", "  Step1 textPart len=$textLen tagsFound=$tagsFound varsChanged=$variablesChanged")
                 }
 
                 resultParts
@@ -273,7 +251,6 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                 val matches = STATUS_PLACEHOLDER_REGEX.findAll(part.text).toList()
                 if (matches.isEmpty()) return@flatMap listOf(part)
 
-                android.util.Log.i("StatusPlhd", "  ✓ StatusPlaceHolderImpl: found ${matches.size} occurrences, rendering HTML")
                 hasPlaceholders = true
                 var text = part.text
                 val newParts = mutableListOf<UIMessagePart>()
@@ -362,12 +339,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                 partsWithPlaceholders
             }
 
-            message.copy(parts = finalParts).also { resultMsg ->
-                val spCount = resultMsg.parts.count { it is UIMessagePart.StatusPlaceholder }
-                if (variablesChanged || spCount > 0) {
-                    android.util.Log.i("StatusPlhd", "  → message result: varsChanged=$variablesChanged hasPlaceholders=$hasPlaceholders statusParts=$spCount")
-                }
-            }
+            message.copy(parts = finalParts)
         }
     }
 
@@ -403,44 +375,10 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
     /**
      * Fast synchronous HTML builder — no QuickJS. Used during streaming to avoid
      * blocking message display. The full JS render happens in onGenerationFinish.
+     * 与 StatusRenderer 共用 [StatusFallbackHtml] 统一构建逻辑。
      */
-    private fun buildFallbackHtmlDirect(variables: Map<String, Any?>, metadata: Map<String, String>): String {
-        val sb = StringBuilder()
-        sb.append("<div style=\"font-family:sans-serif;font-size:13px;line-height:1.5;\">")
-        metadata["expression"]?.takeIf { it.isNotBlank() }?.let { expr ->
-            sb.append("<div style=\"font-size:16px;font-weight:600;margin-bottom:4px;\">")
-            sb.append(expr.replace("&","&amp;").replace("<","&lt;"))
-            sb.append("</div>")
-        }
-        if (variables.isNotEmpty()) {
-            appendRows(sb, variables)
-        }
-        sb.append("</div>")
-        return sb.toString()
-    }
-
-    private fun appendRows(sb: StringBuilder, map: Map<String, Any?>, indent: Int = 0) {
-        for ((key, value) in map) {
-            when (value) {
-                is Map<*, *> -> {
-                    sb.append("<div style=\"font-weight:600;margin-top:4px;\">${esc(key)}</div>")
-                    sb.append("<div style=\"margin-left:${8 + indent * 8}px;\">")
-                    @Suppress("UNCHECKED_CAST")
-                    appendRows(sb, value as Map<String, Any?>, indent + 1)
-                    sb.append("</div>")
-                }
-                is List<*> -> {
-                    sb.append("<div><b>${esc(key)}:</b> ${esc(value.joinToString(", "))}</div>")
-                }
-                else -> {
-                    val displayValue = value?.toString() ?: "—"
-                    sb.append("<div><b>${esc(key)}:</b> ${esc(displayValue)}</div>")
-                }
-            }
-        }
-    }
-
-    private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    private fun buildFallbackHtmlDirect(variables: Map<String, Any?>, metadata: Map<String, String>): String =
+        StatusFallbackHtml.build(variables, metadata)
 
     // region Character Paging
 
@@ -465,8 +403,8 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
         return characters.map { (name, value) ->
             val sb = StringBuilder()
             sb.append("<div style=\"font-family:sans-serif;font-size:13px;line-height:1.6;\">")
-            sb.append("<div style=\"font-size:15px;font-weight:700;margin-bottom:6px;color:#inherit;\">${esc(name)}</div>")
-            appendRows(sb, value as Map<String, Any?>, indent = 0)
+            sb.append("<div style=\"font-size:15px;font-weight:700;margin-bottom:6px;color:#inherit;\">${StatusFallbackHtml.escapeHtml(name)}</div>")
+            StatusFallbackHtml.appendRows(sb, value as Map<String, Any?>, indent = 0)
             sb.append("</div>")
             UIMessagePart.CharacterStatusPage(name = name, html = sb.toString())
         }
@@ -481,8 +419,8 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
         if (time.isBlank() && place.isBlank()) return ""
         val sb = StringBuilder()
         sb.append("<div style=\"font-family:sans-serif;font-size:12px;line-height:1.4;display:flex;flex-wrap:wrap;gap:8px;\">")
-        if (time.isNotBlank()) sb.append("<span>🕐 ${esc(time)}</span>")
-        if (place.isNotBlank()) sb.append("<span>📍 ${esc(place)}</span>")
+        if (time.isNotBlank()) sb.append("<span>🕐 ${StatusFallbackHtml.escapeHtml(time)}</span>")
+        if (place.isNotBlank()) sb.append("<span>📍 ${StatusFallbackHtml.escapeHtml(place)}</span>")
         sb.append("</div>")
         return sb.toString()
     }
@@ -521,26 +459,11 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
     /**
      * Extract CSS from the character card's extensions data.
      * SillyTavern cards may have CSS in extensions.css or extensions.status_css.
+     * 逻辑已抽取到 TavernCardCssExtractor 供 web 端点共用。
      */
     private fun extractCssFromCard(ctx: TransformerContext): String? {
         val cardJson = ctx.assistant.tavernCardJson ?: return null
-        return try {
-            val root = json.parseToJsonElement(cardJson)
-            // V2/V3: data.extensions
-            val extensions = root.jsonObject["data"]?.jsonObject?.get("extensions")?.jsonObject
-            // Also check V1: top-level extensions (less common)
-            val topExtensions = root.jsonObject["extensions"]?.jsonObject
-            val ext = extensions ?: topExtensions ?: return null
-
-            // Try multiple possible CSS keys (SillyTavern stores them in various places)
-            ext["css"]?.let { p -> if (p is kotlinx.serialization.json.JsonPrimitive && p.isString) return p.content }
-            ext["status_css"]?.let { p -> if (p is kotlinx.serialization.json.JsonPrimitive && p.isString) return p.content }
-            ext["status"]?.jsonObject?.get("css")?.let { p -> if (p is kotlinx.serialization.json.JsonPrimitive && p.isString) return p.content }
-            ext["status"]?.jsonObject?.get("status_css")?.let { p -> if (p is kotlinx.serialization.json.JsonPrimitive && p.isString) return p.content }
-            null
-        } catch (e: Exception) {
-            null
-        }
+        return TavernCardCssExtractor.extract(cardJson)
     }
 
     // endregion

@@ -210,6 +210,7 @@ data class AuthorNote(
     val depth: Int = 4,
     val role: MessageRole = MessageRole.USER,
     val interval: Int = 1,
+    val position: InjectionPosition = InjectionPosition.AT_DEPTH, // 注入位置（ST Position 对齐；TOP/BOTTOM 时 depth 无效）
 )
 
 /**
@@ -283,6 +284,7 @@ sealed class PromptInjection {
         val keywords: List<String> = emptyList(),  // 触发关键词
         val useRegex: Boolean = false,             // 是否使用正则匹配
         val caseSensitive: Boolean = false,        // 大小写敏感
+        val matchWholeWords: Boolean = false,      // 整词匹配（ST Match Whole Words；正则模式不叠加）
         val scanDepth: Int = 4,                    // 扫描最近N条消息
         val constantActive: Boolean = false,       // 常驻激活（无需匹配）
         val secondaryKeywords: List<String> = emptyList(), // 次要关键词（selective 时需与主关键词同时命中）

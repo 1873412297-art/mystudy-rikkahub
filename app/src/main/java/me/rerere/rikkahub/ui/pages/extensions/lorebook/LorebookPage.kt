@@ -81,6 +81,7 @@ import me.rerere.rikkahub.data.model.Lorebook
 import me.rerere.rikkahub.data.model.PromptInjection
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.ExportDialog
+import me.rerere.rikkahub.ui.components.ui.EmptyState
 import me.rerere.rikkahub.ui.components.ui.FormItem
 import me.rerere.rikkahub.ui.components.ui.Tag
 import me.rerere.rikkahub.ui.components.ui.TagType
@@ -253,26 +254,12 @@ private fun LorebookListView(
 
             if (filteredBooks.isEmpty()) {
                 item {
-                    Column(
-                        modifier = Modifier
-                            .fillParentMaxHeight(0.7f)
-                            .fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = if (lorebooks.isEmpty()) "还没有世界书" else "没有匹配的世界书",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (lorebooks.isEmpty()) {
-                            Text(
-                                text = "点击右下角新建，或从 SillyTavern 导入 JSON",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                            )
-                        }
-                    }
+                    EmptyState(
+                        modifier = Modifier.fillParentMaxHeight(0.7f),
+                        title = if (lorebooks.isEmpty()) "还没有世界书" else "没有匹配的世界书",
+                        hint = if (lorebooks.isEmpty()) "点击右下角新建，或从 SillyTavern 导入 JSON" else null,
+                        contentArrangement = Arrangement.Center,
+                    )
                 }
             } else {
                 items(filteredBooks, key = { it.id }) { book ->
@@ -835,6 +822,12 @@ private fun RegexInjectionEditSheet(
             label = stringResource(R.string.prompt_page_case_sensitive),
             checked = entry.caseSensitive,
             onCheckedChange = { onEdit(entry.copy(caseSensitive = it)) }
+        )
+
+        SwitchFormItem(
+            label = stringResource(R.string.prompt_page_match_whole_words),
+            checked = entry.matchWholeWords,
+            onCheckedChange = { onEdit(entry.copy(matchWholeWords = it)) }
         )
 
         OutlinedTextField(

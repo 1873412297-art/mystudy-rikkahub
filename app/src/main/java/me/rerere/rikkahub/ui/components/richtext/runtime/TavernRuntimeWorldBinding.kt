@@ -146,6 +146,7 @@ private fun PromptInjection.RegexInjection.toWorldJson(lorebook: Lorebook): Json
     put("keywords", stringsToJsonArray(keywords))
     put("useRegex", JsonPrimitive(useRegex))
     put("caseSensitive", JsonPrimitive(caseSensitive))
+    put("matchWholeWords", JsonPrimitive(matchWholeWords))
     put("scanDepth", JsonPrimitive(scanDepth))
     put("constantActive", JsonPrimitive(constantActive))
     put("secondaryKeywords", stringsToJsonArray(secondaryKeywords))
@@ -172,6 +173,7 @@ private fun JsonObject.toRegexInjection(entryId: String): PromptInjection.RegexI
         keywords = getJsonStrings("keywords"),
         useRegex = getBoolean("useRegex", false),
         caseSensitive = getBoolean("caseSensitive", false),
+        matchWholeWords = getBoolean("matchWholeWords", false),
         scanDepth = getInt("scanDepth", 4),
         constantActive = getBoolean("constantActive", false),
         secondaryKeywords = getJsonStrings("secondaryKeywords"),

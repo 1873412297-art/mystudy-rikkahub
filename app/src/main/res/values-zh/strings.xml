@@ -509,6 +509,7 @@
   <string name="prompt_page_title">提示词注入</string>
   <string name="prompt_page_unnamed">未命名</string>
   <string name="prompt_page_use_regex">使用正则表达式</string>
+    <string name="prompt_page_match_whole_words">整词匹配</string>
   <string name="quick_messages_page_add_title">添加快捷消息</string>
   <string name="quick_messages_page_delete_message">确定要删除“%s”吗？此操作无法撤销。</string>
   <string name="quick_messages_page_delete_title">删除快速消息</string>

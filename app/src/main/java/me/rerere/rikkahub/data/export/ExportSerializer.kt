@@ -166,6 +166,7 @@ object LorebookSerializer : ExportSerializer<Lorebook> {
                         keywords = entry.key,
                         useRegex = false, // SillyTavern 格式不支持 useRegex
                         caseSensitive = entry.caseSensitive ?: false,
+                        matchWholeWords = entry.matchWholeWords ?: entry.matchWholeWordsSt ?: false,
                         scanDepth = entry.scanDepth ?: 4,
                         constantActive = entry.constant,
                         // ST 世界书字段：次关键词（keysecondary / secondary_keys 两种命名都兼容）
@@ -211,6 +212,8 @@ private data class SillyTavernEntry(
     val depth: Int = 4,
     val scanDepth: Int? = null,
     val caseSensitive: Boolean? = null,
+    @SerialName("match_whole_words") val matchWholeWordsSt: Boolean? = null,
+    val matchWholeWords: Boolean? = null,
     val keysecondary: List<String> = emptyList(),
     @SerialName("secondary_keys") val secondaryKeys: List<String> = emptyList(),
     val selective: Boolean = false,

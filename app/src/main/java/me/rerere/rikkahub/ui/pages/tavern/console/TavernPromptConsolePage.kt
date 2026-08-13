@@ -44,6 +44,7 @@ import me.rerere.hugeicons.stroke.Delete01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.trace.PromptTraceReadResult
 import me.rerere.rikkahub.data.ai.trace.PromptTraceStatus
+import me.rerere.rikkahub.ui.components.ui.EmptyState
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalToaster
@@ -362,22 +363,11 @@ internal fun TavernPromptEmptyState(
     modifier: Modifier = Modifier,
     body: String? = null,
 ) {
-    Box(
+    // 统一走通用 EmptyState 组件（居中布局、样式与其它酒馆页面一致）
+    EmptyState(
+        title = title,
         modifier = modifier.fillMaxSize().padding(24.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            body?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
+        hint = body,
+        contentArrangement = Arrangement.Center,
+    )
 }

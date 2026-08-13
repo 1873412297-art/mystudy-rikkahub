@@ -1,4 +1,6 @@
 package me.rerere.rikkahub.data.model
+import me.rerere.rikkahub.data.model.PromptInjection
+import org.junit.Assert.assertTrue
 
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -94,4 +96,27 @@ class LorebookSerializationTest {
         assertEquals(JsonPrimitive(true), entryJson.getValue("selective"))
         assertEquals("65", entryJson.getValue("probability").jsonPrimitive.content)
     }
+
+    @Test
+    fun `match whole words field round trips and defaults to false`() {
+        // 旧 JSON 缺字段 -> 默认 false
+        val entry = JsonInstant.decodeFromString(
+            PromptInjection.RegexInjection.serializer(),
+            """{"id":"00000000-0000-4000-8000-000000000202","name":"e","enabled":true,"priority":0,
+                "position":"after_system_prompt","content":"c","injectDepth":4,"role":"user",
+                "keywords":["apple"],"useRegex":false,"caseSensitive":false,"scanDepth":4,"constantActive":false}""",
+        )
+        assertFalse(entry.matchWholeWords)
+
+        // 显式 true 可序列化并读回
+        val withFlag = PromptInjection.RegexInjection(
+            id = Uuid.random(),
+            keywords = listOf("apple"),
+            matchWholeWords = true,
+        )
+        val encoded = JsonInstant.encodeToString(PromptInjection.RegexInjection.serializer(), withFlag)
+        val decoded = JsonInstant.decodeFromString(PromptInjection.RegexInjection.serializer(), encoded)
+        assertTrue(decoded.matchWholeWords)
+    }
+
 }

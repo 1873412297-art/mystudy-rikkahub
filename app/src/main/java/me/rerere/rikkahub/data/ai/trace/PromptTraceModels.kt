@@ -109,6 +109,7 @@ data class PromptInjectionMatch(
     val scannedMessageIds: List<Uuid>,
     val caseSensitive: Boolean,
     val regexEnabled: Boolean,
+    val matchWholeWords: Boolean = false,                 // 是否为整词匹配
     val selective: Boolean = false,                       // 是否为 selective 条目
     val secondaryMatchedTerms: List<String> = emptyList(), // selective 模式下次关键词命中项
     val probability: Int = 100,                            // 条目配置的触发概率

@@ -83,6 +83,7 @@ import me.rerere.rikkahub.data.export.rememberImporter
 import me.rerere.rikkahub.data.model.InjectionPosition
 import me.rerere.rikkahub.data.model.PromptInjection
 import me.rerere.rikkahub.ui.components.nav.BackButton
+import me.rerere.rikkahub.ui.components.ui.EmptyState
 import me.rerere.rikkahub.ui.components.ui.ExportDialog
 import me.rerere.rikkahub.ui.components.ui.FormItem
 import me.rerere.rikkahub.ui.components.ui.Select
@@ -235,24 +236,12 @@ private fun ModeInjectionTab(
         ) {
             if (modeInjections.isEmpty()) {
                 item {
-                    Column(
-                        modifier = Modifier
-                            .fillParentMaxHeight(0.8f)
-                            .fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = stringResource(R.string.prompt_page_mode_injection_empty),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = stringResource(R.string.prompt_page_empty_hint),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        )
-                    }
+                    EmptyState(
+                        modifier = Modifier.fillParentMaxHeight(0.8f),
+                        title = stringResource(R.string.prompt_page_mode_injection_empty),
+                        hint = stringResource(R.string.prompt_page_empty_hint),
+                        contentArrangement = Arrangement.Center,
+                    )
                 }
             } else {
                 items(modeInjections, key = { it.id }) { injection ->

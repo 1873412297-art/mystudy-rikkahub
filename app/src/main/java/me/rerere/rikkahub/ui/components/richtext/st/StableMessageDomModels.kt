@@ -22,6 +22,7 @@ internal data class StableDomSegment(
 internal data class StableDomMessage(
     val id: String,
     val role: StableDomRole,
+    val name: String? = null,
     val segments: List<StableDomSegment>,
     val streaming: Boolean,
 )

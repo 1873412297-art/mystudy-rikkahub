@@ -52,6 +52,7 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.QuickMessage
 import me.rerere.rikkahub.data.model.QuickMessageMode
 import me.rerere.rikkahub.ui.components.nav.BackButton
+import me.rerere.rikkahub.ui.components.ui.EmptyState
 import me.rerere.rikkahub.ui.components.ui.RikkaConfirmDialog
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.plus
@@ -95,30 +96,11 @@ fun QuickMessagesPage(vm: QuickMessagesVM = koinViewModel()) {
         ) {
             if (settings.quickMessages.isEmpty()) {
                 item {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 48.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Icon(
-                            imageVector = HugeIcons.Zap,
-                            contentDescription = null,
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = stringResource(R.string.quick_messages_page_empty_title),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = stringResource(R.string.quick_messages_page_empty_hint),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    EmptyState(
+                        icon = HugeIcons.Zap,
+                        title = stringResource(R.string.quick_messages_page_empty_title),
+                        hint = stringResource(R.string.quick_messages_page_empty_hint),
+                    )
                 }
             }
 

@@ -3,6 +3,7 @@
     <application>
         <activity
             android:name="me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeSmokeActivity"
-            android:exported="false" />
+            android:exported="true"
+            android:label="Tavern Render Smoke" />
     </application>
 </manifest>

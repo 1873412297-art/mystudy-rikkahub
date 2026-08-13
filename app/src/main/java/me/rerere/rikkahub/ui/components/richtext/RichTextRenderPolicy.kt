@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.ui.components.richtext
 
 import me.rerere.rikkahub.data.ai.transformers.findBareJsonPatch
+import me.rerere.rikkahub.data.ai.status.StatusTags
 
 internal data class RichTextRenderIntent(
     val normalizedContent: String,
@@ -28,15 +29,8 @@ private val MAIN_TEXT_BLOCK_REGEX = Regex(
     RegexOption.IGNORE_CASE
 )
 
-private val STATUS_BLOCK_SEGMENT_REGEX = Regex(
-    """<(?:status_block|statusblock|statusbar|status!?|状态栏)>[\s\S]*?(?:</(?:status_block|statusblock|statusbar|status!?|状态栏)>|$)""",
-    RegexOption.IGNORE_CASE
-)
-
-private val STATUS_BLOCK_WRAPPER_REGEX = Regex(
-    """^\s*<(?:status_block|statusblock|statusbar|status!?|状态栏)>\s*([\s\S]*?)(?:</(?:status_block|statusblock|statusbar|status!?|状态栏)>\s*)?$""",
-    RegexOption.IGNORE_CASE
-)
+private val STATUS_BLOCK_SEGMENT_REGEX = StatusTags.segmentRegex()
+private val STATUS_BLOCK_WRAPPER_REGEX = StatusTags.wrapperRegex()
 
 private val DETAILS_SUMMARY_REGEX = Regex(
     """<details\b[^>]*>\s*<summary\b[^>]*>([\s\S]*?)</summary>""",

@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.FormItem
 import org.koin.androidx.compose.koinViewModel
@@ -62,6 +63,7 @@ fun TavernCardEditorPage(assistantId: String) {
                     }
                 },
                 scrollBehavior = scrollBehavior,
+                colors = CustomColors.topBarColors,
             )
         },
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),

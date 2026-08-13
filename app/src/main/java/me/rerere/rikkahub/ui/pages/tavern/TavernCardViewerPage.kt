@@ -3,7 +3,6 @@ package me.rerere.rikkahub.ui.pages.tavern
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.net.Uri
-import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -874,25 +873,6 @@ private fun CompactWebView(html: String) {
 // region Parsing
 
 private val json = Json { ignoreUnknownKeys = true; isLenient = true }
-
-private fun parseCardFromUri(context: Context, uri: Uri): TavernCharacterCard? {
-    val mime = context.contentResolver.getType(uri)
-    return when (mime) {
-        "image/png" -> {
-            val result = ImageUtils.getTavernCharacterMeta(context, uri)
-            val base64Data = result.getOrNull() ?: return null
-            val jsonStr = String(Base64.decode(base64Data, Base64.DEFAULT))
-            parseCardFromJson(jsonStr, uri.toString())
-        }
-
-        "application/json" -> {
-            val jsonStr = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-            parseCardFromJson(jsonStr ?: return null)
-        }
-
-        else -> null
-    }
-}
 
 private fun parseCardFromJson(jsonString: String, sourceImageUri: String? = null): TavernCharacterCard? {
     val jsonElement = json.parseToJsonElement(jsonString)

@@ -240,8 +240,10 @@ internal fun collectInjections(
 ).map { it.injection }
 
 /**
- * 作者注释：合成为一条 AT_DEPTH 的 ModeInjection 进入统一管线，
- * 自动获得安全插入、同深度同 role 合并、优先级排序与 PromptTrace 记录。
+ * 作者注释：合成为一条 ModeInjection 进入统一管线，
+ * 自动获得安全插入、同位置同 role 合并、优先级排序与 PromptTrace 记录。
+ * [AuthorNote.position] 决定注入位置：AT_DEPTH（默认，深度由 [AuthorNote.depth] 决定）/
+ * TOP_OF_CHAT / BOTTOM_OF_CHAT。
  */
 private fun collectAuthorNoteInjection(
     assistant: Assistant,
@@ -259,7 +261,7 @@ private fun collectAuthorNoteInjection(
         injection = PromptInjection.ModeInjection(
             // 会话级生效时与助手级区分命名，便于 trace 排查
             name = if (note === conversationAuthorNote) "会话作者注释" else "作者注释",
-            position = InjectionPosition.AT_DEPTH,
+            position = note.position,
             content = note.content,
             injectDepth = note.depth,
             role = note.role,
@@ -466,7 +468,7 @@ private fun scanLorebookEntry(
     val matchedTerms = if (entry.constantActive) {
         emptyList()
     } else {
-        matchInjectionKeywords(entry.keywords, scannedContext, entry.useRegex, entry.caseSensitive)
+        matchInjectionKeywords(entry.keywords, scannedContext, entry.useRegex, entry.caseSensitive, entry.matchWholeWords)
     }
     if (!entry.constantActive && matchedTerms.isEmpty()) {
         // sticky：历史命中仍在粘着范围内时，无需再次命中关键词即可注入
@@ -487,7 +489,7 @@ private fun scanLorebookEntry(
     // selective：主关键词命中后，次关键词也必须在扫描窗口命中（次关键词为空时退化为仅主关键词匹配）
     val checkSecondary = entry.selective && entry.secondaryKeywords.isNotEmpty() && !entry.constantActive
     val secondaryMatchedTerms = if (checkSecondary) {
-        matchInjectionKeywords(entry.secondaryKeywords, scannedContext, entry.useRegex, entry.caseSensitive)
+        matchInjectionKeywords(entry.secondaryKeywords, scannedContext, entry.useRegex, entry.caseSensitive, entry.matchWholeWords)
     } else {
         emptyList()
     }
@@ -540,6 +542,7 @@ private fun LorebookEntryMatch.toCollectedInjection(lorebook: Lorebook): Collect
             scannedMessageIds = scannedMessages.map { it.id },
             caseSensitive = entry.caseSensitive,
             regexEnabled = entry.useRegex,
+            matchWholeWords = entry.matchWholeWords,
             selective = entry.selective,
             secondaryMatchedTerms = secondaryMatchedTerms,
             probability = entry.probability,
@@ -565,13 +568,18 @@ private fun compileKeywordRegex(pattern: String, caseSensitive: Boolean): Regex?
 }
 
 /**
- * 返回在给定上下文中命中的关键词列表
+ * 返回在给定上下文中命中的关键词列表。
+ *
+ * [matchWholeWords] 为 true 且非正则模式时，关键词必须作为独立词出现：
+ * 前后不得紧邻 ASCII 字母/数字/下划线（SillyTavern \b 语义，CJK 保持子串匹配），
+ * 避免 "apple" 误命中 "pineapple"。正则模式是显式匹配，不叠加整词限制。
  */
 private fun matchInjectionKeywords(
     keywords: List<String>,
     context: String,
     useRegex: Boolean,
     caseSensitive: Boolean,
+    matchWholeWords: Boolean = false,
 ): List<String> = keywords.filter { keyword ->
     if (useRegex) {
         val regex = compileKeywordRegex(keyword, caseSensitive) ?: return@filter false
@@ -580,9 +588,23 @@ private fun matchInjectionKeywords(
         } catch (_: Exception) {
             false
         }
+    } else if (matchWholeWords) {
+        containsWholeWord(context, keyword, caseSensitive)
     } else {
         context.contains(keyword, ignoreCase = !caseSensitive)
     }
+}
+
+/** 词边界字符：ASCII 字母 / 数字 / 下划线（与 SillyTavern 的 \b 语义一致，CJK 按子串匹配）。 */
+private const val WHOLE_WORD_BOUNDARY = "[A-Za-z0-9_]"
+
+/** 整词匹配：关键词两侧不得紧邻 ASCII 词边界字符。 */
+private fun containsWholeWord(context: String, keyword: String, caseSensitive: Boolean): Boolean {
+    if (keyword.isEmpty()) return false
+    val escaped = Regex.escape(keyword)
+    val pattern = "(?<!$WHOLE_WORD_BOUNDARY)$escaped(?!$WHOLE_WORD_BOUNDARY)"
+    val regex = if (caseSensitive) Regex(pattern) else Regex(pattern, RegexOption.IGNORE_CASE)
+    return regex.containsMatchIn(context)
 }
 
 /**

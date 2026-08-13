@@ -514,6 +514,7 @@
   <string name="prompt_page_title">Prompt Injection</string>
   <string name="prompt_page_unnamed">Unnamed</string>
   <string name="prompt_page_use_regex">Use Regular Expression</string>
+    <string name="prompt_page_match_whole_words">Match Whole Words</string>
   <string name="quick_messages_page_add_title">Add Quick Message</string>
   <string name="quick_messages_page_delete_message">Are you sure you want to delete "%s"? This action cannot be undone.</string>
   <string name="quick_messages_page_delete_title">Delete Quick Message</string>
