@@ -490,6 +490,7 @@ private fun MessagePartsBlock(
                                 content = part.text,
                                 tavernConversationId = tavernConversationId,
                                 tavernCurrentMessage = tavernCurrentMessage,
+                                tavernMessageRole = role,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp),
@@ -721,6 +722,7 @@ private fun MessagePartsBlock(
                                 isRawHtml = true,
                                 tavernConversationId = tavernConversationId,
                                 tavernCurrentMessage = tavernCurrentMessage,
+                                tavernMessageRole = role,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp),

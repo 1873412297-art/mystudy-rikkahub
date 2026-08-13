@@ -30,6 +30,7 @@ import kotlin.math.abs
 import kotlin.uuid.Uuid
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import me.rerere.ai.core.MessageRole
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
 import me.rerere.rikkahub.data.ai.status.TavernHostEventType
@@ -80,6 +81,8 @@ internal fun MarkdownWebView(
      * messages.getCurrent 返回该消息，脚本可经 events.subscribe 接收宿主事件（th:<name> DOM 事件）。
      */
     tavernConversationId: Uuid? = null,
+    /** 消息角色（渲染事件细分：assistant → CHARACTER_MESSAGE_RENDERED，user → USER_MESSAGE_RENDERED） */
+    tavernMessageRole: MessageRole? = null,
     tavernCurrentMessage: JsonElement? = null,
     /**
      * STABLE_DOM 文档追加注入的角色卡 CSS（经 CssSanitizer 清洗后内联 <style>）。
@@ -398,6 +401,17 @@ internal fun MarkdownWebView(
                                     type = TavernHostEventType.MESSAGE_RENDERED,
                                     conversationId = cid,
                                 )
+                                when (tavernMessageRole) {
+                                    MessageRole.USER -> tavernHostEventBus.emit(
+                                        type = TavernHostEventType.USER_MESSAGE_RENDERED,
+                                        conversationId = cid,
+                                    )
+                                    MessageRole.ASSISTANT -> tavernHostEventBus.emit(
+                                        type = TavernHostEventType.CHARACTER_MESSAGE_RENDERED,
+                                        conversationId = cid,
+                                    )
+                                    else -> Unit
+                                }
                             }
                         }
                     }
