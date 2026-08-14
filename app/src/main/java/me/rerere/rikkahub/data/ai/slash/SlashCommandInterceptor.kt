@@ -4,15 +4,18 @@ import android.util.Log
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.transformers.InputMessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.TransformerContext
 
 /**
  * Input message transformer that detects slash commands (/command args)
- * and dispatches them to registered JS-Slash-Runner compatible scripts.
+ * and dispatches them to host built-in commands first, then to registered
+ * JS-Slash-Runner compatible scripts.
  */
 class SlashCommandInterceptor(
     private val scriptManager: ScriptManager,
+    private val statusVariableStore: StatusVariableStore,
 ) : InputMessageTransformer {
 
     companion object {
@@ -36,6 +39,17 @@ class SlashCommandInterceptor(
         // Always include command name as first arg, matching JS-Slash-Runner convention
         val args = if (rawArgs.isEmpty()) command else "$command $rawArgs"
         Log.i(TAG, "Detected /$command args='$args'")
+
+        // 宿主内建命令优先（变量后端为 chat 作用域 StatusVariableStore）
+        val hostResult = HostSlashCommands.execute(command, rawArgs, ctx.conversationId, statusVariableStore)
+        if (hostResult != null) {
+            val hostError = hostResult.error
+            if (!hostError.isNullOrBlank()) {
+                Log.e(TAG, "Builtin error: $hostError")
+                return messages.dropLast(1) + userMsg("[Error: /$command] $hostError")
+            }
+            return buildSlashOutput(messages, hostResult.text ?: "", hostResult.html)
+        }
 
         val scripts = scriptManager.listScripts()
         val script = scripts.firstOrNull { s ->

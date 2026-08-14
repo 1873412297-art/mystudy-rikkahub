@@ -288,7 +288,7 @@ class ChatService(
 
     // Slash 命令脚本引擎（懒加载——仅当用户首次发斜杠命令时才扫描磁盘脚本）
     private val scriptManager by lazy { ScriptManager(context, settingsStore) }
-    private val slashInterceptor by lazy { SlashCommandInterceptor(scriptManager) }
+    private val slashInterceptor by lazy { SlashCommandInterceptor(scriptManager, statusVariableStore) }
     private val groupDirectorEngine = GroupDirectorEngine()
 
     // 统一会话管理
