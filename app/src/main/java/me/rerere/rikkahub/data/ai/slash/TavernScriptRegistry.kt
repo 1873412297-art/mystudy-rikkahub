@@ -1,0 +1,219 @@
+package me.rerere.rikkahub.data.ai.slash
+
+import com.whl.quickjs.wrapper.QuickJSContext
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+
+/** 宏展开上下文（注入 QuickJS 的数据面） */
+data class MacroExpandContext(
+    val userName: String = "",
+    val charName: String = "",
+    val conversationId: String? = null,
+)
+
+data class SlashCommandInfo(
+    val name: String,
+    val aliases: List<String>,
+    val helpString: String,
+)
+
+/** 宏/命令执行结果（与 SlashScriptEngine 的 Result 语义对齐） */
+data class SlashCommandResult(
+    val text: String? = null,
+    val html: String? = null,
+    val error: String? = null,
+)
+
+/** 宏源码体积上限（UTF-8 字节） */
+private const val MAX_SOURCE_BYTES = 64 * 1024
+
+/** 注册上限 */
+private const val MAX_REGISTRATIONS = 64
+
+/** 宏展开单次执行超时 */
+private const val MACRO_EXECUTION_TIMEOUT_MS = 2_000L
+
+/**
+ * 宿主侧酒馆脚本注册表（应用级，WebView 重载不丢）。
+ * 宏与斜杠命令源码在独立 QuickJS 单线程 executor 中执行（与 SlashScriptEngine 隔离）。
+ *
+ * QuickJS 原生库不可用时（如 JVM 单测环境）自动降级为无引擎模式：
+ * 注册/列表/配额照常工作，展开返回原文，执行返回 error 兜底。
+ */
+class TavernScriptRegistry {
+
+    private class MacroEntry(val name: String, val source: String)
+
+    private class SlashEntry(val info: SlashCommandInfo, val source: String)
+
+    private val macros = ConcurrentHashMap<String, MacroEntry>()
+    private val slashCommands = ConcurrentHashMap<String, SlashEntry>()
+
+    private val executor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "TavernScriptRegistry").apply { isDaemon = true }
+    }
+
+    private val contextRef = AtomicReference<QuickJSContext?>()
+
+    @Volatile
+    private var engineAvailable = true
+
+    /** 已求值进共享 JS 上下文的宏/命令名集合（重注册时移除以重新求值） */
+    private val loadedMacros = ConcurrentHashMap<String, Boolean>()
+    private val loadedSlashCommands = ConcurrentHashMap<String, Boolean>()
+
+    private fun getOrCreateContext(): QuickJSContext? {
+        contextRef.get()?.let { return it }
+        if (!engineAvailable) return null
+        return try {
+            val context = executor.submit<QuickJSContext> {
+                QuickJSContext.create()
+            }.get(MACRO_EXECUTION_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            contextRef.set(context)
+            context
+        } catch (e: Throwable) {
+            // 原生库不可用（如 JVM 单测环境）→ 永久降级为无引擎模式
+            engineAvailable = false
+            contextRef.set(null)
+            null
+        }
+    }
+
+    private fun macroGlobalName(name: String): String {
+        val sanitized = name.replace(Regex("[^A-Za-z0-9_]"), "_")
+        return "__rikkahub_macro_${sanitized}_${Integer.toHexString(name.hashCode())}"
+    }
+
+    private fun slashGlobalName(name: String): String {
+        val sanitized = name.replace(Regex("[^A-Za-z0-9_]"), "_")
+        return "__rikkahub_slash_${sanitized}_${Integer.toHexString(name.hashCode())}"
+    }
+
+    /** 把宏源码求值成共享上下文中的全局函数（缓存；源码变化时由注册方移除缓存） */
+    private fun ensureMacroLoaded(name: String, source: String): Boolean {
+        if (loadedMacros.containsKey(name)) return true
+        val context = getOrCreateContext() ?: return false
+        val script = "var ${macroGlobalName(name)} = ($source);"
+        val loaded = runOnExecutor<Boolean> {
+            try {
+                context.evaluate(script)
+                true
+            } catch (e: Exception) {
+                false
+            }
+        } ?: false
+        if (loaded) loadedMacros[name] = true
+        return loaded
+    }
+
+    private fun ensureSlashLoaded(name: String, source: String): Boolean {
+        if (loadedSlashCommands.containsKey(name)) return true
+        val context = getOrCreateContext() ?: return false
+        val script = "var ${slashGlobalName(name)} = ($source);"
+        val loaded = runOnExecutor<Boolean> {
+            try {
+                context.evaluate(script)
+                true
+            } catch (e: Exception) {
+                false
+            }
+        } ?: false
+        if (loaded) loadedSlashCommands[name] = true
+        return loaded
+    }
+
+    fun registerMacro(name: String, source: String): Boolean {
+        if (source.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES) return false
+        if (macros.size >= MAX_REGISTRATIONS && !macros.containsKey(name)) return false
+        macros[name] = MacroEntry(name, source)
+        loadedMacros.remove(name) // 重新求值
+        return true
+    }
+
+    fun removeMacro(name: String) {
+        macros.remove(name)
+        loadedMacros.remove(name)
+    }
+
+    fun listMacros(): List<String> = macros.keys.toList()
+
+    fun registerSlashCommand(name: String, callbackSource: String, aliases: List<String>, helpString: String): Boolean {
+        if (callbackSource.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES) return false
+        if (slashCommands.size >= MAX_REGISTRATIONS && !slashCommands.containsKey(name)) return false
+        slashCommands[name] = SlashEntry(SlashCommandInfo(name, aliases, helpString), callbackSource)
+        loadedSlashCommands.remove(name) // 重新求值
+        return true
+    }
+
+    fun removeSlashCommand(name: String) {
+        slashCommands.remove(name)
+        loadedSlashCommands.remove(name)
+    }
+
+    fun listSlashCommands(): List<SlashCommandInfo> = slashCommands.values.map { it.info }
+
+    /**
+     * 同步展开注册宏：`{{name::args}}` 形态。
+     * 无注册宏/无可用引擎/执行失败时保留原文。
+     */
+    fun expandMacros(text: String, context: MacroExpandContext): String {
+        if (macros.isEmpty()) return text
+        val macroRegex = Regex("\\{\\{([A-Za-z_][A-Za-z0-9_]*)(?:::([^}]*))?}}")
+        return macroRegex.replace(text) { match ->
+            val name = match.groupValues[1]
+            val args = match.groupValues[2]
+            val entry = macros[name] ?: return@replace match.value
+            if (!ensureMacroLoaded(name, entry.source)) return@replace match.value
+            callGlobal(macroGlobalName(name), args) ?: return@replace match.value
+        }
+    }
+
+    fun executeSlashCommand(name: String, args: String, context: MacroExpandContext): SlashCommandResult? {
+        val entry = slashCommands[name] ?: return null
+        if (!ensureSlashLoaded(name, entry.source)) {
+            return SlashCommandResult(error = "callback evaluation failed")
+        }
+        val result = callGlobal(slashGlobalName(name), args)
+        if (result == null) return SlashCommandResult(error = "callback execution failed")
+        return SlashCommandResult(text = result)
+    }
+
+    private fun callGlobal(globalName: String, args: String): String? {
+        val context = contextRef.get() ?: return null
+        val script = "$globalName(\"${escapeJson(args)}\")"
+        return runOnExecutor {
+            try {
+                context.evaluate(script)?.toString()
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
+    private fun <T> runOnExecutor(block: () -> T): T? {
+        val future = executor.submit(block)
+        return try {
+            future.get(MACRO_EXECUTION_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        } catch (e: Exception) {
+            future.cancel(true)
+            null
+        }
+    }
+
+    fun clear() {
+        macros.clear()
+        slashCommands.clear()
+        loadedMacros.clear()
+        loadedSlashCommands.clear()
+    }
+
+    private fun escapeJson(s: String): String {
+        return s.replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+    }
+}

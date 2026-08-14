@@ -5,6 +5,7 @@ import com.google.firebase.analytics.analytics
 import com.google.firebase.crashlytics.crashlytics
 import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.AppScope
+import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
 import me.rerere.rikkahub.data.ai.status.StatusRenderer
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
@@ -81,6 +82,10 @@ val appModule = module {
 
     single {
         StatusRenderer()
+    }
+
+    single {
+        TavernScriptRegistry()
     }
 
     single {
