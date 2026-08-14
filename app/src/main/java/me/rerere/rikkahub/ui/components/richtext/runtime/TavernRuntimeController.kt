@@ -447,6 +447,8 @@ internal class TavernRuntimeController(
      */
     suspend fun mutateOutgoing(text: String, timeoutMs: Long = SEND_HOOK_TIMEOUT_MS): String {
         if (sendHookSource.get() == null) return text
+        // 与宏展开门控一致：总开关关闭时 sendHook 同样不生效
+        if (!permissionStore.current().allowScripts) return text
         if (!permissionStore.current().allowMacroRegister) return text
         val expanded = withTimeoutOrNull(timeoutMs) {
             withContext(Dispatchers.IO) {

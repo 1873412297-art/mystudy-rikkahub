@@ -59,6 +59,7 @@ class SlashCommandInterceptor(
             charName = ctx.assistant.name,
             userName = ctx.settings.displaySetting.userNickname.ifBlank { "User" },
             conversationId = ctx.conversationId,
+            scriptsEnabled = ctx.settings.runtimePermissions.allowScripts,
         )
     }
 
@@ -70,6 +71,7 @@ class SlashCommandInterceptor(
         charName: String,
         userName: String,
         conversationId: Uuid?,
+        scriptsEnabled: Boolean = true,
     ): List<UIMessage> {
         // 宿主内建命令优先（变量后端为 chat 作用域 StatusVariableStore）
         val hostResult = HostSlashCommands.execute(command, rawArgs, conversationId, statusVariableStore)
@@ -115,15 +117,20 @@ class SlashCommandInterceptor(
         }
 
         // WebView 注册命令（SlashCommandParser.add）第三档；未注册返回 null
-        val registered = tavernScriptRegistry.executeSlashCommand(
-            command,
-            rawArgs,
-            MacroExpandContext(
-                userName = userName,
-                charName = charName,
-                conversationId = conversationId?.toString(),
-            ),
-        )
+        // 受 allowScripts 总开关保护（与宏展开/sendHook 门控一致）
+        val registered = if (scriptsEnabled) {
+            tavernScriptRegistry.executeSlashCommand(
+                command,
+                rawArgs,
+                MacroExpandContext(
+                    userName = userName,
+                    charName = charName,
+                    conversationId = conversationId?.toString(),
+                ),
+            )
+        } else {
+            null
+        }
         if (registered != null) {
             val err = registered.error
             if (!err.isNullOrBlank()) {
