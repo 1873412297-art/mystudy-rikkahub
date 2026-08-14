@@ -15,10 +15,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -32,6 +34,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.core.MessageRole
+import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
 import me.rerere.rikkahub.data.ai.status.TavernHostEventType
@@ -43,6 +46,7 @@ import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsBackedTavernWor
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernVariableGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernWorldGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.StatusStoreTavernVariableGateway
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernSendHookStore
 import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScript
 import me.rerere.rikkahub.ui.components.richtext.st.StableDomSegment
 import me.rerere.rikkahub.ui.components.richtext.st.StableSegmentSnapshot
@@ -112,11 +116,19 @@ internal fun MarkdownWebView(
      * 初始最小高度（dp），首次上报前占位，避免 0dp 闪烁或 100dp 假高
      */
     minHeightDp: Int = 24,
+    /**
+     * 酒馆脚本 requestHeaders.get 数据源（assistant + model 自定义头）。
+     * ChatList → ChatMessage → MarkdownBlock 透传链组装；null 时返回空列表。
+     * 注意：仅允许在 allowRequestHeaders 权限开启时经 RPC 拉取（含 API key，敏感）。
+     */
+    tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
 ) {
     val context = LocalContext.current
     val settingsStore: SettingsStore = koinInject()
     val statusVariableStore: StatusVariableStore = koinInject()
     val tavernHostEventBus: TavernHostEventBus = koinInject()
+    val tavernScriptRegistry: TavernScriptRegistry = koinInject()
+    val tavernSendHookStore: TavernSendHookStore = koinInject()
     val appSettings by settingsStore.settingsFlow.collectAsStateWithLifecycle()
     val colorScheme = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -139,6 +151,8 @@ internal fun MarkdownWebView(
         runtimePermissionStore.update(appSettings.runtimePermissions)
     }
     val runtimeCoroutineScope = rememberCoroutineScope()
+    // headerSource 每次 RPC 调用读最新透传 lambda（assistant/model 头变化即时生效，不重建 controller）
+    val latestHeaderSource by rememberUpdatedState(tavernHeaderSource)
     val runtimeController = remember(settingsStore, tavernConversationId) {
         TavernRuntimeController(
             conversationId = tavernConversationId,
@@ -152,12 +166,25 @@ internal fun MarkdownWebView(
             ),
             hostEventFlow = tavernHostEventBus.events,
             hostEventScope = runtimeCoroutineScope,
+            // 共享 Koin 单例注册表：WebView 侧注册的宏/命令对发送管线（ChatService）可见
+            scriptRegistry = tavernScriptRegistry,
+            headerSource = { latestHeaderSource?.invoke() ?: emptyList() },
         )
     }
     // controller 重建（tavernConversationId 变化）或离开组合时，取消旧 controller 的
     // 宿主事件收集 job，避免旧 job 泄漏到组合结束才取消、期间继续向无人消费的 SharedFlow 空发
     DisposableEffect(runtimeController) {
-        onDispose { runtimeController.cancelHostEventCollection() }
+        onDispose {
+            runtimeController.cancelHostEventCollection()
+            if (tavernSendHookStore.activeController === runtimeController) {
+                tavernSendHookStore.activeController = null
+            }
+        }
+    }
+    // 发送前钩子桥登记：最近组合的消息 WebView 的 controller 成为发送管线问询对象
+    // （多 WebView 并发时最后组合者生效，best-effort 语义）
+    SideEffect {
+        tavernSendHookStore.activeController = runtimeController
     }
     // 宿主注入当前消息（messages.getCurrent 的数据源）与上下文快照（getContext 数据源）。
     // setContext 内部按内容哈希去重，LaunchedEffect 每次 key 变化调用即可。

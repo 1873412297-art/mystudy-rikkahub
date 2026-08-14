@@ -100,7 +100,7 @@ internal fun buildTavernRuntimeScript(): String = """
       return call('macros.register', { name: name, source: String(fn) }).then(function(ok){
         if (!ok) { delete macroStore[name]; }
         return ok;
-      });
+      }).catch(function(){ delete macroStore[name]; });
     },
     getMacro: function(name){
       if (typeof macroStore[name] === 'function') { return macroStore[name]; }

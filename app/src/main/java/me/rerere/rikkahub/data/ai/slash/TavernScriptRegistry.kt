@@ -164,10 +164,19 @@ class TavernScriptRegistry {
         return macroRegex.replace(text) { match ->
             val name = match.groupValues[1]
             val args = match.groupValues[2]
-            val entry = macros[name] ?: return@replace match.value
-            if (!ensureMacroLoaded(name, entry.source)) return@replace match.value
-            callGlobal(macroGlobalName(name), args) ?: return@replace match.value
+            expandMacro(name, args, context) ?: match.value
         }
+    }
+
+    /**
+     * 单宏直调展开：不经 {{}} 全文正则语法，直接以 args 为参数调用注册宏。
+     * args 任意文本安全（含 }}、{{、引号、换行——经 JSON 转义注入调用表达式）。
+     * 未注册/无可用引擎/执行失败 → null（调用方兜底原样）。
+     */
+    fun expandMacro(name: String, args: String, context: MacroExpandContext): String? {
+        val entry = macros[name] ?: return null
+        if (!ensureMacroLoaded(name, entry.source)) return null
+        return callGlobal(macroGlobalName(name), args)
     }
 
     fun executeSlashCommand(name: String, args: String, context: MacroExpandContext): SlashCommandResult? {

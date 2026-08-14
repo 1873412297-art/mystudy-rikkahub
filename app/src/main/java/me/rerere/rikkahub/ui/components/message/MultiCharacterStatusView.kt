@@ -59,6 +59,8 @@ fun MultiCharacterStatusView(
     tavernContextSnapshot: JsonObject? = null,
     /** 消息角色（透传 MarkdownWebView） */
     tavernMessageRole: MessageRole? = null,
+    /** 请求头数据源（透传 MarkdownWebView，requestHeaders.get RPC 按需拉取） */
+    tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
 ) {
     val pages = part.characterPages
     if (pages.isEmpty()) return
@@ -132,6 +134,7 @@ fun MultiCharacterStatusView(
                     tavernCurrentMessage = tavernCurrentMessage,
                     tavernContextSnapshot = tavernContextSnapshot,
                     tavernMessageRole = tavernMessageRole,
+                    tavernHeaderSource = tavernHeaderSource,
                     modifier = Modifier
                         .fillMaxWidth()
                         .fillMaxHeight()

@@ -517,4 +517,26 @@ class TavernRuntimeControllerTest {
         )
         assertEquals("hello", controller.mutateOutgoing("hello"))
     }
+
+    @Test
+    fun `mutateOutgoing passes brace-heavy text through unharmed without engine`() = runBlocking {
+        // 回归（Task 5 Important 修复）：sendHook 经单宏直调执行，文本含 }} 不再被
+        // {{}} 包装正则截断——无引擎环境（JVM 单测）下 best-effort 原样返回完整文本。
+        val registry = TavernScriptRegistry()
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = true)
+            ),
+            scriptRegistry = registry,
+        )
+        controller.dispatch(
+            TavernRuntimeRequest(
+                id = "1", method = "sendHook.register",
+                params = buildJsonObject { put("source", "function macro(args){ return args; }") },
+            )
+        )
+        val text = "closing}} braces {{ and \"quoted\"\nnewline {{__rikkahub_send_hook::x}}"
+        assertEquals(text, controller.mutateOutgoing(text))
+    }
 }

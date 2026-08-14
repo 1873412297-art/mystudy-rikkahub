@@ -85,8 +85,10 @@ import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.ai.slash.MacroExpandContext
 import me.rerere.rikkahub.data.ai.slash.ScriptManager
 import me.rerere.rikkahub.data.ai.slash.SlashCommandInterceptor
+import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
 import me.rerere.rikkahub.data.ai.status.TavernHostEventType
@@ -126,6 +128,7 @@ import me.rerere.rikkahub.service.group.resolveEffectiveGroupMemberAssistant
 import me.rerere.rikkahub.service.group.resolveManualReplyMemberIds
 import me.rerere.rikkahub.service.group.selectModeratorTurn
 import me.rerere.rikkahub.service.group.toStorableGroupGeneratedMessages
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernSendHookStore
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
 import me.rerere.rikkahub.utils.applyPlaceholders
@@ -282,6 +285,8 @@ class ChatService(
     private val folderRepository: FolderRepository,
     private val statusVariableStore: StatusVariableStore,
     private val tavernHostEventBus: TavernHostEventBus,
+    private val tavernScriptRegistry: TavernScriptRegistry,
+    private val tavernSendHookStore: TavernSendHookStore,
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
@@ -582,7 +587,7 @@ class ChatService(
         val settings = settingsStore.settingsFlow.first()
         val assistant = settings.getAssistantById(currentConversation.assistantId)
             ?: settings.getCurrentAssistant()
-        val processedContent = preprocessUserInputParts(content, assistant)
+        val processedContent = preprocessUserInputParts(content, assistant, conversationId)
         val userMessage = UIMessage(
             role = MessageRole.USER,
             parts = processedContent,
@@ -610,10 +615,12 @@ class ChatService(
                 val settings = settingsStore.settingsFlow.first()
                 val assistant = settings.getAssistantById(currentConversation.assistantId)
                     ?: settings.getCurrentAssistant()
-                val processedContent = preprocessUserInputParts(content, assistant)
+                val processedContent = preprocessUserInputParts(content, assistant, conversationId)
+                // 酒馆脚本 sendHook（best-effort：无活跃 WebView 时跳过，超时默认原样）
+                val hookedContent = tavernSendHookStore.mutateOutgoing(processedContent, timeoutMs = 500)
                 val userMessage = UIMessage(
                     role = MessageRole.USER,
-                    parts = processedContent,
+                    parts = hookedContent,
                 )
                 val addressedConversation = currentConversation.withUpdatedGroupAddressedState(
                     assistant = assistant,
@@ -728,17 +735,30 @@ class ChatService(
         session.setJob(job)
     }
 
-    private fun preprocessUserInputParts(parts: List<UIMessagePart>, assistant: Assistant): List<UIMessagePart> {
+    private fun preprocessUserInputParts(
+        parts: List<UIMessagePart>,
+        assistant: Assistant,
+        conversationId: Uuid,
+    ): List<UIMessagePart> {
         return parts.map { part ->
             when (part) {
                 is UIMessagePart.Text -> {
-                    part.copy(
-                        text = part.text.replaceRegexes(
-                            assistant = assistant,
-                            scope = AssistantAffectScope.USER,
-                            visual = false
-                        )
+                    val regexApplied = part.text.replaceRegexes(
+                        assistant = assistant,
+                        scope = AssistantAffectScope.USER,
+                        visual = false
                     )
+                    // 酒馆脚本注册宏：USER 正则之后同步展开（mutate 通道；失败保留原文）
+                    val macroExpanded = tavernScriptRegistry.expandMacros(
+                        regexApplied,
+                        MacroExpandContext(
+                            userName = settingsStore.settingsFlow.value.displaySetting.userNickname
+                                .ifBlank { "User" },
+                            charName = assistant.name,
+                            conversationId = conversationId.toString(),
+                        ),
+                    )
+                    part.copy(text = macroExpanded)
                 }
 
                 else -> part
@@ -1832,7 +1852,7 @@ class ChatService(
         val settings = settingsStore.settingsFlow.first()
         val assistant = settings.getAssistantById(currentConversation.assistantId)
             ?: settings.getCurrentAssistant()
-        val processedParts = preprocessUserInputParts(parts, assistant)
+        val processedParts = preprocessUserInputParts(parts, assistant, conversationId)
         var edited = false
 
         val updatedNodes = currentConversation.messageNodes.map { node ->

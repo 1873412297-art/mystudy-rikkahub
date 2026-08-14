@@ -441,23 +441,24 @@ internal class TavernRuntimeController(
     }
 
     /**
-     * 发送前 best-effort 文本变换：把注册的 sendHook 源码作为特殊宏展开。
+     * 发送前 best-effort 文本变换：把注册的 sendHook 源码作为特殊宏单宏直调执行。
+     * 直调不走 {{}} 全文正则语法——文本含 }} / {{ / 引号 / 换行均安全（无截断损坏）。
      * 无钩子/权限关闭/引擎不可用/展开失败/超时 → 原样返回（Task 7 发送管线消费）。
      */
     suspend fun mutateOutgoing(text: String, timeoutMs: Long = SEND_HOOK_TIMEOUT_MS): String {
         if (sendHookSource.get() == null) return text
         if (!permissionStore.current().allowMacroRegister) return text
-        val wrapped = "{{$SEND_HOOK_MACRO_NAME::$text}}"
         val expanded = withTimeoutOrNull(timeoutMs) {
             withContext(Dispatchers.IO) {
-                scriptRegistry.expandMacros(
-                    wrapped,
+                scriptRegistry.expandMacro(
+                    SEND_HOOK_MACRO_NAME,
+                    text,
                     MacroExpandContext(conversationId = conversationId?.toString()),
                 )
             }
-        } ?: return text
-        // 展开失败（引擎不可用/文本含 } 破坏宏语法）→ registry 原样返回包装文本
-        return if (expanded == wrapped) text else expanded
+        }
+        // 展开失败（引擎不可用/超时/异常）→ best-effort 原样
+        return expanded ?: text
     }
 }
 

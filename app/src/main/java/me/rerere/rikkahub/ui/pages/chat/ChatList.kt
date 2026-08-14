@@ -317,6 +317,17 @@ private fun ChatListNormal(
         )
     }
 
+    // 酒馆脚本 requestHeaders.get 数据源（assistant + 生效模型自定义头）。
+    // 与 tavernContextSnapshot 同路透传；assistant/模型头变化时（settings 更新）lambda 重建，
+    // MarkdownWebView 经 rememberUpdatedState 在 RPC 调用时读最新值。
+    val tavernHeaderSource = remember(settings, assistant, modelById) {
+        {
+            val model = assistant?.let { a -> modelById[a.chatModelId ?: settings.chatModelId] }
+            (assistant?.customHeaders.orEmpty() + model?.customHeaders.orEmpty())
+                .map { it.name to it.value }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize(),
@@ -383,6 +394,7 @@ private fun ChatListNormal(
                             assistant = assistant,
                             tavernConversationId = conversation.id,
                             tavernContextSnapshot = tavernContextSnapshot,
+                            tavernHeaderSource = tavernHeaderSource,
                             runtimeState = if (assistant?.assistantType == AssistantType.GROUP) {
                                 conversation.groupRuntimeState
                             } else {

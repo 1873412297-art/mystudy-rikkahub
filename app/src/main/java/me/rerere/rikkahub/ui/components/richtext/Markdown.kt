@@ -288,6 +288,8 @@ fun MarkdownBlock(
     tavernContextSnapshot: JsonObject? = null,
     /** 消息角色（透传 MarkdownWebView，渲染事件细分） */
     tavernMessageRole: MessageRole? = null,
+    /** 请求头数据源（透传 MarkdownWebView，requestHeaders.get RPC 按需拉取） */
+    tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
 ) {
     val normalizedContent = remember(content) { normalizeRichTextContent(content) }
     val segments = remember(normalizedContent) { parseRichTextSegments(normalizedContent) }
@@ -343,6 +345,7 @@ fun MarkdownBlock(
                 tavernCurrentMessage = tavernCurrentMessage,
                 tavernContextSnapshot = tavernContextSnapshot,
                 tavernMessageRole = tavernMessageRole,
+                tavernHeaderSource = tavernHeaderSource,
             )
             return
         }
@@ -362,6 +365,7 @@ fun MarkdownBlock(
                         tavernCurrentMessage = tavernCurrentMessage,
                         tavernContextSnapshot = tavernContextSnapshot,
                         tavernMessageRole = tavernMessageRole,
+                        tavernHeaderSource = tavernHeaderSource,
                     )
                     RichTextSegment.Kind.STATUS_BLOCK,
                     RichTextSegment.Kind.JSON_PATCH -> MarkdownWebView(
@@ -370,6 +374,7 @@ fun MarkdownBlock(
                         tavernCurrentMessage = tavernCurrentMessage,
                         tavernContextSnapshot = tavernContextSnapshot,
                         tavernMessageRole = tavernMessageRole,
+                        tavernHeaderSource = tavernHeaderSource,
                     )
                     RichTextSegment.Kind.HTML_DOCUMENT -> MarkdownWebView(
                         content = segment.raw,
@@ -378,6 +383,7 @@ fun MarkdownBlock(
                         tavernCurrentMessage = tavernCurrentMessage,
                         tavernContextSnapshot = tavernContextSnapshot,
                         tavernMessageRole = tavernMessageRole,
+                        tavernHeaderSource = tavernHeaderSource,
                     )
                 }
             }
@@ -411,6 +417,7 @@ fun MarkdownBlock(
             tavernCurrentMessage = tavernCurrentMessage,
             tavernContextSnapshot = tavernContextSnapshot,
             tavernMessageRole = tavernMessageRole,
+            tavernHeaderSource = tavernHeaderSource,
         )
     } else if (data.hasHtml) {
         MarkdownNew(

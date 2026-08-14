@@ -136,6 +136,11 @@ fun ChatMessage(
      * 透传给消息内的 Tavern WebView，经 TavernRuntimeController.setContext 推送。
      */
     tavernContextSnapshot: kotlinx.serialization.json.JsonObject? = null,
+    /**
+     * 请求头数据源（requestHeaders.get RPC 按需拉取，assistant + model 自定义头）。
+     * ChatList 组装透传，与 tavernContextSnapshot 同路。
+     */
+    tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
 ) {
     val message = node.messages[node.selectIndex]
     val tavernCurrentMessage = remember(message) {
@@ -236,6 +241,7 @@ fun ChatMessage(
                     tavernConversationId = tavernConversationId,
                     tavernCurrentMessage = tavernCurrentMessage,
                     tavernContextSnapshot = tavernContextSnapshot,
+                    tavernHeaderSource = tavernHeaderSource,
                 )
             }
 
@@ -408,6 +414,7 @@ private fun MessagePartsBlock(
     tavernConversationId: kotlin.uuid.Uuid? = null,
     tavernCurrentMessage: kotlinx.serialization.json.JsonElement? = null,
     tavernContextSnapshot: kotlinx.serialization.json.JsonObject? = null,
+    tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
 ) {
     val context = LocalContext.current
     val contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
@@ -499,6 +506,7 @@ private fun MessagePartsBlock(
                                 tavernCurrentMessage = tavernCurrentMessage,
                                 tavernContextSnapshot = tavernContextSnapshot,
                                 tavernMessageRole = role,
+                                tavernHeaderSource = tavernHeaderSource,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp),
@@ -528,6 +536,7 @@ private fun MessagePartsBlock(
                                                 tavernCurrentMessage = tavernCurrentMessage,
                                                 tavernContextSnapshot = tavernContextSnapshot,
                                                 tavernMessageRole = role,
+                                                tavernHeaderSource = tavernHeaderSource,
                                             )
                                         }
                                     }
@@ -554,6 +563,7 @@ private fun MessagePartsBlock(
                                                     tavernCurrentMessage = tavernCurrentMessage,
                                                     tavernContextSnapshot = tavernContextSnapshot,
                                                     tavernMessageRole = role,
+                                                    tavernHeaderSource = tavernHeaderSource,
                                                 )
                                             }
                                         }
@@ -573,6 +583,7 @@ private fun MessagePartsBlock(
                                             tavernCurrentMessage = tavernCurrentMessage,
                                             tavernContextSnapshot = tavernContextSnapshot,
                                             tavernMessageRole = role,
+                                            tavernHeaderSource = tavernHeaderSource,
                                             modifier = Modifier
                                                 .animateContentSize()
                                         )
@@ -739,6 +750,7 @@ private fun MessagePartsBlock(
                                 tavernCurrentMessage = tavernCurrentMessage,
                                 tavernContextSnapshot = tavernContextSnapshot,
                                 tavernMessageRole = role,
+                                tavernHeaderSource = tavernHeaderSource,
                             )
                         } else {
                             MarkdownWebView(
@@ -748,6 +760,7 @@ private fun MessagePartsBlock(
                                 tavernCurrentMessage = tavernCurrentMessage,
                                 tavernContextSnapshot = tavernContextSnapshot,
                                 tavernMessageRole = role,
+                                tavernHeaderSource = tavernHeaderSource,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp),

@@ -55,6 +55,21 @@ class TavernScriptRegistryTest {
     }
 
     @Test
+    fun `single macro direct call returns null when macro is not registered`() {
+        val registry = registry()
+        assertNull(registry.expandMacro("nope", "x", MacroExpandContext("U", "C")))
+    }
+
+    @Test
+    fun `single macro direct call falls back to null without engine and tolerates arbitrary args`() {
+        // 降级断言：注册成功，但无引擎时直调安全返回 null（不抛异常）；
+        // 直调不经 {{}} 正则——含 }}、{{、引号、换行的 args 不会损坏/截断。
+        val registry = registry()
+        registry.registerMacro("m", "function macro(args){ return '[' + args + ']'; }")
+        assertNull(registry.expandMacro("m", "a}} b {{c \"quoted\"\nnewline", MacroExpandContext()))
+    }
+
+    @Test
     fun `expansion is a no-op when nothing is registered`() {
         val registry = registry()
         assertEquals("plain text", registry.expandMacros("plain text", MacroExpandContext()))
