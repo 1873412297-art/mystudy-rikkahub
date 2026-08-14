@@ -28,4 +28,16 @@ class TavernRuntimeScriptTest {
         assertTrue(script.contains("getContext"))
         assertTrue(script.contains("context_updated"))
     }
+
+    @Test
+    fun scriptExposesMacroHelperAndSlashCommandParserShims() {
+        val script = buildTavernRuntimeScript()
+
+        assertTrue(script.contains("window.MacroHelper"))
+        assertTrue(script.contains("registerMacro"))
+        assertTrue(script.contains("window.SlashCommandParser"))
+        assertTrue(script.contains("'add'"))
+        assertTrue(script.contains("requestHeaders.get"))
+        assertTrue(script.contains("sendHook.register"))
+    }
 }

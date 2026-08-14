@@ -91,6 +91,48 @@ internal fun buildTavernRuntimeScript(): String = """
     event_types: window.event_types
   };
 
+  // ── MacroHelper：ST 兼容宏注册（fn 序列化为源码经 RPC 注册到宿主表） ──
+  var macroStore = {};
+  window.MacroHelper = {
+    registerMacro: function(name, fn){
+      if (typeof fn !== 'function') return Promise.resolve(false);
+      macroStore[name] = fn;
+      return call('macros.register', { name: name, source: String(fn) }).then(function(ok){
+        if (!ok) { delete macroStore[name]; }
+        return ok;
+      });
+    },
+    getMacro: function(name){
+      if (typeof macroStore[name] === 'function') { return macroStore[name]; }
+      return function(args){ return '{{' + name + '::' + (args === undefined ? '' : args) + '}}'; };
+    },
+    getMacros: function(){ return Object.keys(macroStore); }
+  };
+
+  // ── SlashCommandParser：ST 兼容命令注册垫片 ──
+  window.SlashCommandParser = {
+    'add': function(definition){
+      var name = definition && definition.name;
+      var callback = definition && definition.callback;
+      if (typeof name !== 'string' || typeof callback !== 'function') { return Promise.resolve(false); }
+      return call('slash.register', {
+        name: name,
+        source: String(callback),
+        aliases: definition.aliases || [],
+        helpString: definition.helpString || ''
+      });
+    }
+  };
+
+  window.SillyTavern.getRequestHeaders = function(){
+    return call('requestHeaders.get', {});
+  };
+  window.SillyTavern.sendHook = {
+    register: function(source){
+      return call('sendHook.register', { source: String(source) });
+    }
+  };
+
   var api = {
     runtime: {
       ping: function(){ return call('runtime.ping', {}); }
