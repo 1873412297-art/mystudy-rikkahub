@@ -126,6 +126,22 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                                 updateRuntimePermissions(runtimePermissions.copy(allowNetwork = it))
                             },
                         )
+                        permissionSwitch(
+                            title = "允许注册宏与斜杠命令",
+                            description = "允许脚本注册宿主宏（发送前文本展开）与斜杠命令。默认关闭。",
+                            checked = runtimePermissions.allowMacroRegister,
+                            onCheckedChange = {
+                                updateRuntimePermissions(runtimePermissions.copy(allowMacroRegister = it))
+                            },
+                        )
+                        permissionSwitch(
+                            title = "允许读取请求头",
+                            description = "允许脚本读取当前模型请求头（可能包含 API Key 等敏感信息）。默认关闭。",
+                            checked = runtimePermissions.allowRequestHeaders,
+                            onCheckedChange = {
+                                updateRuntimePermissions(runtimePermissions.copy(allowRequestHeaders = it))
+                            },
+                        )
                     }
                 }
             }

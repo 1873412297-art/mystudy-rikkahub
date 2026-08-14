@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -17,6 +18,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import me.rerere.rikkahub.data.model.TavernRuntimePermissions
+import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
 
 class TavernRuntimeControllerTest {
     private val controller = TavernRuntimeController()
@@ -258,5 +260,261 @@ class TavernRuntimeControllerTest {
         yield()
         job.cancel()
         assertEquals(0, received.count { it.first == "context_updated" })
+    }
+
+    @Test
+    fun `macros register requires allowMacroRegister permission`() {
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = false)
+            ),
+            scriptRegistry = TavernScriptRegistry(),
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "1", method = "macros.register",
+                params = buildJsonObject {
+                    put("name", "m")
+                    put("source", "function macro(args){ return ''; }")
+                },
+            )
+        )
+        assertFalse(response.ok)
+        assertEquals("PERMISSION_DENIED", response.error?.code)
+    }
+
+    @Test
+    fun `macros register succeeds with permission`() {
+        val registry = TavernScriptRegistry()
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = true)
+            ),
+            scriptRegistry = registry,
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "1", method = "macros.register",
+                params = buildJsonObject {
+                    put("name", "m")
+                    put("source", "function macro(args){ return 'ok'; }")
+                },
+            )
+        )
+        assertTrue(response.ok)
+        assertEquals(listOf("m"), registry.listMacros())
+    }
+
+    @Test
+    fun `macros list returns registered macro names`() {
+        val registry = TavernScriptRegistry()
+        registry.registerMacro("m1", "function macro(args){ return ''; }")
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = true)
+            ),
+            scriptRegistry = registry,
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(id = "1", method = "macros.list", params = JsonObject(emptyMap()))
+        )
+        assertTrue(response.ok)
+        assertEquals(listOf("m1"), response.result!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    @Test
+    fun `macros remove deletes registered macro`() {
+        val registry = TavernScriptRegistry()
+        registry.registerMacro("m1", "function macro(args){ return ''; }")
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = true)
+            ),
+            scriptRegistry = registry,
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "1", method = "macros.remove",
+                params = buildJsonObject { put("name", "m1") },
+            )
+        )
+        assertTrue(response.ok)
+        assertTrue(registry.listMacros().isEmpty())
+    }
+
+    @Test
+    fun `macros remove requires allowMacroRegister permission`() {
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = false)
+            ),
+            scriptRegistry = TavernScriptRegistry(),
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "1", method = "macros.remove",
+                params = buildJsonObject { put("name", "m1") },
+            )
+        )
+        assertFalse(response.ok)
+        assertEquals("PERMISSION_DENIED", response.error?.code)
+    }
+
+    @Test
+    fun `slash register stores command with aliases and help`() {
+        val registry = TavernScriptRegistry()
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = true)
+            ),
+            scriptRegistry = registry,
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "1", method = "slash.register",
+                params = buildJsonObject {
+                    put("name", "flip")
+                    put("source", "function callback(args){ return args; }")
+                    put("aliases", JsonArray(listOf(JsonPrimitive("f"))))
+                    put("helpString", "flip text")
+                },
+            )
+        )
+        assertTrue(response.ok)
+        val info = registry.listSlashCommands().single()
+        assertEquals("flip", info.name)
+        assertEquals(listOf("f"), info.aliases)
+        assertEquals("flip text", info.helpString)
+    }
+
+    @Test
+    fun `slash register requires allowMacroRegister permission`() {
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = false)
+            ),
+            scriptRegistry = TavernScriptRegistry(),
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "1", method = "slash.register",
+                params = buildJsonObject {
+                    put("name", "flip")
+                    put("source", "function callback(args){ return args; }")
+                },
+            )
+        )
+        assertFalse(response.ok)
+        assertEquals("PERMISSION_DENIED", response.error?.code)
+    }
+
+    @Test
+    fun `slash unregister removes command`() {
+        val registry = TavernScriptRegistry()
+        registry.registerSlashCommand("flip", "function callback(args){ return args; }", emptyList(), "")
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = true)
+            ),
+            scriptRegistry = registry,
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "1", method = "slash.unregister",
+                params = buildJsonObject { put("name", "flip") },
+            )
+        )
+        assertTrue(response.ok)
+        assertTrue(registry.listSlashCommands().isEmpty())
+    }
+
+    @Test
+    fun `requestHeaders get requires allowRequestHeaders`() {
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowRequestHeaders = false)
+            ),
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(id = "1", method = "requestHeaders.get", params = JsonObject(emptyMap()))
+        )
+        assertFalse(response.ok)
+    }
+
+    @Test
+    fun `requestHeaders get returns injected headers when allowed`() {
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowRequestHeaders = true)
+            ),
+            headerSource = { listOf("Authorization" to "Bearer secret", "X-Custom" to "v") },
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(id = "1", method = "requestHeaders.get", params = JsonObject(emptyMap()))
+        )
+        assertTrue(response.ok)
+        val headers = response.result!!.jsonArray
+        assertEquals(2, headers.size)
+        assertEquals("Authorization", headers[0].jsonObject["name"]!!.jsonPrimitive.content)
+        assertEquals("Bearer secret", headers[0].jsonObject["value"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `sendHook register requires allowMacroRegister permission`() {
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = false)
+            ),
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "1", method = "sendHook.register",
+                params = buildJsonObject { put("source", "function macro(args){ return args; }") },
+            )
+        )
+        assertFalse(response.ok)
+        assertEquals("PERMISSION_DENIED", response.error?.code)
+    }
+
+    @Test
+    fun `sendHook register accepts source and mutateOutgoing falls back without engine`() = runBlocking {
+        val registry = TavernScriptRegistry()
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = true)
+            ),
+            scriptRegistry = registry,
+        )
+        val response = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "1", method = "sendHook.register",
+                params = buildJsonObject { put("source", "function macro(args){ return '[' + args + ']'; }") },
+            )
+        )
+        assertTrue(response.ok)
+        // JVM 环境无 QuickJS 原生库 → registry 降级无引擎模式，展开失败原样返回（best-effort）
+        assertEquals("hello", controller.mutateOutgoing("hello"))
+    }
+
+    @Test
+    fun `mutateOutgoing returns text unchanged when no hook registered`() = runBlocking {
+        val controller = TavernRuntimeController(
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = true)
+            ),
+        )
+        assertEquals("hello", controller.mutateOutgoing("hello"))
     }
 }

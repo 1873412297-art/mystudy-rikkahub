@@ -1,22 +1,30 @@
 package me.rerere.rikkahub.ui.components.richtext.runtime
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import me.rerere.rikkahub.data.ai.slash.MacroExpandContext
+import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
 import me.rerere.rikkahub.data.ai.status.TavernHostEvent
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.uuid.Uuid
 
 /** 单个变量值序列化后的体积上限（UTF-8 字节） */
@@ -24,6 +32,12 @@ private const val MAX_VARIABLE_VALUE_BYTES = 64 * 1024
 
 /** 同一作用域下变量总量序列化后的体积上限（UTF-8 字节） */
 private const val MAX_VARIABLE_TOTAL_BYTES = 512 * 1024
+
+/** sendHook 注册在宿主注册表中的特殊宏名 */
+private const val SEND_HOOK_MACRO_NAME = "__rikkahub_send_hook"
+
+/** sendHook 单次执行超时（best-effort：超时原样返回） */
+private const val SEND_HOOK_TIMEOUT_MS = 500L
 
 internal class TavernRuntimeController(
     private val conversationId: Uuid? = null,
@@ -33,6 +47,8 @@ internal class TavernRuntimeController(
     private val variableGateway: TavernRuntimeVariableGateway = InMemoryTavernRuntimeVariableGateway(),
     hostEventFlow: SharedFlow<TavernHostEvent>? = null,
     hostEventScope: CoroutineScope? = null,
+    private val scriptRegistry: TavernScriptRegistry = TavernScriptRegistry(),
+    private val headerSource: (() -> List<Pair<String, String>>)? = null,
 ) {
     // dispatch 在 WebView JavaBridge 线程上读，setContext/setCurrentMessage 在宿主线程上写
     @Volatile
@@ -55,6 +71,9 @@ internal class TavernRuntimeController(
 
     /** 宿主事件收集 job：挂在外部传入的 scope 上，由 [cancelHostEventCollection] 随 controller 生命周期取消 */
     private var hostEventJob: Job? = null
+
+    /** sendHook.register 注册的发送前钩子源码（发送管线经 [mutateOutgoing] 问询执行） */
+    private val sendHookSource = AtomicReference<String?>()
 
     init {
         // 脚本 events.emit 产生的事件回投到同一 WebView（本地广播，无需订阅权限）
@@ -128,6 +147,13 @@ internal class TavernRuntimeController(
                 "world.deleteEntry" -> deleteWorldEntry(request)
                 "messages.getCurrent" -> getCurrentMessage(request)
                 "messages.updateCurrent" -> updateCurrentMessage(request)
+                "macros.register" -> registerMacro(request)
+                "macros.remove" -> removeMacro(request)
+                "macros.list" -> listMacros(request)
+                "slash.register" -> registerSlashCommand(request)
+                "slash.unregister" -> unregisterSlashCommand(request)
+                "requestHeaders.get" -> getRequestHeaders(request)
+                "sendHook.register" -> registerSendHook(request)
                 else -> TavernRuntimeResponse.error(
                     id = request.id,
                     code = "UNSUPPORTED",
@@ -320,6 +346,118 @@ internal class TavernRuntimeController(
         }
         currentMessage = request.params["patch"] ?: JsonNull
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
+    }
+
+    private fun badRequest(request: TavernRuntimeRequest, message: String): TavernRuntimeResponse {
+        return TavernRuntimeResponse.error(request.id, "BAD_REQUEST", message)
+    }
+
+    private fun registerMacro(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowMacroRegister) {
+            return permissionDenied(request, "Macro registration is disabled for this script")
+        }
+        val name = request.params.getString("name")
+            ?: return badRequest(request, "macros.register requires params.name")
+        val source = request.params.getString("source")
+            ?: return badRequest(request, "macros.register requires params.source")
+        val ok = scriptRegistry.registerMacro(name, source)
+        return TavernRuntimeResponse.success(request.id, JsonPrimitive(ok))
+    }
+
+    private fun removeMacro(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowMacroRegister) {
+            return permissionDenied(request, "Macro registration is disabled for this script")
+        }
+        val name = request.params.getString("name")
+            ?: return badRequest(request, "macros.remove requires params.name")
+        scriptRegistry.removeMacro(name)
+        return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
+    }
+
+    private fun listMacros(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        return TavernRuntimeResponse.success(
+            request.id,
+            JsonArray(scriptRegistry.listMacros().map { JsonPrimitive(it) }),
+        )
+    }
+
+    private fun registerSlashCommand(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowMacroRegister) {
+            return permissionDenied(request, "Slash command registration is disabled for this script")
+        }
+        val name = request.params.getString("name")
+            ?: return badRequest(request, "slash.register requires params.name")
+        val source = request.params.getString("source")
+            ?: return badRequest(request, "slash.register requires params.source")
+        val aliases = (request.params["aliases"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }
+            ?: emptyList()
+        val helpString = request.params.getString("helpString") ?: ""
+        val ok = scriptRegistry.registerSlashCommand(name, source, aliases, helpString)
+        return TavernRuntimeResponse.success(request.id, JsonPrimitive(ok))
+    }
+
+    private fun unregisterSlashCommand(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowMacroRegister) {
+            return permissionDenied(request, "Slash command registration is disabled for this script")
+        }
+        val name = request.params.getString("name")
+            ?: return badRequest(request, "slash.unregister requires params.name")
+        scriptRegistry.removeSlashCommand(name)
+        return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
+    }
+
+    private fun getRequestHeaders(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowRequestHeaders) {
+            return permissionDenied(request, "Request header access is disabled for this script")
+        }
+        val headers = headerSource?.invoke() ?: emptyList()
+        return TavernRuntimeResponse.success(
+            request.id,
+            JsonArray(headers.map { (name, value) ->
+                buildJsonObject {
+                    put("name", name)
+                    put("value", value)
+                }
+            }),
+        )
+    }
+
+    private fun registerSendHook(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        // best-effort 发送前钩子：源码注册后由 ChatService 发送管线经 mutateOutgoing 问询执行
+        if (!permissionStore.current().allowMacroRegister) {
+            return permissionDenied(request, "Send hook registration is disabled for this script")
+        }
+        val source = request.params.getString("source")
+            ?: return badRequest(request, "sendHook.register requires params.source")
+        return registerSendHookInternal(request, source)
+    }
+
+    private fun registerSendHookInternal(request: TavernRuntimeRequest, source: String): TavernRuntimeResponse {
+        if (!scriptRegistry.registerMacro(SEND_HOOK_MACRO_NAME, source)) {
+            return badRequest(request, "sendHook.register source exceeds the 64KB limit")
+        }
+        sendHookSource.set(source)
+        return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
+    }
+
+    /**
+     * 发送前 best-effort 文本变换：把注册的 sendHook 源码作为特殊宏展开。
+     * 无钩子/权限关闭/引擎不可用/展开失败/超时 → 原样返回（Task 7 发送管线消费）。
+     */
+    suspend fun mutateOutgoing(text: String, timeoutMs: Long = SEND_HOOK_TIMEOUT_MS): String {
+        if (sendHookSource.get() == null) return text
+        if (!permissionStore.current().allowMacroRegister) return text
+        val wrapped = "{{$SEND_HOOK_MACRO_NAME::$text}}"
+        val expanded = withTimeoutOrNull(timeoutMs) {
+            withContext(Dispatchers.IO) {
+                scriptRegistry.expandMacros(
+                    wrapped,
+                    MacroExpandContext(conversationId = conversationId?.toString()),
+                )
+            }
+        } ?: return text
+        // 展开失败（引擎不可用/文本含 } 破坏宏语法）→ registry 原样返回包装文本
+        return if (expanded == wrapped) text else expanded
     }
 }
 
