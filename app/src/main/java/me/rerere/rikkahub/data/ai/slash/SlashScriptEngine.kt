@@ -294,12 +294,20 @@ data class SlashContext(
 )
 
 /** Variable API exposed to JS: c.variables.get(key), c.variables.set(key, val), c.variables.delete(key) */
-data class ScriptVariableAccessor(
+interface ScriptVariableAccessor {
+    fun get(key: String): String?
+    fun set(key: String, value: String)
+    fun delete(key: String)
+    fun all(): Map<String, String>
+}
+
+/** Script-scoped variable accessor backed by a [ScriptVariableStore]. */
+data class ScriptVariableStoreAccessor(
     val scriptName: String,
     private val store: ScriptVariableStore,
-) {
-    fun get(key: String): String? = store.get(scriptName, key)
-    fun set(key: String, value: String) = store.set(scriptName, key, value)
-    fun delete(key: String) = store.delete(scriptName, key)
-    fun all(): Map<String, String> = store.getAll(scriptName)
+) : ScriptVariableAccessor {
+    override fun get(key: String): String? = store.get(scriptName, key)
+    override fun set(key: String, value: String) = store.set(scriptName, key, value)
+    override fun delete(key: String) = store.delete(scriptName, key)
+    override fun all(): Map<String, String> = store.getAll(scriptName)
 }

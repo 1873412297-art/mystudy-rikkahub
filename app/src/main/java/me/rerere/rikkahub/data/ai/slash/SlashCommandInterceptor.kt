@@ -53,7 +53,7 @@ class SlashCommandInterceptor(
             conversationId = ctx.conversationId?.toString(),
             chatMessageCount = messages.size,
             recentMessages = messages.takeLast(8),
-            variables = ScriptVariableAccessor(script.name, scriptManager.variableStore),
+            variables = ScriptVariableStoreAccessor(script.name, scriptManager.variableStore),
         )
 
         val result = scriptManager.engine.execute(script.source, args, slashCtx)
