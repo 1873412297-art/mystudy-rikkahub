@@ -96,6 +96,43 @@
 
 ## Current Status
 
+**2026-08-14：酒馆脚本 API 兼容（子项目 B2b：宏与命令）。**
+
+- 主路径 tavern 参数链修复（B2a 首修）：MarkdownBlock/MultiCharacterStatusView 透传 4 参数——
+  普通 markdown/STABLE_DOM 消息 WebView 获得完整脚本上下文（getContext/事件/getCurrent/variables）；
+  模拟器冒烟复验：真实 UI 状态块消息 WebView `setContext` 非空（snapshot=true，role=ASSISTANT）、
+  快照变化推送后 `SillyTavern.getContext()` 非空（probe ctx=nonnull；B2a「主路径恒 null」关闭）
+- TavernScriptRegistry（Koin 单例 + 独立 QuickJS executor）：registerMacro/registerSlashCommand 宿主持久注册
+  （重载不丢、64KB/64 上限、2s 超时）；发送管线 preprocessUserInputParts 同步展开宏（展开入库 = mutate 通道）
+- 设备 bug 修复（冒烟发现）：宏匹配正则结尾 `}}` 未转义 → Android ICU 正则抛 PatternSyntaxException
+  （JVM 测试通过但设备发送必炸）；已转义为 `\}\}` 修复（TavernScriptRegistry.expandMacros）
+- 内建斜杠命令：/setvar /getvar /add /sub /random /pick /roll /echo（chat 变量 StatusVariableStore，
+  StatusVariableStoreAccessor）；优先级：内建 → 磁盘脚本 → WebView 注册
+- RPC 扩展：macros.register/remove/list、slash.register/unregister、requestHeaders.get、sendHook.register；
+  新权限位 allowMacroRegister/allowRequestHeaders（默认 false，UI 开关）
+- JS 垫片：window.MacroHelper（registerMacro/getMacro/getMacros）、window.SlashCommandParser.add、
+  SillyTavern.getRequestHeaders / sendHook.register
+- 流式快照键降级（id + messageNodes.size + 末节点 selectIndex + assistant + userName + isGenerating）：
+  消除流式每 token 全量重建与全 WebView 推送；完成时 size 变触发重建
+- 验证：`:app:testDebugUnitTest`/`:app:compileDebugKotlin`/`:app:assembleDebug` 全绿
+  （**90 类 / 648 测试 0 失败**，2026-08-14）
+- 模拟器冒烟 ✅（2026-08-14，emulator-5554，真实 Koin 单例 + 临时 SmokeActivity 脚本订阅法，临时代码已还原）：
+  - /setvar hp 42 经真实发送管线 → chat 变量写入（varsAfterSetvar={"hp":"42"}，DB 校验）✅
+  - registerMacro（QuickJS 真机执行）→ 发送含 `{{smoketest::world}}` 消息 → 持久化文本
+    「ping EXPANDED_world」（DB 校验）；MESSAGE_SENDING/MESSAGE_SENT preview 均为展开后文本 ✅
+  - getRequestHeaders 权限关 → PERMISSION_DENIED ✅（权限开需 UI 操作，未覆盖）
+  - MESSAGE_RECEIVED 等宿主事件送达 ✅；全程 logcat 无 FATAL
+- 偏差文档化：
+  - MESSAGE_SENDING 严格同步阻塞语义未实现（宏同步 + sendHook best-effort 500ms）
+  - 内建 /roll 优先于磁盘 example.js 同名 /roll（脚本的逐骰明细输出被覆盖，仅剩总和；与 ST 行为差异）
+- 遗留 Minor：
+  - sendHook 500ms 超时无法中断阻塞中的 future（超时后执行线程仍跑完，结果丢弃）
+  - sendHook 经特殊宏名 `__rikkahub_send_hook` 注册——宏列表可见、命名空间泄漏
+  - 宏名大小写精确匹配（未做 ST 风格折叠）；流式快照键降级后「同长度编辑」快照不刷新（spec §8 已接受）
+  - WebView 整文档重载后首推 getContext 仍为 null（B2a 已知：快照哈希未变不重推，是否补「加载后重推」待议）
+- 计划/设计：`docs/superpowers/specs/2026-08-14-tavern-script-api-compat-b2b-design.md`、
+  `docs/superpowers/plans/2026-08-14-tavern-script-api-compat-b2b.md`
+
 **2026-08-14：酒馆脚本 API 兼容（子项目 B2a：上下文与事件）。**
 
 - `SillyTavern.getContext()`：宿主推送快照（ChatList 构建 → controller.setContext 哈希去重 → th:context_updated → JS 缓存同步返回）；

@@ -292,13 +292,11 @@ private fun ChatListNormal(
         assistant?.tavernCardJson?.let { TavernCharacterCard.fromJson(it) }
     }
     val tavernContextSnapshot = remember(
-        conversation.messageNodes,
         conversation.id,
+        conversation.messageNodes.size,
+        conversation.messageNodes.lastOrNull()?.selectIndex,
         assistant,
         settings.displaySetting.userNickname,
-        settings.lorebooks,
-        conversation.lorebookIds,
-        statusVariables,
         loading,
     ) {
         val worldEntries = settings.lorebooks
