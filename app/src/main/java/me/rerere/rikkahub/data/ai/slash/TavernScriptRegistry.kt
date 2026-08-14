@@ -26,6 +26,19 @@ data class SlashCommandResult(
     val error: String? = null,
 )
 
+/** 宏展开能力抽象（生产实现为 [TavernScriptRegistry]，测试可注入假实现观察调用） */
+fun interface MacroExpander {
+    fun expandMacros(text: String, context: MacroExpandContext): String
+}
+
+/** 受 allowScripts 总开关保护的宏展开：脚本禁用时跳过展开，原文直出 */
+fun expandMacrosIfAllowed(
+    expander: MacroExpander,
+    text: String,
+    context: MacroExpandContext,
+    allowScripts: Boolean,
+): String = if (allowScripts) expander.expandMacros(text, context) else text
+
 /** 宏源码体积上限（UTF-8 字节） */
 private const val MAX_SOURCE_BYTES = 64 * 1024
 
@@ -42,7 +55,7 @@ private const val MACRO_EXECUTION_TIMEOUT_MS = 2_000L
  * QuickJS 原生库不可用时（如 JVM 单测环境）自动降级为无引擎模式：
  * 注册/列表/配额照常工作，展开返回原文，执行返回 error 兜底。
  */
-class TavernScriptRegistry {
+class TavernScriptRegistry : MacroExpander {
 
     private class MacroEntry(val name: String, val source: String)
 
@@ -158,7 +171,7 @@ class TavernScriptRegistry {
      * 同步展开注册宏：`{{name::args}}` 形态。
      * 无注册宏/无可用引擎/执行失败时保留原文。
      */
-    fun expandMacros(text: String, context: MacroExpandContext): String {
+    override fun expandMacros(text: String, context: MacroExpandContext): String {
         if (macros.isEmpty()) return text
         // 注意：Android 的 ICU 正则拒绝未转义的结尾 `}}`（JVM 可编译但设备抛 PatternSyntaxException），
         // 结尾花括号必须转义为 \}\}（2026-08-14 模拟器冒烟发现）。

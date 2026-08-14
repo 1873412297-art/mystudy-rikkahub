@@ -19,17 +19,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
 import me.rerere.rikkahub.data.model.TavernRuntimePermissions
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
+import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.plus
 import org.koin.androidx.compose.koinViewModel
+import org.koin.compose.koinInject
 
 @Composable
 fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     var runtimePermissions by remember(settings) { mutableStateOf(settings.runtimePermissions) }
+    val tavernScriptRegistry: TavernScriptRegistry = koinInject()
+    val toaster = LocalToaster.current
 
     fun updateRuntimePermissions(value: TavernRuntimePermissions) {
         runtimePermissions = value
@@ -143,6 +148,24 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                             },
                         )
                     }
+                }
+            }
+            item {
+                CardGroup(
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    title = { Text("脚本注册表") },
+                ) {
+                    item(
+                        onClick = {
+                            tavernScriptRegistry.clear()
+                            toaster.show("已清除全部已注册的宏与斜杠命令")
+                        },
+                        headlineContent = { Text("清除已注册脚本") },
+                        supportingContent = {
+                            Text("移除所有经脚本注册的宿主宏与斜杠命令（WebView 重载后脚本可重新注册）。")
+                        },
+                        trailingContent = { Text("→") },
+                    )
                 }
             }
         }

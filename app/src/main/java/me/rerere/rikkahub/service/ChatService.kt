@@ -89,6 +89,7 @@ import me.rerere.rikkahub.data.ai.slash.MacroExpandContext
 import me.rerere.rikkahub.data.ai.slash.ScriptManager
 import me.rerere.rikkahub.data.ai.slash.SlashCommandInterceptor
 import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
+import me.rerere.rikkahub.data.ai.slash.expandMacrosIfAllowed
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
 import me.rerere.rikkahub.data.ai.status.TavernHostEventType
@@ -293,7 +294,9 @@ class ChatService(
 
     // Slash 命令脚本引擎（懒加载——仅当用户首次发斜杠命令时才扫描磁盘脚本）
     private val scriptManager by lazy { ScriptManager(context, settingsStore) }
-    private val slashInterceptor by lazy { SlashCommandInterceptor(scriptManager, statusVariableStore) }
+    private val slashInterceptor by lazy {
+        SlashCommandInterceptor(scriptManager, statusVariableStore, tavernScriptRegistry)
+    }
     private val groupDirectorEngine = GroupDirectorEngine()
 
     // 统一会话管理
@@ -748,15 +751,18 @@ class ChatService(
                         scope = AssistantAffectScope.USER,
                         visual = false
                     )
-                    // 酒馆脚本注册宏：USER 正则之后同步展开（mutate 通道；失败保留原文）
-                    val macroExpanded = tavernScriptRegistry.expandMacros(
-                        regexApplied,
-                        MacroExpandContext(
+                    // 酒馆脚本注册宏：USER 正则之后同步展开（mutate 通道；失败保留原文）；
+                    // 宏是脚本功能，受 allowScripts 总开关保护——关闭时跳过展开
+                    val macroExpanded = expandMacrosIfAllowed(
+                        expander = tavernScriptRegistry,
+                        text = regexApplied,
+                        context = MacroExpandContext(
                             userName = settingsStore.settingsFlow.value.displaySetting.userNickname
                                 .ifBlank { "User" },
                             charName = assistant.name,
                             conversationId = conversationId.toString(),
                         ),
+                        allowScripts = settingsStore.settingsFlow.value.runtimePermissions.allowScripts,
                     )
                     part.copy(text = macroExpanded)
                 }

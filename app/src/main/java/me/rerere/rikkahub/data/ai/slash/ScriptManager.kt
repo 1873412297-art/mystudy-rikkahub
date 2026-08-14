@@ -11,7 +11,7 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 class ScriptManager(
     context: Context,
     settingsStore: SettingsStore,
-) {
+) : SlashScriptSource {
     val variableStore = ScriptVariableStore(context)
     val engine = SlashScriptEngine(settingsStore, variableStore)
 
@@ -21,7 +21,7 @@ class ScriptManager(
     }
 
     /** List all script files */
-    fun listScripts(): List<SlashScript> {
+    override fun listScripts(): List<SlashScript> {
         return scriptsDir.listFiles()
             ?.filter { it.extension == "js" }
             ?.mapNotNull { f ->
@@ -71,6 +71,14 @@ class ScriptManager(
         val disabledFile = java.io.File(scriptsDir, "$name.js.disabled")
         return if (enabled) disabledFile.renameTo(file) else file.renameTo(disabledFile)
     }
+
+    override fun extractCommands(source: String): List<SlashCommand> = engine.extractCommands(source)
+
+    override suspend fun execute(source: String, args: String, context: SlashContext): Result<Map<String, String>> =
+        engine.execute(source, args, context)
+
+    override fun variableAccessor(scriptName: String): ScriptVariableAccessor =
+        ScriptVariableStoreAccessor(scriptName, variableStore)
 
     private fun maybeCreateExample(dir: java.io.File) {
         if (dir.listFiles()?.any { it.extension == "js" } == true) return

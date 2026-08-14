@@ -1,25 +1,37 @@
 package me.rerere.rikkahub.data.ai.slash
 
-import android.util.Log
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.transformers.InputMessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.TransformerContext
+import kotlin.uuid.Uuid
+
+/**
+ * 磁盘脚本源抽象（JS-Slash-Runner 磁盘脚本的查找与执行）。
+ * [ScriptManager] 是唯一生产实现；JVM 测试提供假实现以只测分发逻辑。
+ */
+interface SlashScriptSource {
+    fun listScripts(): List<SlashScript>
+    fun extractCommands(source: String): List<SlashCommand>
+    suspend fun execute(source: String, args: String, context: SlashContext): Result<Map<String, String>>
+    fun variableAccessor(scriptName: String): ScriptVariableAccessor
+}
 
 /**
  * Input message transformer that detects slash commands (/command args)
- * and dispatches them to host built-in commands first, then to registered
- * JS-Slash-Runner compatible scripts.
+ * and dispatches them with three-tier priority:
+ * host built-in commands → disk JS-Slash-Runner scripts → WebView-registered
+ * commands ([TavernScriptRegistry]). Unhandled commands pass through to the AI.
  */
 class SlashCommandInterceptor(
-    private val scriptManager: ScriptManager,
+    private val scriptSource: SlashScriptSource,
     private val statusVariableStore: StatusVariableStore,
+    private val tavernScriptRegistry: TavernScriptRegistry,
 ) : InputMessageTransformer {
 
     companion object {
-        private const val TAG = "SlashCmd"
         private val SLASH_REGEX = Regex("""^/(\w+)\s*(.*)$""")
     }
 
@@ -38,56 +50,89 @@ class SlashCommandInterceptor(
         val rawArgs = match.groupValues[2].trim()
         // Always include command name as first arg, matching JS-Slash-Runner convention
         val args = if (rawArgs.isEmpty()) command else "$command $rawArgs"
-        Log.i(TAG, "Detected /$command args='$args'")
 
+        return dispatch(
+            messages = messages,
+            command = command,
+            rawArgs = rawArgs,
+            args = args,
+            charName = ctx.assistant.name,
+            userName = ctx.settings.displaySetting.userNickname.ifBlank { "User" },
+            conversationId = ctx.conversationId,
+        )
+    }
+
+    internal suspend fun dispatch(
+        messages: List<UIMessage>,
+        command: String,
+        rawArgs: String,
+        args: String,
+        charName: String,
+        userName: String,
+        conversationId: Uuid?,
+    ): List<UIMessage> {
         // 宿主内建命令优先（变量后端为 chat 作用域 StatusVariableStore）
-        val hostResult = HostSlashCommands.execute(command, rawArgs, ctx.conversationId, statusVariableStore)
+        val hostResult = HostSlashCommands.execute(command, rawArgs, conversationId, statusVariableStore)
         if (hostResult != null) {
             val hostError = hostResult.error
             if (!hostError.isNullOrBlank()) {
-                Log.e(TAG, "Builtin error: $hostError")
                 return messages.dropLast(1) + userMsg("[Error: /$command] $hostError")
             }
             return buildSlashOutput(messages, hostResult.text ?: "", hostResult.html)
         }
 
-        val scripts = scriptManager.listScripts()
+        val scripts = scriptSource.listScripts()
         val script = scripts.firstOrNull { s ->
-            scriptManager.engine.extractCommands(s.source).any { it.command == command }
+            scriptSource.extractCommands(s.source).any { it.command == command }
         }
 
-        if (script == null) {
-            Log.w(TAG, "No handler for /$command")
-            return messages // pass through to AI
+        if (script != null) {
+            val slashCtx = SlashContext(
+                charName = charName,
+                userName = userName,
+                conversationId = conversationId?.toString(),
+                chatMessageCount = messages.size,
+                recentMessages = messages.takeLast(8),
+                variables = scriptSource.variableAccessor(script.name),
+            )
+
+            val result = scriptSource.execute(script.source, args, slashCtx)
+            return result.fold(
+                onSuccess = { out ->
+                    val text = out["result"] ?: ""
+                    val html = out["html"]
+                    val err = out["error"]
+                    if (!err.isNullOrBlank()) {
+                        messages.dropLast(1) + userMsg("[Error: /$command] $err")
+                    } else if (!text.isBlank() || !html.isNullOrBlank()) {
+                        buildSlashOutput(messages, text, html)
+                    } else messages
+                },
+                onFailure = { e ->
+                    messages.dropLast(1) + userMsg("[/$command failed: ${e.message}]")
+                },
+            )
         }
 
-        val slashCtx = SlashContext(
-            charName = ctx.assistant.name,
-            userName = ctx.settings.displaySetting.userNickname.ifBlank { "User" },
-            conversationId = ctx.conversationId?.toString(),
-            chatMessageCount = messages.size,
-            recentMessages = messages.takeLast(8),
-            variables = ScriptVariableStoreAccessor(script.name, scriptManager.variableStore),
+        // WebView 注册命令（SlashCommandParser.add）第三档；未注册返回 null
+        val registered = tavernScriptRegistry.executeSlashCommand(
+            command,
+            rawArgs,
+            MacroExpandContext(
+                userName = userName,
+                charName = charName,
+                conversationId = conversationId?.toString(),
+            ),
         )
+        if (registered != null) {
+            val err = registered.error
+            if (!err.isNullOrBlank()) {
+                return messages.dropLast(1) + userMsg("[Error: /$command] $err")
+            }
+            return buildSlashOutput(messages, registered.text ?: "", registered.html)
+        }
 
-        val result = scriptManager.engine.execute(script.source, args, slashCtx)
-        return result.fold(
-            onSuccess = { out ->
-                val text = out["result"] ?: ""
-                val html = out["html"]
-                val err = out["error"]
-                if (!err.isNullOrBlank()) {
-                    Log.e(TAG, "Script error: $err")
-                    messages.dropLast(1) + userMsg("[Error: /$command] $err")
-                } else if (!text.isBlank() || !html.isNullOrBlank()) {
-                    buildSlashOutput(messages, text, html)
-                } else messages
-            },
-            onFailure = { e ->
-                Log.e(TAG, "Failed: $command", e)
-                messages.dropLast(1) + userMsg("[/$command failed: ${e.message}]")
-            },
-        )
+        return messages // pass through to AI
     }
 
     /**
