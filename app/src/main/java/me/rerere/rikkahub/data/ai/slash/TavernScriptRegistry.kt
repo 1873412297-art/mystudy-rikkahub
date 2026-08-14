@@ -160,7 +160,9 @@ class TavernScriptRegistry {
      */
     fun expandMacros(text: String, context: MacroExpandContext): String {
         if (macros.isEmpty()) return text
-        val macroRegex = Regex("\\{\\{([A-Za-z_][A-Za-z0-9_]*)(?:::([^}]*))?}}")
+        // 注意：Android 的 ICU 正则拒绝未转义的结尾 `}}`（JVM 可编译但设备抛 PatternSyntaxException），
+        // 结尾花括号必须转义为 \}\}（2026-08-14 模拟器冒烟发现）。
+        val macroRegex = Regex("\\{\\{([A-Za-z_][A-Za-z0-9_]*)(?:::([^}]*))?\\}\\}")
         return macroRegex.replace(text) { match ->
             val name = match.groupValues[1]
             val args = match.groupValues[2]
