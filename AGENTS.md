@@ -96,6 +96,21 @@
 
 ## Current Status
 
+**2026-08-14：酒馆渲染与脚本 API 兼容性系列收尾（子项目 A + B1 + B2a + B2b 全部完成）。**
+
+- 本轮四个子项目全部交付并逐任务审查 + 最终全分支审查通过（60 提交，private-main 未推送 origin）：
+  - 子项目 A：web-ui 酒馆渲染栈（tavern-render 端点 / status_variables SSE / HtmlFrame 沙箱渲染 / HUD / vitest 移植）
+  - 子项目 B1：Android 渲染链路（st-message ST 形状重建 / vendor 本地化 / 主题与卡 CSS / 流式增量 / WebView 治理）
+  - 子项目 B2a：上下文与事件（SillyTavern.getContext 快照 / event_types / 宿主事件扩面）
+  - 子项目 B2b：宏与命令（TavernScriptRegistry / 内建斜杠命令 / RPC 扩展 + 权限位 / JS 垫片 / 发送管线 mutate / 流式键降级）
+- 最终验证：`:app:testDebugUnitTest` **92 类 / 654 测试 0 失败**、`:app:compileDebugKotlin`、`:app:assembleDebug` 全绿；
+  `pnpm test`（41）/`typecheck`/`lint`/`build` 全绿（web-ui）
+- 安全相关处置：含不当内容的角色卡 fixture 已从仓库移除（2a2ada05）；权限门控一致性（allowScripts 覆盖
+  getContext/宏展开/sendHook/第三档斜杠分发）
+- 已知遗留（按优先级记录于各状态块）：executor 可被死循环宏毒化（超时不可中断）、宏展开同步阻塞、
+  sendHook 宏名泄漏、宏名大小写精确匹配、mark.html CDN 未本地化（B1 遗留）、katex 字体未本地化、
+  流式期间 html 重建（B1 遗留）等——均已在各块待办列出
+
 **2026-08-14：酒馆脚本 API 兼容（子项目 B2b：宏与命令）。**
 
 - 主路径 tavern 参数链修复（B2a 首修）：MarkdownBlock/MultiCharacterStatusView 透传 4 参数——
