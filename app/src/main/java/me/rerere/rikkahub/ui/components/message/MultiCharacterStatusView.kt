@@ -25,8 +25,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
+import kotlin.uuid.Uuid
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 /**
  * Displays multi-character status with swipeable pages.
@@ -47,6 +51,14 @@ import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
 fun MultiCharacterStatusView(
     part: UIMessagePart.StatusPlaceholder,
     modifier: Modifier = Modifier,
+    /** 酒馆脚本运行时上下文：消息所属会话 ID（透传 MarkdownWebView） */
+    tavernConversationId: Uuid? = null,
+    /** 当前消息 JSON（透传 MarkdownWebView） */
+    tavernCurrentMessage: JsonElement? = null,
+    /** 上下文快照（透传 MarkdownWebView） */
+    tavernContextSnapshot: JsonObject? = null,
+    /** 消息角色（透传 MarkdownWebView） */
+    tavernMessageRole: MessageRole? = null,
 ) {
     val pages = part.characterPages
     if (pages.isEmpty()) return
@@ -116,6 +128,10 @@ fun MultiCharacterStatusView(
                     content = pages[page].html,
                     isRawHtml = true,
                     maxHeightDp = 200,
+                    tavernConversationId = tavernConversationId,
+                    tavernCurrentMessage = tavernCurrentMessage,
+                    tavernContextSnapshot = tavernContextSnapshot,
+                    tavernMessageRole = tavernMessageRole,
                     modifier = Modifier
                         .fillMaxWidth()
                         .fillMaxHeight()

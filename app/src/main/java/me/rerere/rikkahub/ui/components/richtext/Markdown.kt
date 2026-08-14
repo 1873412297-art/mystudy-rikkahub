@@ -89,6 +89,8 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.ai.core.MessageRole
 import me.rerere.hugeicons.stroke.Copy01
@@ -117,6 +119,7 @@ import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import org.intellij.markdown.parser.MarkdownParser
 import kotlin.time.Clock
+import kotlin.uuid.Uuid
 
 private val flavour by lazy {
     GFMFlavourDescriptor(
@@ -277,6 +280,14 @@ fun MarkdownBlock(
     tavernCardStyle: TavernCardStyle? = null,
     /** 流式生成中：true 时走增量 patch，false 时整文档渲染（Task 5 接线） */
     streaming: Boolean = false,
+    /** 酒馆脚本运行时上下文：消息所属会话 ID（透传 MarkdownWebView） */
+    tavernConversationId: Uuid? = null,
+    /** 当前消息 JSON（透传 MarkdownWebView，messages.getCurrent 数据源） */
+    tavernCurrentMessage: JsonElement? = null,
+    /** 上下文快照（透传 MarkdownWebView，SillyTavern.getContext 数据源） */
+    tavernContextSnapshot: JsonObject? = null,
+    /** 消息角色（透传 MarkdownWebView，渲染事件细分） */
+    tavernMessageRole: MessageRole? = null,
 ) {
     val normalizedContent = remember(content) { normalizeRichTextContent(content) }
     val segments = remember(normalizedContent) { parseRichTextSegments(normalizedContent) }
@@ -328,6 +339,10 @@ fun MarkdownBlock(
                 streaming = streaming,
                 streamSegments = stableSegments,
                 tavernStyleVersionKey = tavernCardStyle?.versionKey,
+                tavernConversationId = tavernConversationId,
+                tavernCurrentMessage = tavernCurrentMessage,
+                tavernContextSnapshot = tavernContextSnapshot,
+                tavernMessageRole = tavernMessageRole,
             )
             return
         }
@@ -339,10 +354,31 @@ fun MarkdownBlock(
                         content = segment.raw,
                         style = style,
                         onClickCitation = onClickCitation,
+                        roleName = roleName,
+                        stableRole = stableRole,
+                        tavernCardStyle = tavernCardStyle,
+                        streaming = streaming,
+                        tavernConversationId = tavernConversationId,
+                        tavernCurrentMessage = tavernCurrentMessage,
+                        tavernContextSnapshot = tavernContextSnapshot,
+                        tavernMessageRole = tavernMessageRole,
                     )
                     RichTextSegment.Kind.STATUS_BLOCK,
-                    RichTextSegment.Kind.JSON_PATCH -> MarkdownWebView(content = segment.raw)
-                    RichTextSegment.Kind.HTML_DOCUMENT -> MarkdownWebView(content = segment.raw, isRawHtml = true)
+                    RichTextSegment.Kind.JSON_PATCH -> MarkdownWebView(
+                        content = segment.raw,
+                        tavernConversationId = tavernConversationId,
+                        tavernCurrentMessage = tavernCurrentMessage,
+                        tavernContextSnapshot = tavernContextSnapshot,
+                        tavernMessageRole = tavernMessageRole,
+                    )
+                    RichTextSegment.Kind.HTML_DOCUMENT -> MarkdownWebView(
+                        content = segment.raw,
+                        isRawHtml = true,
+                        tavernConversationId = tavernConversationId,
+                        tavernCurrentMessage = tavernCurrentMessage,
+                        tavernContextSnapshot = tavernContextSnapshot,
+                        tavernMessageRole = tavernMessageRole,
+                    )
                 }
             }
         }
@@ -371,6 +407,10 @@ fun MarkdownBlock(
             content = normalizedContent,
             modifier = modifier,
             isRawHtml = intent.isRawHtmlDocument,
+            tavernConversationId = tavernConversationId,
+            tavernCurrentMessage = tavernCurrentMessage,
+            tavernContextSnapshot = tavernContextSnapshot,
+            tavernMessageRole = tavernMessageRole,
         )
     } else if (data.hasHtml) {
         MarkdownNew(

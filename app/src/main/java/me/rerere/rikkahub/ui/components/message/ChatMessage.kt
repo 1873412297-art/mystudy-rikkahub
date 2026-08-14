@@ -524,6 +524,10 @@ private fun MessagePartsBlock(
                                                 stableRole = role,
                                                 tavernCardStyle = remember(assistant) { TavernCardStyleResolver.resolve(assistant) },
                                                 streaming = loading,
+                                                tavernConversationId = tavernConversationId,
+                                                tavernCurrentMessage = tavernCurrentMessage,
+                                                tavernContextSnapshot = tavernContextSnapshot,
+                                                tavernMessageRole = role,
                                             )
                                         }
                                     }
@@ -546,6 +550,10 @@ private fun MessagePartsBlock(
                                                     stableRole = role,
                                                     tavernCardStyle = remember(assistant) { TavernCardStyleResolver.resolve(assistant) },
                                                     streaming = loading,
+                                                    tavernConversationId = tavernConversationId,
+                                                    tavernCurrentMessage = tavernCurrentMessage,
+                                                    tavernContextSnapshot = tavernContextSnapshot,
+                                                    tavernMessageRole = role,
                                                 )
                                             }
                                         }
@@ -561,6 +569,10 @@ private fun MessagePartsBlock(
                                             stableRole = role,
                                             tavernCardStyle = remember(assistant) { TavernCardStyleResolver.resolve(assistant) },
                                             streaming = loading,
+                                            tavernConversationId = tavernConversationId,
+                                            tavernCurrentMessage = tavernCurrentMessage,
+                                            tavernContextSnapshot = tavernContextSnapshot,
+                                            tavernMessageRole = role,
                                             modifier = Modifier
                                                 .animateContentSize()
                                         )
@@ -723,6 +735,10 @@ private fun MessagePartsBlock(
                             MultiCharacterStatusView(
                                 part = part,
                                 modifier = Modifier.fillMaxWidth(),
+                                tavernConversationId = tavernConversationId,
+                                tavernCurrentMessage = tavernCurrentMessage,
+                                tavernContextSnapshot = tavernContextSnapshot,
+                                tavernMessageRole = role,
                             )
                         } else {
                             MarkdownWebView(
