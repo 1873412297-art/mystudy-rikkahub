@@ -152,7 +152,7 @@ class TavernPromptConsoleStateTest {
         val missing = vm(conversation = null, traces = MutableStateFlow(emptyList()))
         val noTraces = vm(conversation = conversation(), traces = MutableStateFlow(emptyList()))
 
-        assertTrue(missing.uiState.value.loading)
+        assertFalse(missing.uiState.value.loading)
         assertNull(missing.uiState.value.selectedTraceId)
         assertFalse(noTraces.uiState.value.loading)
         assertNull(noTraces.uiState.value.selectedTraceId)

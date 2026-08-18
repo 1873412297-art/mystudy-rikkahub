@@ -47,18 +47,25 @@ class TavernPromptConsoleVM internal constructor(
     private val conversationId = Uuid.parse(conversationId)
     private val scope = stateScope ?: viewModelScope
     private val conversation = MutableStateFlow<Conversation?>(null)
+    private val conversationLoaded = MutableStateFlow(false)
     private val explicitSelection = MutableStateFlow<Uuid?>(null)
     private val selectedTab = MutableStateFlow(TavernPromptConsoleTab.OVERVIEW)
     private val traces = observeTraces(this.conversationId)
+    private val conversationState = combine(conversationLoaded, conversation) { loaded, value ->
+        loaded to value
+    }
 
     val uiState: StateFlow<TavernPromptConsoleUiState> = combine(
-        conversation,
+        conversationState,
         traces,
         explicitSelection,
         selectedTab,
         settings,
-    ) { currentConversation, traceItems, requestedTraceId, tab, currentSettings ->
-        if (currentConversation == null) return@combine TavernPromptConsoleUiState()
+    ) { (isConversationLoaded, currentConversation), traceItems, requestedTraceId, tab, currentSettings ->
+        if (!isConversationLoaded) return@combine TavernPromptConsoleUiState()
+        if (currentConversation == null) {
+            return@combine TavernPromptConsoleUiState(loading = false)
+        }
         val selectedReplyId = currentConversation.currentMessages
             .lastOrNull { it.role == MessageRole.ASSISTANT }
             ?.id
@@ -85,7 +92,10 @@ class TavernPromptConsoleVM internal constructor(
 
     init {
         scope.launch {
-            conversation.value = loadConversation(this@TavernPromptConsoleVM.conversationId)
+            conversation.value = runCatching {
+                loadConversation(this@TavernPromptConsoleVM.conversationId)
+            }.getOrNull()
+            conversationLoaded.value = true
         }
     }
 
