@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.provider.Model
@@ -41,7 +42,10 @@ import me.rerere.rikkahub.data.model.InjectionPosition
 import me.rerere.rikkahub.data.model.Lorebook
 import me.rerere.rikkahub.data.model.PromptInjection
 import me.rerere.rikkahub.data.model.QuickMessage
+import me.rerere.rikkahub.data.model.TavernRuntimePermissions
 import me.rerere.rikkahub.data.model.Tag
+import me.rerere.rikkahub.data.model.resolveVisibleQuickMessages
+import me.rerere.rikkahub.data.model.sanitizeQuickMessageRefs
 import me.rerere.rikkahub.data.sync.s3.S3Config
 import me.rerere.rikkahub.ui.theme.CustomTheme
 import me.rerere.rikkahub.ui.theme.PresetThemes
@@ -142,6 +146,8 @@ class SettingsStore(
         val MODE_INJECTIONS = stringPreferencesKey("mode_injections")
         val LOREBOOKS = stringPreferencesKey("lorebooks")
         val QUICK_MESSAGES = stringPreferencesKey("quick_messages")
+        val TAVERN_RUNTIME_PERMISSIONS = stringPreferencesKey("tavern_runtime_permissions")
+        val TAVERN_GLOBAL_VARIABLES = stringPreferencesKey("tavern_global_variables")
 
         // 备份提醒
         val BACKUP_REMINDER_CONFIG = stringPreferencesKey("backup_reminder_config")
@@ -234,6 +240,12 @@ class SettingsStore(
                 quickMessages = preferences[QUICK_MESSAGES]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: emptyList(),
+                runtimePermissions = preferences[TAVERN_RUNTIME_PERMISSIONS]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: TavernRuntimePermissions(),
+                tavernGlobalVariables = preferences[TAVERN_GLOBAL_VARIABLES]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: JsonObject(emptyMap()),
                 webServerEnabled = preferences[WEB_SERVER_ENABLED] == true,
                 webServerPort = preferences[WEB_SERVER_PORT] ?: 8080,
                 webServerJwtEnabled = preferences[WEB_SERVER_JWT_ENABLED] == true,
@@ -318,11 +330,9 @@ class SettingsStore(
                         lorebookIds = assistant.lorebookIds.filter { id ->
                             id in validLorebookIds
                         }.toSet(),
-                        // 过滤掉不存在的快捷消息 ID
-                        quickMessageIds = assistant.quickMessageIds.filter { id ->
-                            id in validQuickMessageIds
-                        }.toSet()
                     )
+                        // 过滤掉不存在的快捷消息 ID（含助手级隐藏记录）
+                        .sanitizeQuickMessageRefs(validQuickMessageIds)
                 },
                 ttsProviders = settings.ttsProviders.distinctBy { it.id },
                 asrProviders = asrProviders,
@@ -404,6 +414,8 @@ class SettingsStore(
             preferences[MODE_INJECTIONS] = JsonInstant.encodeToString(settings.modeInjections)
             preferences[LOREBOOKS] = JsonInstant.encodeToString(settings.lorebooks)
             preferences[QUICK_MESSAGES] = JsonInstant.encodeToString(settings.quickMessages)
+            preferences[TAVERN_RUNTIME_PERMISSIONS] = JsonInstant.encodeToString(settings.runtimePermissions)
+            preferences[TAVERN_GLOBAL_VARIABLES] = JsonInstant.encodeToString(settings.tavernGlobalVariables)
             preferences[WEB_SERVER_ENABLED] = settings.webServerEnabled
             preferences[WEB_SERVER_PORT] = settings.webServerPort
             preferences[WEB_SERVER_JWT_ENABLED] = settings.webServerJwtEnabled
@@ -548,6 +560,8 @@ data class Settings(
     val modeInjections: List<PromptInjection.ModeInjection> = DEFAULT_MODE_INJECTIONS,
     val lorebooks: List<Lorebook> = emptyList(),
     val quickMessages: List<QuickMessage> = emptyList(),
+    val runtimePermissions: TavernRuntimePermissions = TavernRuntimePermissions(),
+    val tavernGlobalVariables: JsonObject = JsonObject(emptyMap()),
     val webServerEnabled: Boolean = false,
     val webServerPort: Int = 8080,
     val webServerJwtEnabled: Boolean = false,
@@ -615,6 +629,9 @@ data class DisplaySetting(
     val chatCustomFontName: String = "",
     val enableVolumeKeyScroll: Boolean = false,
     val volumeKeyScrollRatio: Float = 1.0f,
+    /** 新对话/角色卡含多个开场白时是否自动弹窗让用户选。
+     *  默认关闭——用户可在角色卡查看页手动选。*/
+    val autoShowGreetingPicker: Boolean = false,
 )
 
 @Serializable
@@ -674,7 +691,11 @@ fun Settings.getAssistantById(id: Uuid): Assistant? {
 }
 
 fun Settings.getQuickMessagesOfAssistant(assistant: Assistant) =
-    quickMessages.filter { it.id in assistant.quickMessageIds }
+    resolveVisibleQuickMessages(
+        quickMessages = quickMessages,
+        quickMessageIds = assistant.quickMessageIds,
+        hiddenQuickMessageIds = assistant.hiddenQuickMessageIds,
+    )
 
 fun Settings.getSelectedTTSProvider(): TTSProviderSetting? {
     return selectedTTSProviderId?.let { id ->

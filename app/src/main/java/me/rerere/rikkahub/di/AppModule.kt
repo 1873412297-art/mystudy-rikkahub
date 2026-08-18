@@ -5,10 +5,15 @@ import com.google.firebase.analytics.analytics
 import com.google.firebase.crashlytics.crashlytics
 import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.AppScope
+import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
+import me.rerere.rikkahub.data.ai.status.StatusRenderer
+import me.rerere.rikkahub.data.ai.status.StatusVariableStore
+import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
 import me.rerere.rikkahub.data.ai.tools.local.LocalTools
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.service.ChatNotificationManager
 import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernSendHookStore
 import me.rerere.rikkahub.utils.EmojiData
 import me.rerere.rikkahub.utils.EmojiUtils
 import me.rerere.rikkahub.utils.JsonInstant
@@ -69,12 +74,33 @@ val appModule = module {
     }
 
     single {
+        StatusVariableStore()
+    }
+
+    single {
+        TavernHostEventBus()
+    }
+
+    single {
+        StatusRenderer()
+    }
+
+    single {
+        TavernScriptRegistry()
+    }
+
+    single {
+        TavernSendHookStore()
+    }
+
+    single {
         ChatService(
             context = get(),
             appScope = get(),
             appEventBus = get(),
             settingsStore = get(),
             conversationRepo = get(),
+            promptTraceRepository = get(),
             memoryRepository = get(),
             generationHandler = get(),
             templateTransformer = get(),
@@ -84,7 +110,11 @@ val appModule = module {
             filesManager = get(),
             skillManager = get(),
             workspaceRepository = get(),
-            folderRepository = get()
+            folderRepository = get(),
+            statusVariableStore = get(),
+            tavernHostEventBus = get(),
+            tavernScriptRegistry = get(),
+            tavernSendHookStore = get(),
         )
     }
 

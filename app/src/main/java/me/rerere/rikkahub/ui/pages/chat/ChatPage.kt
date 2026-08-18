@@ -6,8 +6,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
@@ -65,18 +67,25 @@ import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.MessageAdd01
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.Screen
+import me.rerere.rikkahub.data.ai.trace.isTavernPromptTraceEligible
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
+import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
+import me.rerere.rikkahub.service.group.GroupDirectorCommandStatus
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.ai.SearchMode
+import me.rerere.rikkahub.ui.components.ai.completion.GroupMentionCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.useCropLauncher
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
@@ -88,6 +97,7 @@ import me.rerere.rikkahub.ui.context.Navigator
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.ui.hooks.EditStateContent
 import me.rerere.rikkahub.ui.hooks.useEditState
+import me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsoleEntry
 import me.rerere.rikkahub.utils.ImageUtils
 import me.rerere.rikkahub.utils.base64Decode
 import me.rerere.rikkahub.utils.isAllowedFileType
@@ -99,7 +109,7 @@ import java.io.File
 import kotlin.uuid.Uuid
 
 @Composable
-fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
+fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null, greeting: String? = null) {
     val vm: ChatVM = koinViewModel(
         parameters = {
             parametersOf(id.toString())
@@ -149,6 +159,14 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val inputState = vm.inputState
 
     // 初始化输入状态（处理传入的 files 和 text 参数）
+    LaunchedEffect(greeting) {
+        greeting?.base64Decode()?.let { decodedGreeting ->
+            if (decodedGreeting.isNotBlank()) {
+                vm.applyInitialGreeting(decodedGreeting)
+            }
+        }
+    }
+
     LaunchedEffect(files, text) {
         if (files.isNotEmpty()) {
             val localFiles = filesManager.createChatFilesByContents(files)
@@ -283,19 +301,79 @@ private fun ChatPageContent(
     val workspaceRepository: WorkspaceRepository = koinInject()
     var previewMode by rememberSaveable { mutableStateOf(false) }
     val hazeState = rememberHazeState()
-    val assistant = setting.getCurrentAssistant()
-    var showFilesSheet by remember { mutableStateOf(false) }
-
-    val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
-        assistant.workspaceId?.let { workspaceId ->
-            listOf(
-                WorkspaceCompletionProvider(
-                    workspaceId = workspaceId.toString(),
-                    repository = workspaceRepository,
-                    currentCwd = conversation.workspaceCwd,
-                )
+    val assistant = remember(setting.assistants, conversation.assistantId) {
+        setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
+    }
+    val tavernPromptTraceEligible = remember(assistant, setting.assistants) {
+        assistant.isTavernPromptTraceEligible(setting.assistants)
+    }
+    val groupAssistant = assistant.takeIf { it.assistantType == AssistantType.GROUP }
+    val directorUiState = remember(conversation, groupAssistant, setting, loadingJob) {
+        groupAssistant?.let {
+            buildGroupDirectorUiState(
+                conversation = conversation,
+                assistant = it,
+                settings = setting,
+                isGenerating = loadingJob?.isActive == true,
             )
-        }.orEmpty()
+        }
+    }
+    var showDirectorSheet by rememberSaveable { mutableStateOf(false) }
+    val enabledManualMembers = groupAssistant?.groupMembers?.filter { it.enabled }.orEmpty()
+    val availableManualMemberIds = remember(enabledManualMembers) {
+        enabledManualMembers.map { it.id }
+    }
+    val selectedIds = vm.selectedGroupMemberIds.collectAsStateWithLifecycle().value
+    val isManualGroup = groupAssistant != null &&
+        directorUiState?.effectiveMode == TurnTakingStrategy.MANUAL &&
+        enabledManualMembers.isNotEmpty()
+    var showFilesSheet by remember { mutableStateOf(false) }
+    val completionProviders = remember(
+        assistant.workspaceId,
+        assistant.groupMembers,
+        assistant.assistantType,
+        conversation.workspaceCwd,
+        workspaceRepository,
+    ) {
+        buildList {
+            assistant.workspaceId?.let { workspaceId ->
+                add(
+                    WorkspaceCompletionProvider(
+                        workspaceId = workspaceId.toString(),
+                        repository = workspaceRepository,
+                        currentCwd = conversation.workspaceCwd,
+                    )
+                )
+            }
+            if (assistant.assistantType == AssistantType.GROUP) {
+                add(GroupMentionCompletionProvider(assistant.groupMembers))
+            }
+        }
+    }
+    val onMentionRole: (String) -> Unit = remember(inputState) {
+        { roleName ->
+            if (roleName.isNotBlank()) {
+                inputState.insertTextAtCursor("@$roleName ")
+            }
+        }
+    }
+
+    val context = LocalContext.current
+    LaunchedEffect(vm) {
+        vm.groupDirectorNotices.collect { status ->
+            val message = when (status) {
+                GroupDirectorCommandStatus.NO_ENABLED_MEMBERS -> R.string.group_director_no_members
+                GroupDirectorCommandStatus.INVALID_MEMBER -> R.string.group_director_invalid_member
+                GroupDirectorCommandStatus.NO_ALTERNATIVE_MEMBER -> R.string.group_director_no_alternative
+                GroupDirectorCommandStatus.NOT_GROUP -> R.string.group_director_not_group
+                GroupDirectorCommandStatus.APPLIED -> return@collect
+            }
+            toaster.show(context.getString(message))
+        }
+    }
+
+    LaunchedEffect(availableManualMemberIds) {
+        vm.sanitizeGroupMemberSelection(availableManualMemberIds)
     }
 
     TTSAutoPlay(vm = vm, setting = setting, conversation = conversation)
@@ -313,8 +391,14 @@ private fun ChatPageContent(
                     bigScreen = bigScreen,
                     drawerState = drawerState,
                     previewMode = previewMode,
+                    tavernPromptTraceEligible = tavernPromptTraceEligible,
                     onNewChat = {
                         navigateToChatPage(navController)
+                    },
+                    onOpenTavernPromptConsole = {
+                        navController.navigate(
+                            Screen.TavernPromptConsole(conversation.id.toString())
+                        )
                     },
                     onClickMenu = {
                         previewMode = !previewMode
@@ -325,7 +409,18 @@ private fun ChatPageContent(
                 )
             },
             bottomBar = {
-                ChatInput(
+                Column {
+                    if (isManualGroup) {
+                        GroupMemberSelector(
+                            members = enabledManualMembers,
+                            selectedMemberIds = selectedIds,
+                            settings = setting,
+                            onToggle = { vm.toggleGroupMember(it) },
+                            onSelectionChange = { vm.setGroupMemberSelection(it) },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
+                    }
+                    ChatInput(
                     state = inputState,
                     loading = loadingJob != null,
                     settings = setting,
@@ -376,9 +471,18 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
-                            vm.handleMessageSend(inputState.getContents())
-                            scope.launch {
-                                chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
+                            if (isManualGroup) {
+                                if (selectedIds.isNotEmpty()) {
+                                    vm.handleGroupSend(content = inputState.getContents())
+                                } else {
+                                    toaster.show("请先选择发言角色")
+                                    return@ChatInput
+                                }
+                            } else {
+                                vm.handleMessageSend(inputState.getContents())
+                                scope.launch {
+                                    chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
+                                }
                             }
                         }
                         inputState.clearInput()
@@ -424,11 +528,42 @@ private fun ChatPageContent(
                         showFilesSheet = true
                     },
                 )
+                }
+            },
+            floatingActionButton = {
+                directorUiState?.let { state ->
+                    GroupDirectorFab(
+                        state = state,
+                        onClick = { showDirectorSheet = true },
+                    )
+                }
             },
             containerColor = Color.Transparent,
         ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+            // 动态状态栏（HUD）：最近一条含状态块的 assistant 消息的状态
+            StatusHudBar(
+                conversation = conversation,
+                onOptionClick = { optionText ->
+                    if (loadingJob == null && currentChatModel != null && !isManualGroup) {
+                        // 点击选项 = 直接作为用户消息发送（复用聊天页发送链路）
+                        vm.handleMessageSend(listOf(UIMessagePart.Text(optionText)))
+                        scope.launch {
+                            chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
+                        }
+                    } else {
+                        // 生成中 / 未选模型 / 手动群聊需选人：退化为填入输入框
+                        inputState.setMessageText(optionText)
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
             ChatList(
-                innerPadding = innerPadding,
+                innerPadding = PaddingValues(0.dp),
                 conversation = conversation,
                 state = chatListState,
                 loading = loadingJob != null,
@@ -501,6 +636,20 @@ private fun ChatPageContent(
                     vm.updateConversation(conversation.copy(customSystemPrompt = newPrompt))
                     vm.saveConversationAsync()
                 },
+                onConversationAuthorNoteChange = { note ->
+                    vm.updateConversation(conversation.copy(authorNote = note))
+                    vm.saveConversationAsync()
+                },
+                onMentionRole = onMentionRole,
+            )
+            }
+        }
+
+        if (showDirectorSheet && directorUiState != null) {
+            GroupDirectorSheet(
+                state = directorUiState,
+                onDismiss = { showDirectorSheet = false },
+                onCommand = vm::applyGroupDirectorCommand,
             )
         }
 
@@ -729,8 +878,10 @@ private fun TopBar(
     drawerState: DrawerState,
     bigScreen: Boolean,
     previewMode: Boolean,
+    tavernPromptTraceEligible: Boolean,
     onClickMenu: () -> Unit,
     onNewChat: () -> Unit,
+    onOpenTavernPromptConsole: () -> Unit,
     onUpdateTitle: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -789,6 +940,11 @@ private fun TopBar(
             }
         },
         actions = {
+            TavernPromptConsoleEntry(
+                visible = tavernPromptTraceEligible,
+                onOpen = onOpenTavernPromptConsole,
+            )
+
             IconButton(
                 onClick = {
                     onClickMenu()

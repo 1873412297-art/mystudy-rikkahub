@@ -4,10 +4,12 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
@@ -34,6 +36,11 @@ import me.rerere.ai.ui.limitContext
 import me.rerere.rikkahub.data.ai.transformers.InputMessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.MessageTransformer
 import me.rerere.rikkahub.data.ai.transformers.OutputMessageTransformer
+import me.rerere.rikkahub.data.ai.trace.PromptTraceSection
+import me.rerere.rikkahub.data.ai.trace.PromptTraceSectionKind
+import me.rerere.rikkahub.data.ai.trace.PromptTraceSeed
+import me.rerere.rikkahub.data.ai.trace.PromptTraceSession
+import me.rerere.rikkahub.data.ai.trace.PromptTraceSessionFactory
 import me.rerere.rikkahub.data.files.FileFolders
 import java.io.File
 import me.rerere.rikkahub.data.ai.transformers.onGenerationFinish
@@ -45,6 +52,8 @@ import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantMemory
+import me.rerere.rikkahub.data.model.AuthorNote
+import me.rerere.rikkahub.data.model.normalizedSystemPromptForGeneration
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.utils.applyPlaceholders
 import java.util.Locale
@@ -67,6 +76,7 @@ class GenerationHandler(
     private val providerManager: ProviderManager,
     private val json: Json,
     private val memoryRepo: MemoryRepository,
+    private val promptTraceSessionFactory: PromptTraceSessionFactory,
 ) {
     fun generateText(
         settings: Settings,
@@ -82,12 +92,17 @@ class GenerationHandler(
         conversationSystemPrompt: String? = null,
         conversationModeInjectionIds: Set<Uuid> = emptySet(),
         conversationLorebookIds: Set<Uuid> = emptySet(),
+        conversationAuthorNote: AuthorNote? = null,
         workspaceCwd: String? = null,
+        conversationId: Uuid? = null,
+        memberId: Uuid? = null,
+        promptTraceSeed: PromptTraceSeed? = null,
     ): Flow<GenerationChunk> = flow {
         val provider = model.findProvider(settings.providers) ?: error("Provider not found")
         val providerImpl = providerManager.getProviderByType(provider)
 
         var messages: List<UIMessage> = messages
+        var providerCallIndex = 0
 
         for (stepIndex in 0 until maxSteps) {
             Log.i(TAG, "streamText: start step #$stepIndex (${model.id})")
@@ -125,62 +140,84 @@ class GenerationHandler(
 
             // Skip generation if we have approved/denied tool calls to handle
             if (pendingTools.isEmpty()) {
-                generateInternal(
-                    assistant = assistant,
-                    settings = settings,
-                    messages = messages,
-                    onUpdateMessages = {
-                        messages = it.transforms(
-                            transformers = outputTransformers,
-                            context = context,
-                            model = model,
-                            assistant = assistant,
-                            settings = settings
-                        )
-                        emit(
-                            GenerationChunk.Messages(
-                                messages.visualTransforms(
-                                    transformers = outputTransformers,
-                                    context = context,
-                                    model = model,
-                                    assistant = assistant,
-                                    settings = settings
+                val promptTraceSession = promptTraceSeed?.let { seed ->
+                    promptTraceSessionFactory.create(
+                        seed = seed,
+                        providerStepIndex = providerCallIndex++,
+                        providerName = provider.name,
+                    )
+                }
+                try {
+                    generateInternal(
+                        assistant = assistant,
+                        settings = settings,
+                        messages = messages,
+                        onUpdateMessages = {
+                            promptTraceSession?.observeProviderMessages(it)
+                            messages = it.transforms(
+                                transformers = outputTransformers,
+                                context = context,
+                                model = model,
+                                assistant = assistant,
+                                settings = settings
+                            )
+                            emit(
+                                GenerationChunk.Messages(
+                                    messages.visualTransforms(
+                                        transformers = outputTransformers,
+                                        context = context,
+                                        model = model,
+                                        assistant = assistant,
+                                        settings = settings
+                                    )
                                 )
                             )
-                        )
-                    },
-                    transformers = inputTransformers,
-                    model = model,
-                    providerImpl = providerImpl,
-                    provider = provider,
-                    tools = toolsInternal,
-                    memories = memories ?: emptyList(),
-                    stream = assistant.streamOutput,
-                    processingStatus = processingStatus,
-                    conversationSystemPrompt = conversationSystemPrompt,
-                    conversationModeInjectionIds = conversationModeInjectionIds,
-                    conversationLorebookIds = conversationLorebookIds,
-                    workspaceCwd = workspaceCwd,
-                )
-                messages = messages.visualTransforms(
-                    transformers = outputTransformers,
-                    context = context,
-                    model = model,
-                    assistant = assistant,
-                    settings = settings
-                )
-                messages = messages.onGenerationFinish(
-                    transformers = outputTransformers,
-                    context = context,
-                    model = model,
-                    assistant = assistant,
-                    settings = settings
-                )
-                messages = messages.slice(0 until messages.lastIndex) + messages.last().copy(
-                    finishedAt = Clock.System.now()
-                        .toLocalDateTime(TimeZone.currentSystemDefault())
-                )
-                emit(GenerationChunk.Messages(messages))
+                        },
+                        transformers = inputTransformers,
+                        model = model,
+                        providerImpl = providerImpl,
+                        provider = provider,
+                        tools = toolsInternal,
+                        memories = memories.orEmpty(),
+                        stream = assistant.streamOutput,
+                        processingStatus = processingStatus,
+                        conversationSystemPrompt = conversationSystemPrompt,
+                        conversationModeInjectionIds = conversationModeInjectionIds,
+                        conversationLorebookIds = conversationLorebookIds,
+                        conversationAuthorNote = conversationAuthorNote,
+                        workspaceCwd = workspaceCwd,
+                        conversationId = conversationId,
+                        promptTraceSession = promptTraceSession,
+                    )
+                    messages = messages.visualTransforms(
+                        transformers = outputTransformers,
+                        context = context,
+                        model = model,
+                        assistant = assistant,
+                        settings = settings
+                    )
+                    messages = messages.onGenerationFinish(
+                        transformers = outputTransformers,
+                        context = context,
+                        model = model,
+                        assistant = assistant,
+                        settings = settings
+                    )
+                    messages = messages.slice(0 until messages.lastIndex) + messages.last().copy(
+                        finishedAt = Clock.System.now()
+                            .toLocalDateTime(TimeZone.currentSystemDefault())
+                    )
+                    emit(GenerationChunk.Messages(messages))
+                    promptTraceSession?.complete()
+                } catch (cancelled: CancellationException) {
+                    withContext(NonCancellable) {
+                        promptTraceSession?.cancel()
+                    }
+                    throw cancelled
+                } catch (error: Throwable) {
+                    promptTraceSession?.fail(error)
+                    throw error
+                }
 
                 val tools = messages.last().getTools().filter { !it.isExecuted }
                 if (tools.isEmpty()) {
@@ -335,7 +372,8 @@ class GenerationHandler(
                         context = context,
                         model = model,
                         assistant = assistant,
-                        settings = settings
+                        settings = settings,
+                        conversationId = conversationId,
                     )
                 )
             )
@@ -359,33 +397,88 @@ class GenerationHandler(
         conversationSystemPrompt: String? = null,
         conversationModeInjectionIds: Set<Uuid> = emptySet(),
         conversationLorebookIds: Set<Uuid> = emptySet(),
+        conversationAuthorNote: AuthorNote? = null,
         workspaceCwd: String? = null,
+        conversationId: Uuid? = null,
+        promptTraceSession: PromptTraceSession? = null,
     ) {
-        val internalMessages = buildList {
-            val system = buildString {
-                val effectiveSystemPrompt =
-                    if (assistant.allowConversationSystemPrompt && !conversationSystemPrompt.isNullOrBlank()) {
-                        conversationSystemPrompt
-                    } else {
-                        assistant.systemPrompt
-                    }
-                if (effectiveSystemPrompt.isNotBlank()) {
-                    append(effectiveSystemPrompt)
-                }
-
-                // 记忆
-                if (assistant.enableMemory) {
-                    appendLine()
-                    append(buildMemoryPrompt(memories = memories))
-                }
-                // 工具prompt
-                tools.forEach { tool ->
-                    appendLine()
-                    append(tool.systemPrompt(model, messages))
-                }
+        val assistantSystemPrompt = assistant.normalizedSystemPromptForGeneration(
+            userName = settings.displaySetting.userNickname.ifBlank { "user" },
+        )
+        val usesConversationOverride =
+            assistant.allowConversationSystemPrompt && !conversationSystemPrompt.isNullOrBlank()
+        val effectiveSystemPrompt = if (usesConversationOverride) {
+            conversationSystemPrompt.orEmpty()
+        } else {
+            assistantSystemPrompt
+        }
+        val memoryPrompt = if (assistant.enableMemory) buildMemoryPrompt(memories) else ""
+        val toolPrompts = tools.map { tool ->
+            tool.name to tool.systemPrompt(model, messages)
+        }
+        val limitedMessages = messages.limitContext(assistant.contextMessageLimit)
+        val systemText = buildString {
+            if (effectiveSystemPrompt.isNotBlank()) append(effectiveSystemPrompt)
+            if (memoryPrompt.isNotBlank()) {
+                appendLine()
+                append(memoryPrompt)
             }
-            if (system.isNotBlank()) add(UIMessage.system(prompt = system))
-            addAll(messages.limitContext(assistant.contextMessageLimit))
+            toolPrompts.forEach { (_, prompt) ->
+                appendLine()
+                append(prompt)
+            }
+        }
+        val systemMessage = systemText.takeIf { it.isNotBlank() }?.let(UIMessage::system)
+
+        promptTraceSession?.recordSection(
+            PromptTraceSection(
+                kind = PromptTraceSectionKind.ASSISTANT_OR_CARD_SYSTEM,
+                label = "Assistant or card system prompt",
+                text = assistantSystemPrompt,
+                active = !usesConversationOverride,
+                targetMessageId = systemMessage?.id?.takeIf { !usesConversationOverride },
+                targetMessageIndex = 0.takeIf { systemMessage != null && !usesConversationOverride },
+            )
+        )
+        if (usesConversationOverride) {
+            promptTraceSession?.recordSection(
+                PromptTraceSection(
+                    kind = PromptTraceSectionKind.CONVERSATION_SYSTEM_OVERRIDE,
+                    label = "Conversation system override",
+                    text = effectiveSystemPrompt,
+                    targetMessageId = systemMessage?.id,
+                    targetMessageIndex = 0.takeIf { systemMessage != null },
+                )
+            )
+        }
+        if (memoryPrompt.isNotBlank()) {
+            promptTraceSession?.recordSection(
+                PromptTraceSection(
+                    kind = PromptTraceSectionKind.MEMORY,
+                    label = "Memory",
+                    text = memoryPrompt,
+                    targetMessageId = systemMessage?.id,
+                    targetMessageIndex = 0.takeIf { systemMessage != null },
+                )
+            )
+        }
+        toolPrompts.filter { (_, text) -> text.isNotBlank() }.forEach { (name, text) ->
+            promptTraceSession?.recordSection(
+                PromptTraceSection(
+                    kind = PromptTraceSectionKind.TOOL_PROMPT,
+                    label = "Tool prompt: $name",
+                    text = text,
+                    targetMessageId = systemMessage?.id,
+                    targetMessageIndex = 0.takeIf { systemMessage != null },
+                )
+            )
+        }
+        promptTraceSession?.recordResponseBaseline(messages)
+        promptTraceSession?.recordInputMessages(limitedMessages)
+
+        val internalMessages = buildList {
+            systemMessage?.let(::add)
+            addAll(limitedMessages)
         }.transforms(
             transformers = transformers,
             context = context,
@@ -394,16 +487,24 @@ class GenerationHandler(
             settings = settings,
             conversationModeInjectionIds = conversationModeInjectionIds,
             conversationLorebookIds = conversationLorebookIds,
+            conversationAuthorNote = conversationAuthorNote,
             processingStatus = processingStatus,
             workspaceCwd = workspaceCwd,
+            conversationId = conversationId,
+            promptTraceSession = promptTraceSession,
         )
+
+        promptTraceSession?.prepare(internalMessages)
 
         var messages: List<UIMessage> = messages
         val params = TextGenerationParams(
             model = model,
             temperature = assistant.temperature,
             topP = assistant.topP,
-            maxTokens = assistant.maxTokens,
+            // Normal chat should not send a hard max_tokens cap. Some OpenAI-compatible
+            // providers validate the whole request against this value, turning an output
+            // limit like 2000 into "Token count ... exceeds limit 2000".
+            maxTokens = null,
             tools = tools,
             reasoningLevel = assistant.reasoningLevel,
             customHeaders = buildList {

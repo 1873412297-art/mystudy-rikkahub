@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com https://fontsapi.zeoseven.com; connect-src 'self'; frame-src 'self' data: blob:; child-src 'self' data: blob:;">
+  {{VENDOR_STYLES}}
+  {{VENDOR_LIBS}}
+  <style>
+    :root {
+      --rikkahub-bg: {{CSS_VAR_BG}};
+      --rikkahub-surface: {{CSS_VAR_SURFACE}};
+      --rikkahub-surface-variant: {{CSS_VAR_SURFACE_VARIANT}};
+      --rikkahub-text: {{CSS_VAR_TEXT}};
+      --rikkahub-text-secondary: {{CSS_VAR_TEXT_SECONDARY}};
+      --rikkahub-border: {{CSS_VAR_BORDER}};
+      --rikkahub-accent: {{CSS_VAR_ACCENT}};
+    }
+    html, body { margin: 0; padding: 0; background: transparent; color: var(--rikkahub-text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif; }
+    #chat { width: 100%; }
+    /* ── ST 默认形状：接近 SillyTavern 原生 DOM，主流主题选择器可用 ── */
+    .mes { display: flex; flex-direction: column; border-radius: 12px; padding: 10px 12px; line-height: 1.55; word-break: break-word; }
+    .mes.assistant { background: var(--rikkahub-surface); }
+    .mes.user { background: var(--rikkahub-surface-variant); }
+    .mes_block { display: flex; flex-direction: column; min-width: 0; }
+    .name_text { margin-bottom: 4px; }
+    .name_text .name, .name_text .ch_name { font-weight: 600; font-size: 13px; opacity: .78; color: var(--rikkahub-text-secondary); }
+    .mes_text { display: flex; flex-direction: column; gap: 6px; }
+    .mes_text > p { margin: 0 0 8px; }
+    .mes_text > p:last-child { margin-bottom: 0; }
+    .mes_text h1, .mes_text h2, .mes_text h3, .mes_text h4, .mes_text h5, .mes_text h6 { margin: 12px 0 8px; font-weight: 600; line-height: 1.3; }
+    .mes_text h1 { font-size: 1.5em; }
+    .mes_text h2 { font-size: 1.3em; border-bottom: 1px solid var(--rikkahub-border); padding-bottom: 4px; }
+    .mes_text h3 { font-size: 1.15em; }
+    .mes_text ul, .mes_text ol { margin: 0 0 10px; padding-left: 22px; }
+    .mes_text li { margin: 2px 0; }
+    .mes_text a { color: var(--rikkahub-accent); }
+    .mes_text code { background: var(--rikkahub-surface-variant); border-radius: 4px; padding: .15em .35em; font-family: 'SF Mono', Monaco, Consolas, monospace; font-size: .88em; }
+    .mes_text pre { background: rgba(20,20,20,.75); border-radius: 8px; padding: 10px 12px; overflow: auto; margin: 0 0 10px; }
+    .mes_text pre code { background: transparent; padding: 0; font-size: .86em; }
+    .mes_text blockquote { margin: 0 0 10px; padding: 2px 12px; border-left: 3px solid var(--rikkahub-border); opacity: .85; }
+    .mes_text table { border-collapse: collapse; margin: 0 0 10px; width: auto; max-width: 100%; }
+    .mes_text th, .mes_text td { border: 1px solid var(--rikkahub-border); padding: 4px 8px; font-size: .92em; }
+    .mes_text th { background: var(--rikkahub-surface-variant); font-weight: 600; }
+    .mes_text img { max-width: 100%; height: auto; border-radius: 8px; }
+    .mes_text hr { border: none; border-top: 1px solid var(--rikkahub-border); margin: 12px 0; }
+    .mes_text input[type="checkbox"] { margin-right: 4px; vertical-align: middle; }
+    .mes_text .task-list-item { list-style-type: none; margin-left: -22px; }
+    /* 状态块/JSON Patch 段：转义 <pre> 展示 */
+    .mes_text .status_block, .mes_text .json_patch {
+      border: 1px solid var(--rikkahub-border);
+      border-radius: 10px;
+      padding: 8px;
+      overflow: auto;
+    }
+    .mes_text .status_block > pre, .mes_text .json_patch > pre { white-space: pre-wrap; margin: 0; background: transparent; font-family: 'SF Mono', Monaco, Consolas, 'Roboto Mono', monospace; font-size: 13px; }
+    /* ST 兼容：mes_buttons 占位（视觉由 Compose 层控制） */
+    .mes_buttons, .mes_edit_buttons { display: none; }
+    {{EXTRA_CSS}}
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script>
+    window.__RIKKAHUB_ST_MESSAGE__ = {{MESSAGE_JSON}};
+    (function(){
+      var message = window.__RIKKAHUB_ST_MESSAGE__;
+      var root = document.getElementById('chat');
+      var pendingMarkdown = [];
+      var mesTextEl = null;
+      var libs = {};
+
+      function esc(text){
+        return String(text).replace(/[&<>"']/g, function(ch){
+          return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch];
+        });
+      }
+      function report(){
+        try {
+          var h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+          window.RikkahubBridge && window.RikkahubBridge.reportHeight(Math.ceil(h * (window.devicePixelRatio || 1)));
+        } catch(e){}
+      }
+      function renderPlain(segment, el){
+        el.innerHTML = esc(segment.raw).replace(/\n/g, '<br>');
+      }
+      function renderPre(segment, el){
+        el.innerHTML = '<pre>' + esc(segment.raw) + '</pre>';
+      }
+
+      // ── RikkahubDomBridge：宿主增量更新接口（纯文本，esc 后 textContent 替换，无 XSS） ──
+      window.RikkahubDomBridge = {
+        applySegmentPatch: function(patchJson){
+          try {
+            var patches = JSON.parse(patchJson);
+            (patches || []).forEach(function(p){
+              var container = mesTextEl || root;
+              var el = container.querySelector('[data-segment-id="' + p.segmentId + '"]');
+              if (!el) {
+                el = document.createElement(p.kind === 'MARKDOWN' ? 'p' : 'div');
+                el.dataset.segmentId = p.segmentId;
+                el.dataset.kind = p.kind;
+                if (p.kind !== 'MARKDOWN') { el.className = p.kind === 'STATUS_BLOCK' ? 'status_block' : 'json_patch'; }
+                container.appendChild(el);
+              }
+              if (p.kind === 'MARKDOWN') {
+                el.textContent = p.raw;
+                el.dataset.rendered = 'plain';
+                var item = null;
+                for (var i = 0; i < pendingMarkdown.length; i++) {
+                  if (pendingMarkdown[i].el === el) { item = pendingMarkdown[i]; break; }
+                }
+                if (item) { item.raw = p.raw; } else { pendingMarkdown.push({ el: el, raw: p.raw }); }
+              } else {
+                el.innerHTML = '<pre>' + esc(p.raw) + '</pre>';
+              }
+            });
+            report();
+          } catch(e){}
+        },
+        renderMarkdownAll: function(){
+          renderPendingMarkdown();
+          report();
+        }
+      };
+
+      function buildDom(){
+        var mes = document.createElement('div');
+        mes.className = 'mes ' + String(message.role || 'assistant').toLowerCase();
+        mes.dataset.messageId = message.id;
+        mes.dataset.rikkahubRole = String(message.role || 'assistant').toLowerCase();
+        var block = document.createElement('div');
+        block.className = 'mes_block';
+        if (message.name) {
+          var nameText = document.createElement('div');
+          nameText.className = 'name_text';
+          var nameEl = document.createElement('span');
+          nameEl.className = 'name ch_name';
+          nameEl.textContent = message.name;
+          nameText.appendChild(nameEl);
+          block.appendChild(nameText);
+        }
+        var text = document.createElement('div');
+        text.className = 'mes_text';
+        mesTextEl = text;
+        (message.segments || []).forEach(function(segment){
+          if (segment.kind === 'MARKDOWN') {
+            var p = document.createElement('p');
+            p.dataset.kind = segment.kind;
+            if (segment.id) { p.dataset.segmentId = segment.id; }
+            renderPlain(segment, p);
+            text.appendChild(p);
+            pendingMarkdown.push({ el: p, raw: segment.raw });
+          } else {
+            var div = document.createElement('div');
+            div.dataset.kind = segment.kind;
+            if (segment.id) { div.dataset.segmentId = segment.id; }
+            div.className = segment.kind === 'STATUS_BLOCK' ? 'status_block' : 'json_patch';
+            renderPre(segment, div);
+            text.appendChild(div);
+          }
+        });
+        block.appendChild(text);
+        mes.appendChild(block);
+        root.appendChild(mes);
+        report();
+      }
+
+      function renderPendingMarkdown(){
+        if (!libs.MarkdownIt || !libs.DOMPurify) { return; }
+        var md = buildMarkdownRenderer();
+        pendingMarkdown.forEach(function(item){
+          if (item.el.dataset.rendered === 'rich') return;
+          var rawHtml = md.render(item.raw);
+          var cleanHtml = libs.DOMPurify.sanitize(rawHtml, {
+            USE_PROFILES: { html: true, svg: false, mathMl: false },
+            ADD_TAGS: ['details', 'summary', 'font', 'mark', 'kbd'],
+            ADD_ATTR: ['open', 'color', 'face', 'size', 'target', 'class'],
+            FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'frame', 'frameset', 'noframes', 'meta', 'base', 'link', 'form', 'input', 'button', 'textarea', 'select', 'option'],
+            FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onmouseout', 'onfocus', 'onblur', 'onchange', 'onsubmit', 'formaction', 'srcdoc'],
+            ALLOW_DATA_ATTR: false,
+            ALLOW_UNKNOWN_PROTOCOLS: false
+          });
+          item.el.innerHTML = cleanHtml;
+          item.el.dataset.rendered = 'rich';
+        });
+        if (libs.mermaid) {
+          var mermaidNodes = root.querySelectorAll('.mermaid');
+          if (mermaidNodes.length > 0) {
+            try { libs.mermaid.run({ nodes: mermaidNodes }); } catch(e){}
+          }
+        }
+        if (libs.katex) {
+          root.querySelectorAll('.math.inline').forEach(function(el){
+            try { libs.katex.render(el.textContent, el, { throwOnError: false, errorColor: '#cc0000' }); } catch(e){}
+          });
+          root.querySelectorAll('.math.block').forEach(function(el){
+            try { libs.katex.render(el.textContent, el, { displayMode: true, throwOnError: false, errorColor: '#cc0000' }); } catch(e){}
+          });
+        }
+        root.querySelectorAll('a[href^="http"]').forEach(function(link){
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+        });
+      }
+
+      function buildMarkdownRenderer(){
+        var md = new libs.MarkdownIt({
+          html: true,
+          xhtmlOut: false,
+          breaks: true,
+          langPrefix: 'language-',
+          linkify: true,
+          typographer: true,
+          quotes: '\u201C\u201D\u2018\u2019',
+          highlight: function(str, lang){
+            if (lang && libs.hljs && libs.hljs.getLanguage(lang)) {
+              try {
+                return '<pre class="hljs"><code>' +
+                  libs.hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
+                  '</code></pre>';
+              } catch(e){}
+            }
+            return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>';
+          }
+        });
+        if (libs.taskLists) { md.use(libs.taskLists, { enabled: true, label: true, labelAfter: true }); }
+        if (libs.katex && window.vscodeKatex) {
+          try { md.use(window.vscodeKatex, { katex: libs.katex }); } catch(e){}
+        }
+        var defaultFenceRenderer = md.renderer.rules.fence || function(tokens, idx, options, env, renderer){
+          return renderer.renderToken(tokens, idx, options);
+        };
+        md.renderer.rules.fence = function(tokens, idx, options, env, renderer){
+          var token = tokens[idx];
+          var info = token.info ? md.utils.unescapeAll(token.info).trim() : '';
+          if (info === 'mermaid') {
+            return '<div class="mermaid" id="m-' + Math.random().toString(36).substr(2, 9) + '">' + token.content.trim() + '</div>';
+          }
+          return defaultFenceRenderer(tokens, idx, options, env, renderer);
+        };
+        return md;
+      }
+
+      // 库从内联全局取（Task 1 已本地化）
+      try { libs.MarkdownIt = window.MarkdownIt; } catch(e){}
+      try { libs.DOMPurify = window.DOMPurify; } catch(e){}
+      try { libs.hljs = window.hljs; } catch(e){}
+      try { libs.taskLists = window.MarkdownItTaskLists; } catch(e){}
+      try { libs.katex = window.katex; } catch(e){}
+      try { libs.mermaid = window.mermaid; } catch(e){}
+      if (libs.mermaid) {
+        try {
+          libs.mermaid.initialize({
+            startOnLoad: false,
+            theme: (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'default',
+            securityLevel: 'strict',
+            fontFamily: 'inherit'
+          });
+        } catch(e){}
+      }
+
+      buildDom();
+      if (libs.MarkdownIt && libs.DOMPurify) {
+        try { renderPendingMarkdown(); } catch(e){}
+      }
+      report();
+      window.addEventListener('load', report);
+      setTimeout(report, 100);
+      setTimeout(report, 400);
+    })();
+  </script>
+</body>
+</html>

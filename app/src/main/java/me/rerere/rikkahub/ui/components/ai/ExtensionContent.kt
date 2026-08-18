@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +27,8 @@ import com.composables.icons.lucide.ExternalLink
 import com.composables.icons.lucide.Lucide
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Link01
+import me.rerere.hugeicons.stroke.View
+import me.rerere.hugeicons.stroke.ViewOff
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.files.SkillMetadata
 import me.rerere.rikkahub.data.model.Lorebook
@@ -157,12 +160,16 @@ fun QuickMessagesContent(
     onToggle: (kotlin.uuid.Uuid, Boolean) -> Unit,
     modifier: Modifier = Modifier,
     onManage: (() -> Unit)? = null,
+    hiddenIds: Set<kotlin.uuid.Uuid> = emptySet(),
+    onToggleHidden: ((kotlin.uuid.Uuid, Boolean) -> Unit)? = null,
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         items(quickMessages, key = { it.id }) { quickMessage ->
+            val isSelected = selectedIds.contains(quickMessage.id)
+            val isHidden = hiddenIds.contains(quickMessage.id)
             ListItem(
                 headlineContent = {
                     Text(quickMessage.title.ifBlank { stringResource(R.string.extension_content_unnamed) })
@@ -178,14 +185,50 @@ fun QuickMessagesContent(
                     }
                 } else null,
                 trailingContent = {
-                    Switch(
-                        checked = selectedIds.contains(quickMessage.id),
-                        onCheckedChange = { checked -> onToggle(quickMessage.id, checked) }
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // 助手级「隐藏」切换：仅对已绑定条目有意义（未绑定条目本就不在快捷指令栏显示）
+                        if (onToggleHidden != null && isSelected) {
+                            QuickMessageHiddenToggle(
+                                isHidden = isHidden,
+                                onToggle = { onToggleHidden(quickMessage.id, !isHidden) },
+                            )
+                        }
+                        Switch(
+                            checked = isSelected,
+                            onCheckedChange = { checked -> onToggle(quickMessage.id, checked) }
+                        )
+                    }
                 },
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             )
         }
+        if (onManage != null) {
+            item {
+                ManageButton(onClick = onManage)
+            }
+        }
+    }
+}
+
+/**
+ * 助手级「隐藏」切换按钮：眼睛图标表示该快捷指令在输入区快捷指令栏可见，
+ * 划掉的眼睛（高亮）表示已被助手级隐藏。
+ */
+@Composable
+private fun QuickMessageHiddenToggle(
+    isHidden: Boolean,
+    onToggle: () -> Unit,
+) {
+    IconButton(onClick = onToggle) {
+        Icon(
+            imageVector = if (isHidden) HugeIcons.ViewOff else HugeIcons.View,
+            contentDescription = if (isHidden) "取消隐藏" else "隐藏",
+            tint = if (isHidden) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
     }
 }
 

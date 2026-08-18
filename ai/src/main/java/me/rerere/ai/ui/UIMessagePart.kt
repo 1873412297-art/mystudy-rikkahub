@@ -74,10 +74,32 @@ sealed class UIMessagePart {
     abstract val metadata: JsonObject?
 
     @Serializable
+    enum class RenderMode {
+        @SerialName("markdown") MARKDOWN,
+        @SerialName("html") HTML,
+    }
+
+    @Serializable
     @SerialName("text")
     data class Text(
         val text: String,
+        val renderMode: RenderMode = RenderMode.MARKDOWN,
         override var metadata: JsonObject? = null
+    ) : UIMessagePart()
+
+    @Serializable
+    @SerialName("character_status_page")
+    data class CharacterStatusPage(
+        val name: String,
+        val html: String,
+    )
+
+    @Serializable
+    @SerialName("status_placeholder")
+    data class StatusPlaceholder(
+        val htmlContent: String,
+        val characterPages: List<CharacterStatusPage> = emptyList(),
+        override var metadata: JsonObject? = null,
     ) : UIMessagePart()
 
     @Serializable

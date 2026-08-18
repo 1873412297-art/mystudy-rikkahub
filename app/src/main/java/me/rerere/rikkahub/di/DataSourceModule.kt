@@ -18,6 +18,8 @@ import me.rerere.rikkahub.data.ai.AIRequestInterceptor
 import me.rerere.rikkahub.data.ai.RequestLoggingInterceptor
 import me.rerere.rikkahub.data.ai.transformers.AssistantTemplateLoader
 import me.rerere.rikkahub.data.ai.GenerationHandler
+import me.rerere.rikkahub.data.ai.trace.DefaultPromptTraceSessionFactory
+import me.rerere.rikkahub.data.ai.trace.PromptTraceSessionFactory
 import me.rerere.rikkahub.data.ai.transformers.TemplateTransformer
 import me.rerere.rikkahub.data.api.RikkaHubAPI
 import me.rerere.rikkahub.data.api.SponsorAPI
@@ -30,6 +32,9 @@ import me.rerere.rikkahub.data.db.migrations.Migration_11_12
 import me.rerere.rikkahub.data.db.migrations.Migration_13_14
 import me.rerere.rikkahub.data.db.migrations.Migration_14_15
 import me.rerere.rikkahub.data.db.migrations.Migration_15_16
+import me.rerere.rikkahub.data.db.migrations.Migration_25_26
+import me.rerere.rikkahub.data.db.migrations.Migration_26_27
+import me.rerere.rikkahub.data.db.migrations.Migration_27_28
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
 import me.rerere.search.SearchService
@@ -52,7 +57,16 @@ val dataSourceModule = module {
         val context: Context = get()
         Room.databaseBuilder(context, AppDatabase::class.java, "rikka_hub")
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-            .addMigrations(Migration_6_7, Migration_11_12, Migration_13_14, Migration_14_15, Migration_15_16)
+            .addMigrations(
+                Migration_6_7,
+                Migration_11_12,
+                Migration_13_14,
+                Migration_14_15,
+                Migration_15_16,
+                Migration_25_26,
+                Migration_26_27,
+                Migration_27_28,
+            )
             .addCallback(object : RoomDatabase.Callback() {
                 override fun onOpen(db: SupportSQLiteDatabase) {
                     val dictDir = SimpleDictManager.extractDict(context)
@@ -147,17 +161,26 @@ val dataSourceModule = module {
     }
 
     single {
+        get<AppDatabase>().promptTraceDao()
+    }
+
+    single {
         MessageFtsManager(get())
     }
 
     single { McpManager(settingsStore = get(), appScope = get(), filesManager = get(), appEventBus = get()) }
+
+    single<PromptTraceSessionFactory> {
+        DefaultPromptTraceSessionFactory(repository = get())
+    }
 
     single {
         GenerationHandler(
             context = get(),
             providerManager = get(),
             json = get(),
-            memoryRepo = get()
+            memoryRepo = get(),
+            promptTraceSessionFactory = get(),
         )
     }
 

@@ -4,11 +4,13 @@ import android.net.Uri
 import androidx.core.net.toUri
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.util.InstantSerializer
 import me.rerere.rikkahub.data.datastore.DEFAULT_ASSISTANT_ID
+import me.rerere.rikkahub.service.group.GroupRuntimeState
 import java.time.Instant
 import kotlin.uuid.Uuid
 
@@ -31,6 +33,13 @@ data class Conversation(
     val workspaceCwd: String? = null,
     // 所属文件夹（助手内分组），null 表示未归入任何文件夹
     val folderId: Uuid? = null,
+    val statusVariables: JsonObject = JsonObject(emptyMap()),
+    val groupRuntimeState: GroupRuntimeState = GroupRuntimeState(),
+    val activeGroupMemberId: Uuid? = null,
+    val groupMemberQueue: List<Uuid> = emptyList(),
+    val groupMemberQueueIndex: Int = 0,
+    // 会话级作者注释，仅在助手开启 allowConversationAuthorNote 且自身 enabled 时优先生效
+    val authorNote: AuthorNote? = null,
     @Transient
     val newConversation: Boolean = false
 ) {
@@ -88,6 +97,30 @@ data class Conversation(
         return this.copy(
             messageNodes = newNodes
         )
+    }
+
+    fun mergeMessages(messages: List<UIMessage>): Conversation {
+        val newNodes = this.messageNodes.toMutableList()
+        messages.forEach { message ->
+            val nodeIndex = newNodes.indexOfFirst { node ->
+                node.messages.any { it.id == message.id }
+            }
+            if (nodeIndex >= 0) {
+                val node = newNodes[nodeIndex]
+                val newMessages = node.messages.toMutableList()
+                val messageIndex = newMessages.indexOfFirst { it.id == message.id }
+                if (messageIndex >= 0) {
+                    newMessages[messageIndex] = message
+                }
+                newNodes[nodeIndex] = node.copy(
+                    messages = newMessages,
+                    selectIndex = messageIndex.coerceAtLeast(0)
+                )
+            } else {
+                newNodes.add(message.toMessageNode())
+            }
+        }
+        return this.copy(messageNodes = newNodes)
     }
 
     companion object {

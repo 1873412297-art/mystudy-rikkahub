@@ -16,6 +16,7 @@ interface BaseMessagePart {
 export interface TextPart extends BaseMessagePart {
   type: "text";
   text: string;
+  renderMode?: "markdown" | "html";
 }
 
 export interface ImagePart extends BaseMessagePart {
@@ -56,6 +57,17 @@ export interface ToolPart extends BaseMessagePart {
   approvalState: ToolApprovalState;
 }
 
+export interface CharacterStatusPage {
+  name: string;
+  html: string;
+}
+
+export interface StatusPlaceholderPart extends BaseMessagePart {
+  type: "status_placeholder";
+  htmlContent: string;
+  characterPages?: CharacterStatusPage[];
+}
+
 /**
  * Union type for all message parts
  * @see ai/src/main/java/me/rerere/ai/ui/Message.kt - UIMessagePart
@@ -67,4 +79,5 @@ export type UIMessagePart =
   | AudioPart
   | DocumentPart
   | ReasoningPart
-  | ToolPart;
+  | ToolPart
+  | StatusPlaceholderPart;

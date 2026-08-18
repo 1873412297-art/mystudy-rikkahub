@@ -1,5 +1,5 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
   <string name="about_page_github">Github</string>
   <string name="about_page_license">License</string>
   <string name="about_page_system">System</string>
@@ -1298,4 +1298,108 @@
   <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
   <string name="setting_update_reminder_pause_days">%1$d days</string>
   <string name="setting_update_reminder_resume_now">Resume now</string>
+<string name="assistant_importer_imported_lorebook">Imported character book with %d entries</string>
+<string name="assistant_importer_imported_regexes">Imported %d regex scripts</string>
+<string name="assistant_page_context_message_count">Context Message Size: %d</string>
+<string name="assistant_page_context_message_desc">Controls how many historical messages will be sent to the model as context. Messages exceeding this number will be ignored, only the most recent N messages will be retained, which can save tokens</string>
+<string name="assistant_page_context_message_size">Context Message Size</string>
+<string name="assistant_page_context_message_truncation_warning">Limiting context may cause frequent context truncation and prevent prompt caching</string>
+<string name="assistant_page_context_message_unlimited">Unlimited context messages</string>
+<string name="assistant_page_enhancement_prompt">Enhancement Prompt</string>
+<string name="assistant_page_enhancement_prompt_desc">Appended to the last user message before sending to the AI; not shown in chat.</string>
+<string name="group_director_continue_current_round">Continue this round</string>
+<string name="group_director_continue_round">Continue one round</string>
+<string name="group_director_invalid_member">That member is no longer available</string>
+<string name="group_director_mode_manual">Manual</string>
+<string name="group_director_mode_moderator">Moderator</string>
+<string name="group_director_mode_round_robin">Round robin</string>
+<string name="group_director_no_alternative">No other member is available</string>
+<string name="group_director_no_members">No enabled group members</string>
+<string name="group_director_nominate_member">Make %1$s the next speaker</string>
+<string name="group_director_not_group">This conversation is not a group chat</string>
+<string name="group_director_open">Open group director</string>
+<string name="group_director_pause_after_current">Pause after current reply</string>
+<string name="group_director_skip_next">Skip next speaker</string>
+<string name="group_director_status_pause_pending">Pauses after this reply</string>
+<string name="group_director_status_paused">Paused</string>
+<string name="group_director_status_round_remaining">Round: %1$d remaining</string>
+<string name="group_director_status_running">Running</string>
+<string name="group_director_title">Director</string>
+<string name="placeholder_current_datetime">Date and Time</string>
+<string name="placeholder_current_time">Time</string>
+<string name="render_html">Render HTML</string>
+<string name="setting_display_page_auto_show_greeting_picker_desc">When the assistant has multiple greetings, automatically open the picker. Off lets you pick from the character-card view.</string>
+<string name="setting_display_page_auto_show_greeting_picker_title">Auto pick greeting on new chat</string>
+<string name="tavern_card_alternate_greeting">Alternate Greeting</string>
+<string name="tavern_card_character_book">Character Book</string>
+<string name="tavern_card_creator_notes">Creator Notes</string>
+<string name="tavern_card_description">Description</string>
+<string name="tavern_card_example_messages">Example Messages</string>
+<string name="tavern_card_export_desc">Export as SillyTavern V2 JSON</string>
+<string name="tavern_card_export_failed">Failed to export character card</string>
+<string name="tavern_card_export_success">Character card exported successfully</string>
+<string name="tavern_card_export_title">Export Character Card</string>
+<string name="tavern_card_first_message">First Message</string>
+<string name="tavern_card_import_card">Import Character Card</string>
+<string name="tavern_card_load_error">Failed to load character card</string>
+<string name="tavern_card_no_data">No character card data available. Please re-import the card.</string>
+<string name="tavern_card_personality">Personality</string>
+<string name="tavern_card_post_history">Post-history Instructions</string>
+<string name="tavern_card_scenario">Scenario</string>
+<string name="tavern_card_section_details">Details</string>
+<string name="tavern_card_section_examples">Examples</string>
+<string name="tavern_card_section_overview">Overview</string>
+<string name="tavern_card_system_prompt">System Prompt</string>
+<string name="tavern_card_view_card">View Character Card</string>
+<string name="tavern_card_view_full">View Full Card</string>
+<string name="tavern_card_viewer_title">Character Card</string>
+<string name="tavern_prompt_console_actual_tokens" tools:ignore="MissingTranslation">Actual prompt tokens</string>
+<string name="tavern_prompt_console_approx" tools:ignore="MissingTranslation">Approx. %1$d</string>
+<string name="tavern_prompt_console_attachment_part" tools:ignore="MissingTranslation">[%1$s] %2$s</string>
+<string name="tavern_prompt_console_binary_reference" tools:ignore="MissingTranslation">binary reference</string>
+<string name="tavern_prompt_console_branch_missing" tools:ignore="MissingTranslation">The selected reply branch has no trace; showing the newest available call.</string>
+<string name="tavern_prompt_console_byte_count" tools:ignore="MissingTranslation">%1$d bytes</string>
+<string name="tavern_prompt_console_cancelled" tools:ignore="MissingTranslation">Cancelled before a response branch was created</string>
+<string name="tavern_prompt_console_clear" tools:ignore="MissingTranslation">Clear this conversation’s traces</string>
+<string name="tavern_prompt_console_clear_body" tools:ignore="MissingTranslation">Chat messages are kept. Only diagnostics for this conversation are deleted.</string>
+<string name="tavern_prompt_console_clear_title" tools:ignore="MissingTranslation">Clear prompt traces?</string>
+<string name="tavern_prompt_console_collapse" tools:ignore="MissingTranslation">Collapse</string>
+<string name="tavern_prompt_console_copied" tools:ignore="MissingTranslation">Copied</string>
+<string name="tavern_prompt_console_copy_all" tools:ignore="MissingTranslation">Copy full trace</string>
+<string name="tavern_prompt_console_copy_message" tools:ignore="MissingTranslation">Copy message</string>
+<string name="tavern_prompt_console_estimate_notice" tools:ignore="MissingTranslation">Approximate section counts may differ from provider usage because protocol overhead, tools, caching, and multimodal input are provider-specific.</string>
+<string name="tavern_prompt_console_expand" tools:ignore="MissingTranslation">Expand</string>
+<string name="tavern_prompt_console_hit_details" tools:ignore="MissingTranslation">%1$s · %2$s · priority %3$d · depth %4$d</string>
+<string name="tavern_prompt_console_hit_scan" tools:ignore="MissingTranslation">%1$s · scan %2$d/%3$d</string>
+<string name="tavern_prompt_console_hits" tools:ignore="MissingTranslation">Hits</string>
+<string name="tavern_prompt_console_inactive" tools:ignore="MissingTranslation">Inactive</string>
+<string name="tavern_prompt_console_matched_terms" tools:ignore="MissingTranslation">Matched: %1$s</string>
+<string name="tavern_prompt_console_message_clip_label" tools:ignore="MissingTranslation">Tavern prompt message</string>
+<string name="tavern_prompt_console_message_count" tools:ignore="MissingTranslation">Messages: %1$d</string>
+<string name="tavern_prompt_console_message_header" tools:ignore="MissingTranslation">%1$d. %2$s</string>
+<string name="tavern_prompt_console_messages" tools:ignore="MissingTranslation">Sent messages</string>
+<string name="tavern_prompt_console_model" tools:ignore="MissingTranslation">Model: %1$s</string>
+<string name="tavern_prompt_console_no_hits" tools:ignore="MissingTranslation">No mode or lorebook hits</string>
+<string name="tavern_prompt_console_no_traces" tools:ignore="MissingTranslation">No prompt traces yet</string>
+<string name="tavern_prompt_console_not_provided" tools:ignore="MissingTranslation">Not provided</string>
+<string name="tavern_prompt_console_open" tools:ignore="MissingTranslation">Open Tavern console</string>
+<string name="tavern_prompt_console_overview" tools:ignore="MissingTranslation">Overview</string>
+<string name="tavern_prompt_console_payload_unavailable" tools:ignore="MissingTranslation">Trace payload unavailable</string>
+<string name="tavern_prompt_console_preview" tools:ignore="MissingTranslation">Preview</string>
+<string name="tavern_prompt_console_preview_a2" tools:ignore="MissingTranslation">Draft preview arrives in A2</string>
+<string name="tavern_prompt_console_preview_a2_body" tools:ignore="MissingTranslation">This tab does not run transformers or create a trace in A1.</string>
+<string name="tavern_prompt_console_provider" tools:ignore="MissingTranslation">Provider: %1$s</string>
+<string name="tavern_prompt_console_provider_step" tools:ignore="MissingTranslation">Provider step: %1$d</string>
+<string name="tavern_prompt_console_reasoning_part" tools:ignore="MissingTranslation">[Reasoning]\n%1$s</string>
+<string name="tavern_prompt_console_speaker" tools:ignore="MissingTranslation">Speaker: %1$s</string>
+<string name="tavern_prompt_console_status" tools:ignore="MissingTranslation">Status: %1$s</string>
+<string name="tavern_prompt_console_title" tools:ignore="MissingTranslation">Tavern console</string>
+<string name="tavern_prompt_console_tool_input" tools:ignore="MissingTranslation">Input: %1$s</string>
+<string name="tavern_prompt_console_tool_output" tools:ignore="MissingTranslation">Output: %1$s</string>
+<string name="tavern_prompt_console_tool_output_attachment" tools:ignore="MissingTranslation">[Tool output %1$s] %2$s</string>
+<string name="tavern_prompt_console_tool_part" tools:ignore="MissingTranslation">[Tool %1$s / %2$s]</string>
+<string name="tavern_prompt_console_trace_call_status" tools:ignore="MissingTranslation">Call %1$d · %2$s</string>
+<string name="tavern_prompt_console_trace_clip_label" tools:ignore="MissingTranslation">Tavern prompt trace</string>
+<string name="tavern_prompt_console_trace_selector" tools:ignore="MissingTranslation">Select provider call</string>
+  <string name="prompt_page_match_whole_words">Match Whole Words</string>
 </resources>

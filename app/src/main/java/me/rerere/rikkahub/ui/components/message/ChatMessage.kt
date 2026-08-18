@@ -34,6 +34,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -75,11 +76,16 @@ import me.rerere.hugeicons.stroke.MusicNote03
 import me.rerere.hugeicons.stroke.Video01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
+import me.rerere.rikkahub.data.ai.status.StatusBlockExtractor
+import me.rerere.rikkahub.data.ai.status.TavernCardStyleResolver
+import me.rerere.rikkahub.data.ai.transformers.replaceResidualUserName
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.replaceRegexes
+import me.rerere.rikkahub.service.group.GroupRuntimeState
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
+import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
 import me.rerere.rikkahub.ui.components.richtext.ZoomableAsyncImage
 import me.rerere.rikkahub.ui.components.richtext.buildMarkdownPreviewHtml
 import me.rerere.rikkahub.ui.components.webview.WebViewContentCache
@@ -104,9 +110,11 @@ fun ChatMessage(
     loading: Boolean = false,
     model: Model? = null,
     assistant: Assistant? = null,
+    runtimeState: GroupRuntimeState? = null,
     lastMessage: Boolean = false,
+    onMentionRole: ((String) -> Unit)? = null,
     onFork: () -> Unit,
-    onRegenerate: () -> Unit,
+    onRegenerate: (memberId: kotlin.uuid.Uuid?) -> Unit,
     onEdit: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit,
@@ -117,9 +125,29 @@ fun ChatMessage(
     onClearTranslation: (UIMessage) -> Unit = {},
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
+    /**
+     * 酒馆脚本运行时上下文：消息所属会话 ID。
+     * 传入后消息内的 Tavern WebView 才能读写 chat 作用域变量、接收宿主事件，
+     * 且 messages.getCurrent 返回当前消息 JSON。
+     */
+    tavernConversationId: kotlin.uuid.Uuid? = null,
+    /**
+     * 酒馆上下文快照（SillyTavern.getContext 数据源，会话级由 ChatList 构建）。
+     * 透传给消息内的 Tavern WebView，经 TavernRuntimeController.setContext 推送。
+     */
+    tavernContextSnapshot: kotlinx.serialization.json.JsonObject? = null,
+    /**
+     * 请求头数据源（requestHeaders.get RPC 按需拉取，assistant + model 自定义头）。
+     * ChatList 组装透传，与 tavernContextSnapshot 同路。
+     */
+    tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
 ) {
     val message = node.messages[node.selectIndex]
-    val settings = LocalSettings.current.displaySetting
+    val tavernCurrentMessage = remember(message) {
+        runCatching { JsonInstant.encodeToJsonElement(UIMessage.serializer(), message) }.getOrNull()
+    }
+    val fullSettings = LocalSettings.current
+    val settings = fullSettings.displaySetting
     val chatFontFamily = LocalChatFontFamily.current ?: rememberChatFontFamily(settings)
     val textStyle = LocalTextStyle.current.copy(
         fontSize = LocalTextStyle.current.fontSize * settings.fontSizeRatio,
@@ -131,9 +159,40 @@ fun ChatMessage(
     val navController = LocalNavController.current
     val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
+    val hasGroupSpeakerPrefix = remember(message.parts, assistant) {
+        message.hasLeadingGroupSpeakerPrefix(assistant)
+    }
+    val isRealUserMessage = message.role == MessageRole.USER && message.memberId == null && !hasGroupSpeakerPrefix
+    val displayRole = if (isRealUserMessage) MessageRole.USER else MessageRole.ASSISTANT
+    val displayParts = remember(message.parts, assistant, message.memberId, settings.userNickname) {
+        val userDisplayName = settings.userNickname.ifBlank { "你" }
+        message.parts.stripVisibleSpeakerPrefixes(
+            assistant = assistant,
+            memberId = message.memberId,
+            userName = settings.userNickname,
+            messageName = message.name,
+        ).map { part ->
+            if (part is UIMessagePart.Text) {
+                part.copy(text = replaceResidualUserName(part.text, userDisplayName))
+            } else {
+                part
+            }
+        }.mapNotNull { part ->
+            // 状态块清理：气泡只留叙事正文，状态内容由 StatusHudBar 展示（仅动显示层）
+            if (part is UIMessagePart.Text &&
+                (part.text.contains("<status", ignoreCase = true) ||
+                    part.text.contains("<maintext", ignoreCase = true))
+            ) {
+                val cleaned = StatusBlockExtractor.extract(part.text).cleanedText
+                if (cleaned.isBlank()) null else part.copy(text = cleaned)
+            } else {
+                part
+            }
+        }
+    }
     Column(
         modifier = modifier.fillMaxWidth(),
-        horizontalAlignment = if (message.role == MessageRole.USER) Alignment.End else Alignment.Start,
+        horizontalAlignment = if (isRealUserMessage) Alignment.End else Alignment.Start,
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         if (!message.parts.isEmptyUIMessage()) {
@@ -148,28 +207,43 @@ fun ChatMessage(
                     model = model,
                     assistant = assistant,
                     loading = loading,
+                    onLongPressMention = onMentionRole,
                     modifier = Modifier.weight(1f)
                 )
                 ChatMessageUserAvatar(
                     message = message,
                     avatar = settings.userAvatar,
                     nickname = settings.userNickname,
+                    isRealUserMessage = isRealUserMessage,
                     modifier = Modifier.weight(1f)
                 )
             }
         }
         ProvideTextStyle(textStyle) {
-            MessagePartsBlock(
-                assistant = assistant,
-                role = message.role,
-                parts = message.parts,
-                annotations = message.annotations,
-                loading = loading,
-                model = model,
-                onToolApproval = onToolApproval,
-                onToolAnswer = onToolAnswer,
-                onUserMessageClick = if (message.role == MessageRole.USER) onEdit else null,
-            )
+            // 通用自动折叠：任何消息内容超高时收进容器，流式生成中不触发
+            var autoCollapseExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
+            AutoCollapseContent(
+                enabled = !loading,
+                expanded = autoCollapseExpanded,
+                onExpandedChange = { autoCollapseExpanded = it },
+                horizontalAlignment = if (isRealUserMessage) Alignment.End else Alignment.Start,
+            ) {
+                MessagePartsBlock(
+                    assistant = assistant,
+                    role = displayRole,
+                    parts = displayParts,
+                    annotations = message.annotations,
+                    loading = loading,
+                    model = model,
+                    onToolApproval = onToolApproval,
+                    onToolAnswer = onToolAnswer,
+                    onUserMessageClick = if (isRealUserMessage) onEdit else null,
+                    tavernConversationId = tavernConversationId,
+                    tavernCurrentMessage = tavernCurrentMessage,
+                    tavernContextSnapshot = tavernContextSnapshot,
+                    tavernHeaderSource = tavernHeaderSource,
+                )
+            }
 
             message.translation?.let { translation ->
                 CollapsibleTranslationText(
@@ -202,7 +276,10 @@ fun ChatMessage(
                         showActionsSheet = true
                     },
                     onTranslate = onTranslate,
-                    onClearTranslation = onClearTranslation
+                    onClearTranslation = onClearTranslation,
+                    assistant = assistant,
+                    settingsForGroup = fullSettings,
+                    runtimeState = runtimeState,
                 )
             }
         }
@@ -261,6 +338,67 @@ fun ChatMessage(
     }
 }
 
+private fun List<UIMessagePart>.stripVisibleSpeakerPrefixes(
+    assistant: Assistant?,
+    memberId: kotlin.uuid.Uuid?,
+    userName: String,
+    messageName: String?,
+): List<UIMessagePart> {
+    val labels = buildList {
+        add("user")
+        add("User")
+        userName.takeIf { it.isNotBlank() }?.let { add(it) }
+        messageName?.takeIf { it.isNotBlank() }?.let { add(it) }
+        if (assistant?.assistantType == me.rerere.rikkahub.data.model.AssistantType.GROUP) {
+            assistant.groupMembers.forEach { member ->
+                member.displayName.takeIf { it.isNotBlank() }?.let { add(it) }
+            }
+            memberId?.let { id ->
+                assistant.groupMembers.find { it.id == id }?.displayName
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { add(it) }
+            }
+        } else {
+            assistant?.name?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }
+    }.distinct()
+
+    return map { part ->
+        if (part is UIMessagePart.Text) {
+            part.copy(text = part.text.stripLeadingSpeakerLabel(labels))
+        } else {
+            part
+        }
+    }
+}
+
+private fun UIMessage.hasLeadingGroupSpeakerPrefix(assistant: Assistant?): Boolean {
+    if (assistant?.assistantType != me.rerere.rikkahub.data.model.AssistantType.GROUP) return false
+    val labels = assistant.groupMembers.mapNotNull { member ->
+        member.displayName.takeIf { it.isNotBlank() }
+    }
+    val text = parts.filterIsInstance<UIMessagePart.Text>().firstOrNull()?.text ?: return false
+    return labels.any { label -> text.hasLeadingSpeakerLabel(label) }
+}
+
+private fun String.stripLeadingSpeakerLabel(labels: List<String>): String {
+    var result = this
+    labels.forEach { label ->
+        val escaped = Regex.escape(label)
+        result = result.replace(
+            Regex("""^\s*[\[【]\s*$escaped\s*[\]】]\s*[:：]?\s*""", RegexOption.IGNORE_CASE),
+            ""
+        )
+    }
+    return result
+}
+
+private fun String.hasLeadingSpeakerLabel(label: String): Boolean {
+    val escaped = Regex.escape(label)
+    return Regex("""^\s*[\[【]\s*$escaped\s*[\]】]\s*[:：]?\s*""", RegexOption.IGNORE_CASE)
+        .containsMatchIn(this)
+}
+
 @OptIn(FlowPreview::class)
 @Composable
 private fun MessagePartsBlock(
@@ -273,6 +411,10 @@ private fun MessagePartsBlock(
     onToolApproval: ((toolCallId: String, approved: Boolean, reason: String) -> Unit)? = null,
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onUserMessageClick: (() -> Unit)? = null,
+    tavernConversationId: kotlin.uuid.Uuid? = null,
+    tavernCurrentMessage: kotlinx.serialization.json.JsonElement? = null,
+    tavernContextSnapshot: kotlinx.serialization.json.JsonObject? = null,
+    tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
 ) {
     val context = LocalContext.current
     val contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
@@ -363,67 +505,104 @@ private fun MessagePartsBlock(
             is MessagePartBlock.ContentBlock -> key(block.index) {
                 when (val part = block.part) {
                     is UIMessagePart.Text -> {
-                        val textContent = @Composable {
-                            if (role == MessageRole.USER) {
-                                Surface(
-                                    modifier = Modifier.animateContentSize(),
-                                    shape = RoundedCornerShape(16.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = settings.displaySetting.bubbleOpacity),
-                                    onClick = { onUserMessageClick?.invoke() },
-                                ) {
-                                    Column(modifier = Modifier.padding(8.dp)) {
-                                        MarkdownBlock(
-                                            content = part.text.replaceRegexes(
-                                                assistant = assistant,
-                                                scope = AssistantAffectScope.USER,
-                                                visual = true,
-                                            ),
-                                            onClickCitation = handleClickCitation
-                                        )
-                                    }
-                                }
-                            } else {
-                                if (settings.displaySetting.showAssistantBubble) {
+                        if (part.renderMode == UIMessagePart.RenderMode.HTML) {
+                            MarkdownWebView(
+                                content = part.text,
+                                tavernConversationId = tavernConversationId,
+                                tavernCurrentMessage = tavernCurrentMessage,
+                                tavernContextSnapshot = tavernContextSnapshot,
+                                tavernMessageRole = role,
+                                tavernHeaderSource = tavernHeaderSource,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                            )
+                        } else {
+                            val textContent = @Composable {
+                                if (role == MessageRole.USER) {
                                     Surface(
                                         modifier = Modifier.animateContentSize(),
                                         shape = RoundedCornerShape(16.dp),
-                                        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = settings.displaySetting.bubbleOpacity),
+                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = settings.displaySetting.bubbleOpacity),
+                                        onClick = { onUserMessageClick?.invoke() },
                                     ) {
                                         Column(modifier = Modifier.padding(8.dp)) {
                                             MarkdownBlock(
                                                 content = part.text.replaceRegexes(
                                                     assistant = assistant,
-                                                    scope = AssistantAffectScope.ASSISTANT,
+                                                    scope = AssistantAffectScope.USER,
                                                     visual = true,
                                                 ),
                                                 onClickCitation = handleClickCitation,
+                                                roleName = settings.displaySetting.userNickname.ifBlank { null },
+                                                stableRole = role,
+                                                tavernCardStyle = remember(assistant) { TavernCardStyleResolver.resolve(assistant) },
+                                                streaming = loading,
+                                                tavernConversationId = tavernConversationId,
+                                                tavernCurrentMessage = tavernCurrentMessage,
+                                                tavernContextSnapshot = tavernContextSnapshot,
+                                                tavernMessageRole = role,
+                                                tavernHeaderSource = tavernHeaderSource,
                                             )
                                         }
                                     }
                                 } else {
-                                    MarkdownBlock(
-                                        content = part.text.replaceRegexes(
-                                            assistant = assistant,
-                                            scope = AssistantAffectScope.ASSISTANT,
-                                            visual = true,
-                                        ),
-                                        onClickCitation = handleClickCitation,
-                                        modifier = Modifier
-                                            .animateContentSize()
-                                    )
+                                    if (settings.displaySetting.showAssistantBubble) {
+                                        Surface(
+                                            modifier = Modifier.animateContentSize(),
+                                            shape = RoundedCornerShape(16.dp),
+                                            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = settings.displaySetting.bubbleOpacity),
+                                        ) {
+                                            Column(modifier = Modifier.padding(8.dp)) {
+                                                MarkdownBlock(
+                                                    content = part.text.replaceRegexes(
+                                                        assistant = assistant,
+                                                        scope = AssistantAffectScope.ASSISTANT,
+                                                        visual = true,
+                                                    ),
+                                                    onClickCitation = handleClickCitation,
+                                                    roleName = assistant?.name,
+                                                    stableRole = role,
+                                                    tavernCardStyle = remember(assistant) { TavernCardStyleResolver.resolve(assistant) },
+                                                    streaming = loading,
+                                                    tavernConversationId = tavernConversationId,
+                                                    tavernCurrentMessage = tavernCurrentMessage,
+                                                    tavernContextSnapshot = tavernContextSnapshot,
+                                                    tavernMessageRole = role,
+                                                    tavernHeaderSource = tavernHeaderSource,
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        MarkdownBlock(
+                                            content = part.text.replaceRegexes(
+                                                assistant = assistant,
+                                                scope = AssistantAffectScope.ASSISTANT,
+                                                visual = true,
+                                            ),
+                                            onClickCitation = handleClickCitation,
+                                            roleName = assistant?.name,
+                                            stableRole = role,
+                                            tavernCardStyle = remember(assistant) { TavernCardStyleResolver.resolve(assistant) },
+                                            streaming = loading,
+                                            tavernConversationId = tavernConversationId,
+                                            tavernCurrentMessage = tavernCurrentMessage,
+                                            tavernContextSnapshot = tavernContextSnapshot,
+                                            tavernMessageRole = role,
+                                            tavernHeaderSource = tavernHeaderSource,
+                                            modifier = Modifier
+                                                .animateContentSize()
+                                        )
+                                    }
                                 }
                             }
-                        }
 
-                        // 流式生成期间不启用 SelectionContainer：Markdown 在不断重渲染，
-                        // 内部可选择的 Text 会频繁注册/注销，与 Compose 选择工具栏在绘制阶段
-                        // 对 selectable 列表的排序产生并发修改，导致 ConcurrentModificationException。
-                        // 生成结束后内容稳定，再启用文本选择。
-                        if (loading) {
-                            textContent()
-                        } else {
-                            SelectionContainer {
+                            if (loading) {
                                 textContent()
+                            } else {
+                                SelectionContainer {
+                                    textContent()
+                                }
                             }
                         }
                     }
@@ -565,6 +744,33 @@ private fun MessagePartsBlock(
                                     )
                                 }
                             }
+                        }
+                    }
+
+                    is UIMessagePart.StatusPlaceholder -> {
+                        if (part.characterPages.isNotEmpty()) {
+                            MultiCharacterStatusView(
+                                part = part,
+                                modifier = Modifier.fillMaxWidth(),
+                                tavernConversationId = tavernConversationId,
+                                tavernCurrentMessage = tavernCurrentMessage,
+                                tavernContextSnapshot = tavernContextSnapshot,
+                                tavernMessageRole = role,
+                                tavernHeaderSource = tavernHeaderSource,
+                            )
+                        } else {
+                            MarkdownWebView(
+                                content = part.htmlContent,
+                                isRawHtml = true,
+                                tavernConversationId = tavernConversationId,
+                                tavernCurrentMessage = tavernCurrentMessage,
+                                tavernContextSnapshot = tavernContextSnapshot,
+                                tavernMessageRole = role,
+                                tavernHeaderSource = tavernHeaderSource,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                            )
                         }
                     }
 

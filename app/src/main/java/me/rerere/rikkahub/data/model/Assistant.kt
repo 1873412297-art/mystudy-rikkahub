@@ -50,6 +50,21 @@ data class Assistant(
     val enableTimeReminder: Boolean = false,            // 时间间隔提醒注入
     val allowConversationSystemPrompt: Boolean = false, // 允许对话单独重写 system prompt
     val allowConversationPromptInjection: Boolean = false, // 允许对话单独绑定提示词注入
+    val enableEnhancementPrompt: Boolean = false, // 在最后一条用户消息后追加增强提示词
+    val enhancementPrompt: String = "",           // 增强提示词正文
+    val tavernCardJson: String? = null,           // SillyTavern 角色卡原始 JSON（V2/V3 格式），用于查看/导出
+    val statusRenderJs: String? = null,           // 状态渲染 JS 脚本（renderStatus 函数）
+    // ── 群组助手 ──
+    val assistantType: AssistantType = AssistantType.SOLO,
+    val groupMembers: List<GroupMember> = emptyList(),
+    val turnTakingStrategy: TurnTakingStrategy = TurnTakingStrategy.MANUAL,
+    val groupReplyOptions: GroupReplyOptions = GroupReplyOptions(),
+    val groupContextOptions: GroupContextOptions = GroupContextOptions(),
+    val groupMemberCombos: List<GroupMemberCombo> = emptyList(),
+    val hiddenQuickMessageIds: Set<Uuid> = emptySet(), // 助手级隐藏的全局快捷指令 ID
+    // ── 作者注释（Author's Note @ Depth）──
+    val authorNote: AuthorNote = AuthorNote(),          // 助手级作者注释
+    val allowConversationAuthorNote: Boolean = false,   // 允许会话级作者注释覆盖助手配置
 )
 
 @Serializable
@@ -57,6 +72,41 @@ data class QuickMessage(
     val id: Uuid = Uuid.random(),
     val title: String = "",
     val content: String = "",
+    val autoSend: Boolean = false,                          // 填入后立即发送
+    val mode: QuickMessageMode = QuickMessageMode.APPEND,   // 填入模式
+    val order: Int = 0,                                     // 排序权重，越小越靠前
+)
+
+/**
+ * 快捷指令填入模式
+ */
+@Serializable
+enum class QuickMessageMode {
+    @SerialName("append")
+    APPEND,     // 追加到当前输入
+
+    @SerialName("replace")
+    REPLACE,    // 替换当前输入
+}
+
+/**
+ * 解析助手可见的快捷指令：已绑定（[quickMessageIds]）且未被助手级隐藏（[hiddenQuickMessageIds]），
+ * 按 [QuickMessage.order] 升序排列（相同 order 保持原有相对顺序）。
+ */
+fun resolveVisibleQuickMessages(
+    quickMessages: List<QuickMessage>,
+    quickMessageIds: Set<Uuid>,
+    hiddenQuickMessageIds: Set<Uuid>,
+): List<QuickMessage> = quickMessages
+    .filter { it.id in quickMessageIds && it.id !in hiddenQuickMessageIds }
+    .sortedBy { it.order }
+
+/**
+ * 清理助手上过期的快捷指令引用：全局条目被删除后，同步移除绑定与助手级隐藏记录。
+ */
+fun Assistant.sanitizeQuickMessageRefs(validQuickMessageIds: Set<Uuid>): Assistant = copy(
+    quickMessageIds = quickMessageIds.filter { it in validQuickMessageIds }.toSet(),
+    hiddenQuickMessageIds = hiddenQuickMessageIds.filter { it in validQuickMessageIds }.toSet(),
 )
 
 @Serializable
@@ -80,7 +130,17 @@ data class AssistantRegex(
     val replaceString: String = "", // 替换字符串
     val affectingScope: Set<AssistantAffectScope> = setOf(),
     val visualOnly: Boolean = false, // 是否仅在视觉上影响
+    val options: Set<RegexOption> = emptySet(), // 正则修饰标志（对应 ST 的 i/m/s：IGNORE_CASE/MULTILINE/DOT_MATCHES_ALL）
+    val minDepth: Int? = null, // 应用的消息倒序深度下限（0 = 最新消息），null = 不限
+    val maxDepth: Int? = null, // 应用的消息倒序深度上限，null = 不限
 )
+
+/**
+ * 判断规则是否命中指定的消息倒序深度（0 = 最新消息）。
+ * minDepth/maxDepth 为 null 的一侧不限制。
+ */
+fun AssistantRegex.matchesDepth(depth: Int): Boolean =
+    (minDepth == null || depth >= minDepth) && (maxDepth == null || depth <= maxDepth)
 
 // 流式输出时每个chunk都会调用replaceRegexes，正则必须缓存编译结果，
 // 否则长回复期间会重复编译上万次；编译失败也缓存，避免反复构造异常
@@ -88,23 +148,36 @@ private val regexCache = SimpleCache.builder<String, Result<Regex>>()
     .expireAfterWrite(10, TimeUnit.MINUTES)
     .build()
 
-private fun compileRegexCached(pattern: String): Regex? {
-    regexCache.getIfPresent(pattern)?.let { return it.getOrNull() }
-    val result = runCatching { Regex(pattern) }.onFailure { it.printStackTrace() }
-    regexCache.put(pattern, result)
+// 缓存键必须同时区分 pattern 与 options，避免同 pattern 不同标志的规则互相污染；
+// 用 options 名序列 + pattern 长度做前缀，保证键与 (options, pattern) 一一对应
+private fun regexCacheKey(pattern: String, options: Set<RegexOption>): String {
+    val optionsKey = options.sortedBy { it.ordinal }.joinToString(separator = ",") { it.name }
+    return "$optionsKey|${pattern.length}|$pattern"
+}
+
+private fun compileRegexCached(pattern: String, options: Set<RegexOption>): Regex? {
+    val key = regexCacheKey(pattern, options)
+    regexCache.getIfPresent(key)?.let { return it.getOrNull() }
+    val result = runCatching {
+        if (options.isEmpty()) Regex(pattern) else Regex(pattern, options)
+    }.onFailure { it.printStackTrace() }
+    regexCache.put(key, result)
     return result.getOrNull()
 }
 
 fun String.replaceRegexes(
     assistant: Assistant?,
     scope: AssistantAffectScope,
-    visual: Boolean = false
+    visual: Boolean = false,
+    depth: Int? = null, // 消息倒序深度；null 表示调用方无深度上下文，不做深度过滤（保持旧行为）
 ): String {
     if (assistant == null) return this
     if (assistant.regexes.isEmpty()) return this
     return assistant.regexes.fold(this) { acc, regex ->
-        if (regex.enabled && regex.visualOnly == visual && regex.affectingScope.contains(scope)) {
-            val compiled = compileRegexCached(regex.findRegex) ?: return@fold acc
+        if (regex.enabled && regex.visualOnly == visual && regex.affectingScope.contains(scope) &&
+            (depth == null || regex.matchesDepth(depth))
+        ) {
+            val compiled = compileRegexCached(regex.findRegex, regex.options) ?: return@fold acc
             try {
                 acc.replace(
                     regex = compiled,
@@ -120,6 +193,25 @@ fun String.replaceRegexes(
         }
     }
 }
+
+/**
+ * 作者注释（Author's Note）
+ *
+ * 以 [depth] 指定的深度（从最新消息往前数）注入到对话上下文中，
+ * 合成 PromptInjection.ModeInjection(position = AT_DEPTH) 后走统一的注入管线，
+ * 自动获得安全插入、同深度同 role 合并、优先级排序与 PromptTrace 记录。
+ *
+ * [interval] 为注入间隔（按用户消息轮数取模，见 PromptInjectionTransformer 的确定性规则）。
+ */
+@Serializable
+data class AuthorNote(
+    val enabled: Boolean = false,
+    val content: String = "",
+    val depth: Int = 4,
+    val role: MessageRole = MessageRole.USER,
+    val interval: Int = 1,
+    val position: InjectionPosition = InjectionPosition.AT_DEPTH, // 注入位置（ST Position 对齐；TOP/BOTTOM 时 depth 无效）
+)
 
 /**
  * 注入位置
@@ -192,8 +284,15 @@ sealed class PromptInjection {
         val keywords: List<String> = emptyList(),  // 触发关键词
         val useRegex: Boolean = false,             // 是否使用正则匹配
         val caseSensitive: Boolean = false,        // 大小写敏感
+        val matchWholeWords: Boolean = false,      // 整词匹配（ST Match Whole Words；正则模式不叠加）
         val scanDepth: Int = 4,                    // 扫描最近N条消息
         val constantActive: Boolean = false,       // 常驻激活（无需匹配）
+        val secondaryKeywords: List<String> = emptyList(), // 次要关键词（selective 时需与主关键词同时命中）
+        val selective: Boolean = false,            // 选择性触发：主关键词与次关键词都命中才注入
+        val probability: Int = 100,                // 触发概率（0-100，100 为必定注入）
+        val sticky: Int = 0,                       // 粘性：命中后持续注入 N 个用户轮次（0 = 关闭）
+        val cooldown: Int = 0,                     // 冷却：命中后 N 个用户轮次内不再触发（0 = 关闭）
+        val delay: Int = 0,                        // 延迟：对话前 N 个用户轮次不触发（0 = 关闭）
     ) : PromptInjection()
 }
 
@@ -207,65 +306,81 @@ data class Lorebook(
     val description: String = "",
     val enabled: Boolean = true,
     val entries: List<PromptInjection.RegexInjection> = emptyList(),
+    val tokenBudget: Int = 0,               // 注入预算（按字符数近似，0 = 不限制）
+    val recursiveScanning: Boolean = false, // 递归扫描：已命中条目的内容纳入扫描文本继续匹配
 )
 
-/**
- * 检查 RegexInjection 是否被触发
- *
- * @param context 要扫描的上下文文本
- * @return 是否触发
- */
-fun PromptInjection.RegexInjection.isTriggered(context: String): Boolean {
-    if (!enabled) return false
-    if (constantActive) return true
-    if (keywords.isEmpty()) return false
+// region 群组助手相关类型
 
-    return keywords.any { keyword ->
-        if (useRegex) {
-            try {
-                val options = if (caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)
-                Regex(keyword, options).containsMatchIn(context)
-            } catch (e: Exception) {
-                false
-            }
-        } else {
-            if (caseSensitive) {
-                context.contains(keyword)
-            } else {
-                context.contains(keyword, ignoreCase = true)
-            }
-        }
-    }
+@Serializable
+enum class AssistantType {
+    @SerialName("solo") SOLO,
+    @SerialName("group") GROUP,
+}
+
+@Serializable
+enum class ContextScope {
+    @SerialName("all") ALL,
+    @SerialName("self") SELF,
+    @SerialName("member_list") MEMBER_LIST,
+    @SerialName("directed") DIRECTED,
+}
+
+@Serializable
+data class ContextFilter(
+    val scope: ContextScope = ContextScope.ALL,
+    val visibleMemberIds: List<Uuid> = emptyList(),
+    val excludedMemberIds: List<Uuid> = emptyList(),
+    val mentionEnabled: Boolean = false,
+    val mentionKeywords: List<String> = emptyList(),
+    val maxMessages: Int = 0,  // 0 = 不限制
+)
+
+@Serializable
+data class GroupMember(
+    val id: Uuid = Uuid.random(),
+    val assistantId: Uuid,
+    val displayName: String = "",
+    val avatar: Avatar = Avatar.Dummy,
+    val systemPromptOverride: String? = null,
+    val chatModelIdOverride: Uuid? = null,
+    val enabled: Boolean = true,
+    val contextFilter: ContextFilter = ContextFilter(),
+)
+
+@Serializable
+enum class TurnTakingStrategy {
+    @SerialName("manual") MANUAL,
+    @SerialName("auto_round_robin") AUTO_ROUND_ROBIN,
+    @SerialName("auto_moderator") AUTO_MODERATOR,
 }
 
 /**
- * 从消息列表中提取用于匹配的上下文文本
- *
- * @param messages 消息列表
- * @param scanDepth 扫描深度（最近N条消息）
- * @return 拼接的文本内容
+ * 群组手动模式下的「常用成员组合」—— 用户保存一组成员（含顺序），下次直接一键应用。
+ * 顺序就是发言顺序，所以用 List 而非 Set。
  */
-fun extractContextForMatching(
-    messages: List<UIMessage>,
-    scanDepth: Int
-): String {
-    return messages
-        .takeLast(scanDepth)
-        .joinToString("\n") { it.toText() }
-}
+@Serializable
+data class GroupMemberCombo(
+    val id: Uuid = Uuid.random(),
+    val name: String = "",
+    val memberIds: List<Uuid> = emptyList(),
+)
 
-/**
- * 获取所有被触发的注入，按优先级排序
- *
- * @param injections 所有注入规则
- * @param context 上下文文本
- * @return 被触发的注入列表，按优先级降序排列
- */
-fun getTriggeredInjections(
-    injections: List<PromptInjection.RegexInjection>,
-    context: String
-): List<PromptInjection.RegexInjection> {
-    return injections
-        .filter { it.isTriggered(context) }
-        .sortedByDescending { it.priority }
-}
+@Serializable
+data class GroupReplyOptions(
+    val allowConsecutiveSameSpeaker: Boolean = false,
+    val maxAutoRepliesPerUserTurn: Int = 1,
+)
+
+@Serializable
+data class GroupContextOptions(
+    val enableLayeredContext: Boolean = true,
+    val enablePrivateViewpoint: Boolean = true,
+    val enableRelationshipNotes: Boolean = true,
+    val enableSceneState: Boolean = true,
+    val enableMotivationScoring: Boolean = true,
+    val maxPrivateNoteChars: Int = 800,
+    val maxSceneSummaryChars: Int = 800,
+)
+
+// endregion

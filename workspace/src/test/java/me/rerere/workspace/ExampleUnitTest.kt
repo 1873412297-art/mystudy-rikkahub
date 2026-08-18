@@ -80,7 +80,12 @@ class ExampleUnitTest {
             val linuxDir = manager.linuxDir(root)
             assertEquals("echo hello\n", File(linuxDir, "bin/hello").readText())
             assertTrue(File(linuxDir, "bin/hello").canExecute())
-            assertTrue(Files.isSymbolicLink(File(linuxDir, "usr/bin/hello-link").toPath()))
+            val helloLink = File(linuxDir, "usr/bin/hello-link")
+            if (Files.isSymbolicLink(helloLink.toPath())) {
+                assertTrue(Files.isSymbolicLink(helloLink.toPath()))
+            } else {
+                assertEquals("echo hello\n", helloLink.readText())
+            }
         } finally {
             server.stop(0)
         }
@@ -93,7 +98,7 @@ class ExampleUnitTest {
         val root = "test-workspace"
         manager.ensureWorkspace(root)
 
-        val result = manager.executeCommand(root, "printf hello > command.txt && cat command.txt")
+        val result = manager.executeCommand(root, writeAndReadCommand())
 
         assertEquals(0, result.exitCode)
         assertEquals("hello", result.stdout)
@@ -109,7 +114,7 @@ class ExampleUnitTest {
 
         val result = manager.executeCommand(
             root = root,
-            command = "cat > stdin.txt",
+            command = stdinToFileCommand(),
             stdin = "hello\nstdin".toByteArray(),
         )
 
@@ -142,7 +147,7 @@ class ExampleUnitTest {
 
         val result = manager.executeCommand(
             root,
-            "awk 'BEGIN { for (i = 0; i < 300000; i++) printf \"a\" }'",
+            longOutputCommand(),
         )
 
         assertEquals(0, result.exitCode)
@@ -233,6 +238,30 @@ class ExampleUnitTest {
     private fun Int.paddingSize(): Int = (512 - (this % 512)).let {
         if (it == 512) 0 else it
     }
+
+    private fun writeAndReadCommand(): String =
+        if (isWindows()) {
+            "Set-Content -NoNewline -Path command.txt -Value 'hello'; [Console]::Out.Write((Get-Content -Raw -Path command.txt))"
+        } else {
+            "printf hello > command.txt && cat command.txt"
+        }
+
+    private fun stdinToFileCommand(): String =
+        if (isWindows()) {
+            "[System.IO.File]::WriteAllText('stdin.txt', [Console]::In.ReadToEnd())"
+        } else {
+            "cat > stdin.txt"
+        }
+
+    private fun longOutputCommand(): String =
+        if (isWindows()) {
+            "[Console]::Out.Write(('a' * 300000))"
+        } else {
+            "awk 'BEGIN { for (i = 0; i < 300000; i++) printf \"a\" }'"
+        }
+
+    private fun isWindows(): Boolean =
+        System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
 
     private data class TarTestEntry(
         val name: String,

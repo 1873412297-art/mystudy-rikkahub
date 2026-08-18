@@ -24,6 +24,7 @@ import me.rerere.rikkahub.web.NotFoundException
 import me.rerere.rikkahub.web.dto.ConversationDto
 import me.rerere.rikkahub.web.dto.ConversationNodeUpdateEvent
 import me.rerere.rikkahub.web.dto.ConversationSnapshotEvent
+import me.rerere.rikkahub.web.dto.ConversationStatusVariablesEvent
 import me.rerere.rikkahub.web.dto.EditMessageRequest
 import me.rerere.rikkahub.web.dto.ErrorEvent
 import me.rerere.rikkahub.web.dto.ForkConversationRequest
@@ -403,7 +404,13 @@ fun Route.conversationRoutes(
                     ConversationStreamPayload.BatchErrors(events)
                 }
 
-                merge(conversationEvents, errorEvents).collect { payload ->
+                val statusVariableEvents = chatService
+                    .getStatusVariablesFlow(uuid)
+                    .map { variables ->
+                        ConversationStreamPayload.StatusVariables(variables)
+                    }
+
+                merge(conversationEvents, errorEvents, statusVariableEvents).collect { payload ->
                     when (payload) {
                         is ConversationStreamPayload.Conversation -> {
                             sequence += 1
@@ -442,6 +449,18 @@ fun Route.conversationRoutes(
                                 send(data = json, event = "error")
                             }
                         }
+
+                        is ConversationStreamPayload.StatusVariables -> {
+                            sequence += 1
+                            val json = JsonInstant.encodeToString(
+                                ConversationStatusVariablesEvent(
+                                    seq = sequence,
+                                    conversationId = uuid.toString(),
+                                    variables = payload.value
+                                )
+                            )
+                            send(data = json, event = "status_variables")
+                        }
                     }
                 }
             } finally {
@@ -454,6 +473,7 @@ fun Route.conversationRoutes(
 private sealed interface ConversationStreamPayload {
     data class Conversation(val value: ConversationDto) : ConversationStreamPayload
     data class BatchErrors(val messages: List<String>) : ConversationStreamPayload
+    data class StatusVariables(val value: kotlinx.serialization.json.JsonObject) : ConversationStreamPayload
 }
 
 private data class ConversationInjectionIds(

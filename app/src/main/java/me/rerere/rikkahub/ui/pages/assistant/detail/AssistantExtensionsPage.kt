@@ -114,6 +114,12 @@ fun AssistantExtensionsPage(id: String) {
                                         else assistant.quickMessageIds - quickMessageId
                                         vm.update(assistant.copy(quickMessageIds = newIds))
                                     },
+                                    hiddenIds = assistant.hiddenQuickMessageIds,
+                                    onToggleHidden = { quickMessageId, hidden ->
+                                        val newHiddenIds = if (hidden) assistant.hiddenQuickMessageIds + quickMessageId
+                                        else assistant.hiddenQuickMessageIds - quickMessageId
+                                        vm.update(assistant.copy(hiddenQuickMessageIds = newHiddenIds))
+                                    },
                                 )
                                 TextButton(
                                     onClick = { navController.navigate(Screen.QuickMessages) },

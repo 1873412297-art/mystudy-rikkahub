@@ -12,6 +12,7 @@ import { ReasoningStepPart } from "./parts/reasoning-step-part";
 import { TextPart } from "./parts/text-part";
 import { ToolPart as ToolStepPart } from "./parts/tool-part";
 import { VideoPart } from "./parts/video-part";
+import { StatusPlaceholderView } from "~/components/tavern/status-placeholder-view";
 
 type ThinkingStep =
   | {
@@ -68,6 +69,7 @@ interface MessagePartsProps {
   loading?: boolean;
   onToolApproval?: (toolCallId: string, approved: boolean, reason: string, answer?: string) => void | Promise<void>;
   onClickCitation?: (id: string) => void;
+  tavernContext?: { conversationId: string; assistantId: string };
 }
 
 function renderContentPart(
@@ -75,10 +77,18 @@ function renderContentPart(
   t: (key: string, options?: Record<string, unknown>) => string,
   loading?: boolean,
   onClickCitation?: (id: string) => void,
+  tavernContext?: { conversationId: string; assistantId: string },
 ) {
   switch (part.type) {
     case "text":
-      return <TextPart text={part.text} isAnimating={loading} onClickCitation={onClickCitation} />;
+      return (
+        <TextPart
+          text={part.text}
+          renderMode={part.renderMode}
+          isAnimating={loading}
+          onClickCitation={onClickCitation}
+        />
+      );
     case "image":
       return <ImagePart url={part.url} />;
     case "video":
@@ -95,6 +105,14 @@ function renderContentPart(
       return (
         <div className="text-xs text-muted-foreground">{t("message_parts.tool_step_hint")}</div>
       );
+    case "status_placeholder":
+      return tavernContext ? (
+        <StatusPlaceholderView
+          part={part}
+          conversationId={tavernContext.conversationId}
+          assistantId={tavernContext.assistantId}
+        />
+      ) : null;
   }
 }
 
@@ -103,6 +121,7 @@ export const MessageParts = React.memo(({
   loading = false,
   onToolApproval,
   onClickCitation,
+  tavernContext,
 }: MessagePartsProps) => {
   const { t } = useTranslation("message");
   const groupedParts = React.useMemo(() => groupMessageParts(parts), [parts]);
@@ -161,7 +180,7 @@ export const MessageParts = React.memo(({
 
         return (
           <React.Fragment key={`content-${block.index}`}>
-            {renderContentPart(block.part, t, loading, onClickCitation)}
+            {renderContentPart(block.part, t, loading, onClickCitation, tavernContext)}
           </React.Fragment>
         );
       })}
@@ -174,15 +193,23 @@ interface MessagePartProps {
   loading?: boolean;
   onToolApproval?: (toolCallId: string, approved: boolean, reason: string, answer?: string) => void | Promise<void>;
   onClickCitation?: (id: string) => void;
+  tavernContext?: { conversationId: string; assistantId: string };
 }
 
-export function MessagePart({ part, loading, onToolApproval, onClickCitation }: MessagePartProps) {
+export function MessagePart({
+  part,
+  loading,
+  onToolApproval,
+  onClickCitation,
+  tavernContext,
+}: MessagePartProps) {
   return (
     <MessageParts
       parts={[part]}
       loading={loading}
       onToolApproval={onToolApproval}
       onClickCitation={onClickCitation}
+      tavernContext={tavernContext}
     />
   );
 }

@@ -6,6 +6,7 @@ import me.rerere.ai.core.TokenUsage
 import me.rerere.ai.ui.UIMessageAnnotation
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.model.AuthorNote
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 
@@ -194,6 +195,8 @@ data class ConversationDto(
     val lorebookIds: List<String> = emptyList(),
     val workspaceCwd: String? = null,
     val folderId: String? = null,
+    val authorNote: AuthorNote? = null,
+    val statusVariables: kotlinx.serialization.json.JsonObject? = null,
     val createAt: Long,
     val updateAt: Long,
     val isGenerating: Boolean = false
@@ -240,6 +243,12 @@ data class WebAuthTokenResponse(
     val expiresAt: Long,
 )
 
+@Serializable
+data class TavernRenderDto(
+    val statusRenderJs: String? = null,
+    val css: String? = null,
+)
+
 // ========== Error Response ==========
 
 @Serializable
@@ -274,6 +283,15 @@ data class ConversationNodeUpdateEvent(
     val node: MessageNodeDto,
     val updateAt: Long,
     val isGenerating: Boolean,
+    val serverTime: Long = System.currentTimeMillis()
+)
+
+@Serializable
+data class ConversationStatusVariablesEvent(
+    val type: String = "status_variables",
+    val seq: Long,
+    val conversationId: String,
+    val variables: kotlinx.serialization.json.JsonObject,
     val serverTime: Long = System.currentTimeMillis()
 )
 
@@ -335,6 +353,8 @@ fun Conversation.toDto(isGenerating: Boolean = false) = ConversationDto(
     lorebookIds = lorebookIds.map { it.toString() },
     workspaceCwd = workspaceCwd,
     folderId = folderId?.toString(),
+    authorNote = authorNote,
+    statusVariables = statusVariables,
     createAt = createAt.toEpochMilli(),
     updateAt = updateAt.toEpochMilli(),
     isGenerating = isGenerating

@@ -82,6 +82,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceAtLeast
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.CoroutineScope
@@ -89,12 +90,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.getAssistantById
+import me.rerere.rikkahub.data.model.AssistantType
+import me.rerere.rikkahub.data.model.AuthorNote
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
+import me.rerere.rikkahub.data.model.TavernCharacterCard
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.components.message.ChatMessage
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernContextSnapshotInput
+import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernContextSnapshot
 import me.rerere.rikkahub.ui.components.ui.ErrorCardsDisplay
 import me.rerere.rikkahub.ui.components.ui.ListSelectableItem
 import me.rerere.rikkahub.ui.components.ui.RabbitLoadingIndicator
@@ -104,6 +111,7 @@ import me.rerere.rikkahub.ui.theme.ChatFontProvider
 import me.rerere.rikkahub.utils.plus
 import kotlin.math.roundToInt
 import kotlin.uuid.Uuid
+import org.koin.compose.koinInject
 
 private const val TAG = "ChatList"
 private const val LoadingIndicatorKey = "LoadingIndicator"
@@ -135,6 +143,8 @@ fun ChatList(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
+    onConversationAuthorNoteChange: ((AuthorNote?) -> Unit)? = null,
+    onMentionRole: ((String) -> Unit)? = null,
 ) {
     AnimatedContent(
         targetState = previewMode,
@@ -177,6 +187,8 @@ fun ChatList(
                 onToolAnswer = onToolAnswer,
                 onToggleFavorite = onToggleFavorite,
                 onConversationSystemPromptChange = onConversationSystemPromptChange,
+                onConversationAuthorNoteChange = onConversationAuthorNoteChange,
+                onMentionRole = onMentionRole,
             )
         }
     }
@@ -207,6 +219,8 @@ private fun ChatListNormal(
     onToolAnswer: ((toolCallId: String, answer: String) -> Unit)? = null,
     onToggleFavorite: ((MessageNode) -> Unit)? = null,
     onConversationSystemPromptChange: ((String?) -> Unit)? = null,
+    onConversationAuthorNoteChange: ((AuthorNote?) -> Unit)? = null,
+    onMentionRole: ((String) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val loadingState by rememberUpdatedState(loading)
@@ -270,6 +284,48 @@ private fun ChatListNormal(
     }
     val lastMessageIndex = conversation.messageNodes.lastIndex
 
+    // 酒馆上下文快照（会话级构建一次）：SillyTavern.getContext 数据源，经 ChatMessage →
+    // MarkdownWebView 传入 TavernRuntimeController.setContext（哈希去重后推送 WebView）。
+    val statusVariableStore: StatusVariableStore = koinInject()
+    val statusVariables by statusVariableStore.getState(conversation.id).collectAsStateWithLifecycle()
+    val tavernCharacterCard = remember(assistant) {
+        assistant?.tavernCardJson?.let { TavernCharacterCard.fromJson(it) }
+    }
+    val tavernContextSnapshot = remember(
+        conversation.id,
+        conversation.messageNodes.size,
+        conversation.messageNodes.lastOrNull()?.selectIndex,
+        assistant,
+        settings.displaySetting.userNickname,
+        loading,
+    ) {
+        val worldEntries = settings.lorebooks
+            .filter { lorebook -> conversation.lorebookIds.contains(lorebook.id) }
+            .flatMap { lorebook -> lorebook.entries.map { it.name to it.content } }
+        buildTavernContextSnapshot(
+            TavernContextSnapshotInput(
+                conversation = conversation,
+                assistant = assistant,
+                characterCard = tavernCharacterCard,
+                userName = settings.displaySetting.userNickname.ifBlank { "User" },
+                isGenerating = loading,
+                variables = statusVariables,
+                worldEntries = worldEntries,
+            )
+        )
+    }
+
+    // 酒馆脚本 requestHeaders.get 数据源（assistant + 生效模型自定义头）。
+    // 与 tavernContextSnapshot 同路透传；assistant/模型头变化时（settings 更新）lambda 重建，
+    // MarkdownWebView 经 rememberUpdatedState 在 RPC 调用时读最新值。
+    val tavernHeaderSource = remember(settings, assistant, modelById) {
+        {
+            val model = assistant?.let { a -> modelById[a.chatModelId ?: settings.chatModelId] }
+            (assistant?.customHeaders.orEmpty() + model?.customHeaders.orEmpty())
+                .map { it.name to it.value }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize(),
@@ -315,6 +371,7 @@ private fun ChatListNormal(
             itemsIndexed(
                 items = conversation.messageNodes,
                 key = { index, item -> item.id },
+                contentType = { _, _ -> "message" },
             ) { index, node ->
                 Column {
                     ListSelectableItem(
@@ -333,8 +390,17 @@ private fun ChatListNormal(
                             node = node,
                             model = node.currentMessage.modelId?.let(modelById::get),
                             assistant = assistant,
+                            tavernConversationId = conversation.id,
+                            tavernContextSnapshot = tavernContextSnapshot,
+                            tavernHeaderSource = tavernHeaderSource,
+                            runtimeState = if (assistant?.assistantType == AssistantType.GROUP) {
+                                conversation.groupRuntimeState
+                            } else {
+                                null
+                            },
                             loading = loading && index == lastMessageIndex,
-                            onRegenerate = {
+                            onMentionRole = onMentionRole,
+                            onRegenerate = { _ ->
                                 onRegenerate(node.currentMessage)
                             },
                             onEdit = {
@@ -374,6 +440,15 @@ private fun ChatListNormal(
                     ConversationSystemPromptButton(
                         customSystemPrompt = conversation.customSystemPrompt,
                         onSystemPromptChange = onConversationSystemPromptChange,
+                    )
+                }
+            }
+
+            if (!loading && assistant?.allowConversationAuthorNote == true && onConversationAuthorNoteChange != null) {
+                item(key = "ConversationAuthorNote") {
+                    ConversationAuthorNoteButton(
+                        authorNote = conversation.authorNote,
+                        onAuthorNoteChange = onConversationAuthorNoteChange,
                     )
                 }
             }
@@ -664,7 +739,7 @@ private fun ChatListPreview(
                 key = { index, item -> item.second.id },
             ) { _, (originalIndex, node) ->
                 val message = node.currentMessage
-                val isUser = message.role == me.rerere.ai.core.MessageRole.USER
+                val isUser = message.role == me.rerere.ai.core.MessageRole.USER && message.memberId == null
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()

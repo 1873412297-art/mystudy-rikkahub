@@ -23,7 +23,11 @@ data class UIMessage(
     val finishedAt: LocalDateTime? = null,
     val modelId: Uuid? = null,
     val usage: TokenUsage? = null,
-    val translation: String? = null
+    val translation: String? = null,
+    /** 群组对话中所属成员的 GroupMember.id；非群组对话为 null */
+    val memberId: Uuid? = null,
+    /** 群组对话中显示用的成员名（也用于 OpenAI 的 message.name 字段）；非群组对话为 null */
+    val name: String? = null,
 ) {
     fun summaryAsText(maxLength: Int = Int.MAX_VALUE): String {
         val text = "[${role.name}]: " + parts.joinToString(separator = "\n") { part ->
@@ -80,6 +84,11 @@ data class UIMessage(
         fun assistant(prompt: String) = UIMessage(
             role = MessageRole.ASSISTANT,
             parts = listOf(UIMessagePart.Text(prompt))
+        )
+
+        fun assistantHtml(prompt: String) = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(UIMessagePart.Text(prompt, renderMode = UIMessagePart.RenderMode.HTML))
         )
     }
 }
@@ -231,6 +240,7 @@ fun List<UIMessagePart>.toSortedMessageParts(): List<UIMessagePart> {
             is UIMessagePart.ServerTool -> 0
             is UIMessagePart.ToolCall -> 0
             is UIMessagePart.ToolResult -> 0
+            is UIMessagePart.StatusPlaceholder -> 0
             is UIMessagePart.Search -> 0
             is UIMessagePart.Image -> 1
             is UIMessagePart.Video -> 1

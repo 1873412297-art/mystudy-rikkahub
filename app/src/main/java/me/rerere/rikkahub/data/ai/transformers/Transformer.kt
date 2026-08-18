@@ -4,8 +4,10 @@ import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessage
+import me.rerere.rikkahub.data.ai.trace.PromptTraceRecorder
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AuthorNote
 import kotlin.uuid.Uuid
 
 class TransformerContext(
@@ -15,8 +17,12 @@ class TransformerContext(
     val settings: Settings,
     val conversationModeInjectionIds: Set<Uuid> = emptySet(),
     val conversationLorebookIds: Set<Uuid> = emptySet(),
+    val conversationAuthorNote: AuthorNote? = null,
     val processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
     val workspaceCwd: String? = null,
+    /** 当前对话的 ID，状态变量 transformer 用它读写 conversation.statusVariables */
+    val conversationId: Uuid? = null,
+    val promptTraceSession: PromptTraceRecorder? = null,
 )
 
 interface MessageTransformer {
@@ -69,8 +75,11 @@ suspend fun List<UIMessage>.transforms(
     settings: Settings,
     conversationModeInjectionIds: Set<Uuid> = emptySet(),
     conversationLorebookIds: Set<Uuid> = emptySet(),
+    conversationAuthorNote: AuthorNote? = null,
     processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
     workspaceCwd: String? = null,
+    conversationId: Uuid? = null,
+    promptTraceSession: PromptTraceRecorder? = null,
 ): List<UIMessage> {
     val ctx = TransformerContext(
         context = context,
@@ -79,8 +88,11 @@ suspend fun List<UIMessage>.transforms(
         settings = settings,
         conversationModeInjectionIds = conversationModeInjectionIds,
         conversationLorebookIds = conversationLorebookIds,
+        conversationAuthorNote = conversationAuthorNote,
         processingStatus = processingStatus,
         workspaceCwd = workspaceCwd,
+        conversationId = conversationId,
+        promptTraceSession = promptTraceSession,
     )
     return transformers.fold(this) { acc, transformer ->
         transformer.transform(ctx, acc)
@@ -93,8 +105,9 @@ suspend fun List<UIMessage>.visualTransforms(
     model: Model,
     assistant: Assistant,
     settings: Settings,
+    conversationId: Uuid? = null,
 ): List<UIMessage> {
-    val ctx = TransformerContext(context, model, assistant, settings)
+    val ctx = TransformerContext(context, model, assistant, settings, conversationId = conversationId)
     return transformers.fold(this) { acc, transformer ->
         if (transformer is OutputMessageTransformer) {
             transformer.visualTransform(ctx, acc)
@@ -110,8 +123,9 @@ suspend fun List<UIMessage>.onGenerationFinish(
     model: Model,
     assistant: Assistant,
     settings: Settings,
+    conversationId: Uuid? = null,
 ): List<UIMessage> {
-    val ctx = TransformerContext(context, model, assistant, settings)
+    val ctx = TransformerContext(context, model, assistant, settings, conversationId = conversationId)
     return transformers.fold(this) { acc, transformer ->
         if (transformer is OutputMessageTransformer) {
             transformer.onGenerationFinish(ctx, acc)

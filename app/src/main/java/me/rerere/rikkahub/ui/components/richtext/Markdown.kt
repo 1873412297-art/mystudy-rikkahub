@@ -89,16 +89,26 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.ai.core.MessageRole
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Download04
 import me.rerere.hugeicons.stroke.Tick01
 import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.ai.transformers.findBareJsonPatch
+import me.rerere.rikkahub.data.ai.status.StatusTags
+import me.rerere.rikkahub.data.ai.status.TavernCardStyle
 import me.rerere.rikkahub.ui.components.table.DataTable
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.modifier.onClick
 import me.rerere.rikkahub.ui.theme.JetbrainsMono
 import me.rerere.rikkahub.utils.toDp
+import me.rerere.rikkahub.ui.components.richtext.st.StableDomMessage
+import me.rerere.rikkahub.ui.components.richtext.st.StableDomRole
+import me.rerere.rikkahub.ui.components.richtext.st.StableDomSegment
+import me.rerere.rikkahub.ui.components.richtext.st.buildStableMessageHtml
 import org.intellij.markdown.IElementType
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.MarkdownTokenTypes
@@ -109,6 +119,7 @@ import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import org.intellij.markdown.parser.MarkdownParser
 import kotlin.time.Clock
+import kotlin.uuid.Uuid
 
 private val flavour by lazy {
     GFMFlavourDescriptor(
@@ -122,6 +133,14 @@ private val parser by lazy {
 
 private val INLINE_LATEX_REGEX = Regex("\\\\\\((.+?)\\\\\\)")
 private val BLOCK_LATEX_REGEX = Regex("\\\\\\[(.+?)\\\\\\]", RegexOption.DOT_MATCHES_ALL)
+private const val ENABLE_STABLE_DOM_RENDERER = true
+
+/** SillyTavern/status-prompt status blocks. Missing closing tags are tolerated to keep text visible. */
+private val STATUS_BLOCK_REGEX = StatusTags.segmentRegex()
+
+/** Standalone JSON Patch arrays. Used to route status-update payloads into the WebView renderer. */
+private val JSON_PATCH_TRIGGER_REGEX = Regex("""\[\s*\{[\s\S]*?"op"[\s\S]*?"path"[\s\S]*?\}\s*\]""")
+
 val THINKING_REGEX = Regex("<think>([\\s\\S]*?)(?:</think>|$)", RegexOption.DOT_MATCHES_ALL)
 private val CODE_BLOCK_REGEX = Regex("```[\\s\\S]*?```|`[^`\n]*`", RegexOption.DOT_MATCHES_ALL)
 private val BREAK_LINE_REGEX = Regex("(?i)<br\\s*/?>")
@@ -219,15 +238,32 @@ private data class MarkdownParseResult(
     val hasHtml: Boolean,
 )
 
+/** MessageRole -> StableDomRole 映射（STABLE_DOM 渲染的角色类名）。 */
+private fun MessageRole.toStableDomRole(): StableDomRole = when (this) {
+    MessageRole.SYSTEM -> StableDomRole.SYSTEM
+    MessageRole.USER -> StableDomRole.USER
+    MessageRole.ASSISTANT -> StableDomRole.ASSISTANT
+    MessageRole.TOOL -> StableDomRole.TOOL
+}
+
 private fun ASTNode.containsHtml(): Boolean {
     if (type == MarkdownElementTypes.HTML_BLOCK || type == MarkdownTokenTypes.HTML_TAG) return true
     return children.any { it.containsHtml() }
 }
 
 private fun parseMarkdown(content: String): MarkdownParseResult {
-    val preprocessed = preProcess(content)
+    val normalized = normalizeRichTextContent(content)
+    val preprocessed = preProcess(normalized)
     val astTree = parser.buildMarkdownTreeFromString(preprocessed)
     return MarkdownParseResult(preprocessed, astTree, astTree.containsHtml())
+}
+
+internal fun containsStatusBlockTag(content: String): Boolean {
+    return STATUS_BLOCK_REGEX.containsMatchIn(content)
+}
+
+internal fun containsJsonPatchBlockTag(content: String): Boolean {
+    return findBareJsonPatch(content) != null || JSON_PATCH_TRIGGER_REGEX.containsMatchIn(content)
 }
 
 @Composable
@@ -235,9 +271,127 @@ fun MarkdownBlock(
     content: String,
     modifier: Modifier = Modifier,
     style: TextStyle = LocalTextStyle.current,
-    onClickCitation: (String) -> Unit = {}
+    onClickCitation: (String) -> Unit = {},
+    /** STABLE_DOM 渲染时显示在 .ch_name 中的角色名（SillyTavern DOM 兼容） */
+    roleName: String? = null,
+    /** STABLE_DOM 渲染时的消息角色（影响 .mes.<role> 类名），默认 ASSISTANT */
+    stableRole: MessageRole? = null,
+    /** 角色卡渲染样式（CSS 注入 st-message 文档，null 表示无卡样式） */
+    tavernCardStyle: TavernCardStyle? = null,
+    /** 流式生成中：true 时走增量 patch，false 时整文档渲染（Task 5 接线） */
+    streaming: Boolean = false,
+    /** 酒馆脚本运行时上下文：消息所属会话 ID（透传 MarkdownWebView） */
+    tavernConversationId: Uuid? = null,
+    /** 当前消息 JSON（透传 MarkdownWebView，messages.getCurrent 数据源） */
+    tavernCurrentMessage: JsonElement? = null,
+    /** 上下文快照（透传 MarkdownWebView，SillyTavern.getContext 数据源） */
+    tavernContextSnapshot: JsonObject? = null,
+    /** 消息角色（透传 MarkdownWebView，渲染事件细分） */
+    tavernMessageRole: MessageRole? = null,
+    /** 请求头数据源（透传 MarkdownWebView，requestHeaders.get RPC 按需拉取） */
+    tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
 ) {
-    var (data, setData) = remember { mutableStateOf(parseMarkdown(content)) }
+    val normalizedContent = remember(content) { normalizeRichTextContent(content) }
+    val segments = remember(normalizedContent) { parseRichTextSegments(normalizedContent) }
+    if (segments.size > 1 || segments.firstOrNull()?.kind != RichTextSegment.Kind.MARKDOWN) {
+        val rendererMode = remember(normalizedContent) { chooseRendererMode(normalizedContent) }
+        if (ENABLE_STABLE_DOM_RENDERER && rendererMode == RichTextRendererMode.STABLE_DOM) {
+            val context = LocalContext.current
+            val colorScheme = MaterialTheme.colorScheme
+            val cssVariables = mapOf(
+                "CSS_VAR_BG" to "transparent",
+                "CSS_VAR_SURFACE" to hex(colorScheme.surface),
+                "CSS_VAR_SURFACE_VARIANT" to hex(colorScheme.surfaceVariant),
+                "CSS_VAR_TEXT" to hex(colorScheme.onSurface),
+                "CSS_VAR_TEXT_SECONDARY" to hex(colorScheme.onSurfaceVariant),
+                "CSS_VAR_BORDER" to hex(colorScheme.outlineVariant),
+                "CSS_VAR_ACCENT" to hex(colorScheme.primary),
+            )
+            val stableSegments = remember(normalizedContent) {
+                segments.mapIndexed { index, segment ->
+                    StableDomSegment(
+                        id = "segment-$index",
+                        kind = segment.kind,
+                        raw = segment.raw,
+                    )
+                }
+            }
+            // buildStableMessageHtml 会读 assets 模板 + 内联 ~5MB vendor 库，重开销；
+            // 用 remember 缓存，避免无关 recompose（如选中态/滚动）触发重复构建。
+            // 键含 cssVariables/roleName/stableRole：主题切换、角色变化时同步重建（与
+            // MarkdownWebView baseKey 的颜色失效一致），streaming 翻转时恰好重建一次。
+            val html = remember(normalizedContent, tavernCardStyle, streaming, cssVariables, roleName, stableRole) {
+                buildStableMessageHtml(
+                    context,
+                    StableDomMessage(
+                        id = normalizedContent.hashCode().toString(),
+                        role = stableRole?.toStableDomRole() ?: StableDomRole.ASSISTANT,
+                        name = roleName,
+                        segments = stableSegments,
+                        streaming = streaming,
+                    ),
+                    cssVariables = cssVariables,
+                    extraCss = tavernCardStyle?.css,
+                )
+            }
+            MarkdownWebView(
+                content = html,
+                modifier = modifier,
+                isRawHtml = true,
+                streaming = streaming,
+                streamSegments = stableSegments,
+                tavernStyleVersionKey = tavernCardStyle?.versionKey,
+                tavernConversationId = tavernConversationId,
+                tavernCurrentMessage = tavernCurrentMessage,
+                tavernContextSnapshot = tavernContextSnapshot,
+                tavernMessageRole = tavernMessageRole,
+                tavernHeaderSource = tavernHeaderSource,
+            )
+            return
+        }
+        Column(modifier = modifier) {
+            segments.fastForEach { segment ->
+                when (segment.kind) {
+                    RichTextSegment.Kind.MARKDOWN,
+                    RichTextSegment.Kind.JSON_PATCH_DIAGNOSTIC -> MarkdownBlock(
+                        content = segment.raw,
+                        style = style,
+                        onClickCitation = onClickCitation,
+                        roleName = roleName,
+                        stableRole = stableRole,
+                        tavernCardStyle = tavernCardStyle,
+                        streaming = streaming,
+                        tavernConversationId = tavernConversationId,
+                        tavernCurrentMessage = tavernCurrentMessage,
+                        tavernContextSnapshot = tavernContextSnapshot,
+                        tavernMessageRole = tavernMessageRole,
+                        tavernHeaderSource = tavernHeaderSource,
+                    )
+                    RichTextSegment.Kind.STATUS_BLOCK,
+                    RichTextSegment.Kind.JSON_PATCH -> MarkdownWebView(
+                        content = segment.raw,
+                        tavernConversationId = tavernConversationId,
+                        tavernCurrentMessage = tavernCurrentMessage,
+                        tavernContextSnapshot = tavernContextSnapshot,
+                        tavernMessageRole = tavernMessageRole,
+                        tavernHeaderSource = tavernHeaderSource,
+                    )
+                    RichTextSegment.Kind.HTML_DOCUMENT -> MarkdownWebView(
+                        content = segment.raw,
+                        isRawHtml = true,
+                        tavernConversationId = tavernConversationId,
+                        tavernCurrentMessage = tavernCurrentMessage,
+                        tavernContextSnapshot = tavernContextSnapshot,
+                        tavernMessageRole = tavernMessageRole,
+                        tavernHeaderSource = tavernHeaderSource,
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    var (data, setData) = remember(normalizedContent) { mutableStateOf(parseMarkdown(normalizedContent)) }
 
     // 监听内容变化，重新解析AST树
     // 这里在后台线程解析AST树, 防止频繁更新的时候掉帧
@@ -251,9 +405,23 @@ fun MarkdownBlock(
             .collect { setData(it) }
     }
 
-    if (data.hasHtml) {
+    val intent = analyzeRichTextContent(content)
+    val hasStatusBlock = intent.hasStatusBlock || intent.hasJsonPatch || intent.isRawHtmlDocument
+
+    if (hasStatusBlock) {
+        MarkdownWebView(
+            content = normalizedContent,
+            modifier = modifier,
+            isRawHtml = intent.isRawHtmlDocument,
+            tavernConversationId = tavernConversationId,
+            tavernCurrentMessage = tavernCurrentMessage,
+            tavernContextSnapshot = tavernContextSnapshot,
+            tavernMessageRole = tavernMessageRole,
+            tavernHeaderSource = tavernHeaderSource,
+        )
+    } else if (data.hasHtml) {
         MarkdownNew(
-            content = content,
+            content = normalizedContent,
             modifier = modifier,
             style = style,
             onClickCitation = onClickCitation,
