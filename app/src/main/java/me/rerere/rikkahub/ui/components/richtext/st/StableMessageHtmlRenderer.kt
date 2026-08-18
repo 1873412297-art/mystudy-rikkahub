@@ -54,7 +54,7 @@ internal fun buildStableMessageHtml(
 }
 
 /** 单遍占位符正则：一次遍历替换所有 {{XXX}}，替换值不会再次被扫描（双向防碰撞）。 */
-private val PLACEHOLDER_REGEX = Regex("\\{\\{([A-Z_0-9]+)}}")
+private val PLACEHOLDER_REGEX = Regex("\\{\\{([A-Z_0-9]+)\\}\\}")
 
 /** 纯函数版本：给定模板与内联产物注入（JVM 测试用）。 */
 internal fun buildStableMessageHtml(
