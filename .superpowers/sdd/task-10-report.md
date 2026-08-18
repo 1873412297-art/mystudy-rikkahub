@@ -1,79 +1,39 @@
-# Task 10 Implementation Report
+# Task 10 Report: 酒馆数据 store + 服务层 + SSE 接线
 
-## Scope
+- **状态**: DONE
+- **提交哈希**: `2b591375`（`feat: add tavern variable/card stores and status_variables SSE wiring`，4 files changed, 88 insertions(+), 2 deletions(-)）
+- **日期**: 2026-08-13
 
-Task 10 adds end-to-end prompt-trace integration evidence and a small extraction of the existing `ChatService` conversation persistence wiring so regeneration and fork behavior can be exercised directly with a real in-memory Room database and `PromptTraceRepository`.
+## 变更内容
 
-## Added coverage
+按计划 `2026-08-13-web-ui-tavern-rendering.md` "### Task 10" Steps 1-5 逐字实施：
 
-### GenerationHandler integration
+1. **新建 `web-ui/app/stores/tavern.ts`**：`useTavernStore`（zustand）——`variablesByConversation`、`cardsByAssistant`、`loadingAssistantIds`、`setVariables`、`ensureCardLoaded`、`cardOf`。代码与计划一致。
+2. **新建 `web-ui/app/services/tavern.ts`**：`TavernRenderDto` 接口 + `fetchTavernRender(assistantId)`（`api.get` 封装，路径 `assistant/{id}/tavern-render`，与 ky `prefixUrl: "/api"` 拼接）。
+3. **修改 `web-ui/app/stores/index.ts`**：新增 `export { useTavernStore } from "~/stores/tavern";`。
+4. **修改 `web-ui/app/routes/conversations.tsx`**：
+   - `ConversationStreamEvent` union 新增 `StatusVariablesEventDto` 成员。
+   - import：`useTavernStore` 并入既有 `~/stores` import；`StatusVariablesEventDto` 并入既有 `~/types` 类型 import 块（合并进现有块而非新增独立 import，遵循文件既有风格，语义与计划一致）。
+   - 初始 GET `.then`：`setDetail(data)` 后新增 `statusVariables` 同步 + `ensureCardLoaded`。
+   - `onMessage`：error 分支之后、snapshot 分支之前新增 `status_variables` 分支（`setVariables(data.conversationId, data.variables)` + return）。
+   - snapshot 分支：`setDetail(data.conversation)` 后新增 `statusVariables` 同步 + `ensureCardLoaded`。
 
-- Verifies two provider calls in a tool loop, including the second call's executed tool result.
-- Covers cancellation before and after the first chunk, provider failure with sanitized error text, and trace-store failure equivalence.
-- Exercises both OpenAI and Google provider fixtures.
+## 验证
 
-### Repository and conversation persistence integration
+- **typecheck**（`pnpm typecheck`）：仅剩已知 3 处 TS2366（Task 12 修复范围）：
+  - `app/components/message/chat-message.tsx(60,50)` TS2366
+  - `app/components/message/chat-message.tsx(77,64)` TS2366
+  - `app/routes/conversations.tsx(104,4)` TS2366（getQuickJumpPreview，pre-existing）
+  - **0 新增错误**。
+- **test**（`pnpm test`）：3 files / 41 tests passed。
 
-- Verifies branch selection/history and branch-scoped trace deletion.
-- Verifies exact 20-row repository retention with a 21-row fixture.
-- `PromptTraceConversationPersistenceTest` now calls production wiring used by `ChatService`:
-  - user regeneration builds the truncated conversation, derives removed IDs, persists it, and deletes only matching trace rows;
-  - fork construction creates a new conversation ID and new node IDs, persists it, preserves source traces, and starts with no copied trace rows.
-- The earlier direct-DAO regeneration/fork assertions were removed; they are superseded by the production-wiring tests.
+## 自审
 
-### Console flow integration
+- **ConversationStreamEvent union 含 StatusVariablesEventDto**: ✅ 已加入（第四成员）。
+- **ensureCardLoaded 动态 import 是否必要**: 按计划逐字保留动态 `await import("~/services/tavern")`。经自审：**并非必需**——依赖链为 `stores/tavern.ts → services/tavern.ts → services/api.ts`，无循环依赖，静态 import 亦可（且更简单、可享 tree-shaking/类型检查一致性）。未改为静态 import 的理由：指令要求计划代码逐字使用；动态 import 功能上无害（避免 stores 入口加载时立即拉入服务模块，亦可为后续按需加载留空间）。若后续任务或评审要求，可一行改为静态 import。
+- **unused import 检查**: `StatusVariablesEventDto` 在文件中被 union 使用；`useTavernStore` 在 useEffect 回调内以 `useTavernStore.getState()` 非 hook 形式使用（符合约束），无未使用导入。
 
-`TavernPromptConsoleFlowTest` uses an in-memory `AppDatabase`, real `PromptTraceRepository`, real `TavernPromptConsoleVM`, and the production `TavernPromptConsoleEntry`/content callbacks in one continuous Compose flow:
+## 疑虑
 
-1. open the eligible entry for the same conversation ID;
-2. default to the selected branch trace and then select history;
-3. navigate Overview, Hits, Sent messages, and Preview;
-4. copy a real message and complete trace through VM formatters;
-5. clear through `PromptTraceRepository` and observe the real empty state;
-6. verify the original `Conversation`/`MessageNode` snapshot and conversation row remain unchanged.
-
-## TDD record
-
-- Review RED: the new instrumentation test referenced missing production persistence/build seams; `compileDebugAndroidTestKotlin` failed with unresolved references. Log: `.superpowers/sdd/task-10-review-red.log`.
-- Review GREEN: production seams were extracted and called from `ChatService`; the two new persistence tests plus the real console flow passed 3/3. Log: `.superpowers/sdd/task-10-review-green.log`.
-- The first GREEN attempt exposed Kotlin bind-argument intersection-type compilation errors; explicit `arrayOf<Any?>` arguments fixed the test fixture before the successful run.
-
-## Verification
-
-Final counts are recorded after the focused and full reruns below.
-
-## Emulator and database record
-
-- Device: `emulator-5554`.
-- An ABI-split debug APK was installed and launched; the crash buffer was empty.
-- The default non-Tavern assistant showed no prompt-console top-bar entry.
-- No provider request was generated, so non-Tavern trace non-creation remains open.
-- The streamed debug database contained the `prompt_trace` table with zero rows. This is schema evidence only, not populated-row evidence for sanitization or 20-row retention.
-- The live populated-database sanitization/retention gate remains unchecked in the plan; automated fixtures are reported separately.
-
-## Open live-smoke items
-
-The installed data has no configured provider or Tavern/group fixture. All twelve request-dependent live matrix entries remain unchecked. Automated coverage does not relabel the missing emulator observations as passed.
-
-## Review follow-up verification
-
-| Gate | Result |
-|---|---|
-| RED compilation for missing production seams | Expected failure recorded |
-| Targeted production persistence + real console flow | PASS, 3/3 |
-| Focused prompt trace/group JVM command | PASS |
-| Focused instrumentation command including persistence wiring | PASS, 41/41 |
-| Full `:app:testDebugUnitTest` | PASS |
-| Full `:app:connectedDebugAndroidTest` | PASS, 54/54 |
-| `:app:assembleDebug` | PASS |
-| `git diff --check` | PASS |
-
-## Final-HEAD lint rerun
-
-- Command: `./gradlew.bat :app:lintDebug --console=plain`.
-- Start: `2026-07-17T09:10:08.1180453+08:00`.
-- End: `2026-07-17T09:13:02.3187787+08:00` (2m 53s, exit 1).
-- Result: repository baseline failure with 101 errors, 289 warnings, and 3 hints; first failure is `local.properties:1` `PropertyEscape`.
-- Fresh text report: `app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt`, written at `2026-07-17T09:13:00.2861756+08:00`.
-- Target-file audit: 0 matches for `ChatService.kt`; 0 matches for `PromptTraceConversationPersistence.kt`.
-- Raw run log: `.superpowers/sdd/task-10-review-final-lint.log`.
+- 无功能性疑虑。唯一备注：上述动态 import 可简化为静态 import（非阻塞，见自审）。
+- 提交后 Git 提示 `services/tavern.ts`、`stores/tavern.ts` 工作区 LF→CRLF 换行转换警告，属仓库既有 autocrlf 行为，不影响内容。

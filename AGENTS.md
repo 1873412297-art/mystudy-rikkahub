@@ -96,6 +96,16 @@
 
 ## Current Status
 
+**2026-08-19：构建并安装 Debug APK 到物理设备（无代码变更）。**
+
+- `:app:assembleDebug` 全绿（9 executed / 218 up-to-date）；APK：`app/build/outputs/apk/debug/app-arm64-v8a-debug.apk`（~81MB）
+- `adb install -r` 到 `XHD0223523008702`（Huawei MNA-AL00 / arm64）Success；`monkey` 启动成功，
+  `me.rerere.rikkahub/.RouteActivity` 前台运行，logcat 无 FATAL
+- 工作区状态：private-main 无新提交；仅 `.superpowers/sdd/task-9-report.md`、`task-10-report.md` 有未暂存改动
+  （内容为 web-ui 酒馆渲染项目的历史报告，与 HEAD 的 prompt-trace 报告不一致，待裁决提交或还原）
+- 下一步候选（未开始）：流式期间 ~5MB assets HTML 重建优化（B1 遗留）、宏展开异步化/超时可中断、sendHook
+  宏名泄漏 + 大小写折叠、mark.html CDN 本地化、WebView 重载后 getContext 重推（详见下方案列遗留）
+
 **2026-08-14：酒馆渲染与脚本 API 兼容性系列收尾（子项目 A + B1 + B2a + B2b 全部完成）。**
 
 - 本轮四个子项目全部交付并逐任务审查 + 最终全分支审查通过（60 提交，private-main 未推送 origin）：
