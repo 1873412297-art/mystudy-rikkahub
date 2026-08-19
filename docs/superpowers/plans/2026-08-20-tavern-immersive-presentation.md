@@ -46,12 +46,12 @@ fun UIMessagePart.Text.tavernOpeningRef(): TavernOpeningRef?
 fun inferLegacyOpening(message: UIMessage, card: TavernCharacterCard): TavernOpeningRef?
 ```
 
-- [ ] Write resolver tests for eligible SOLO text/HTML, missing card, group assistant, and every unsupported part family; run the two focused test classes and confirm missing-symbol failures.
-- [ ] Implement the minimal resolver and rerun until green.
-- [ ] Write metadata round-trip, malformed metadata, stable SHA-256 fingerprint, and legacy `first_mes` recognition tests; verify RED.
-- [ ] Implement typed metadata helpers without adding Room columns; rerun focused tests.
-- [ ] Change runtime permission defaults to true for scripts/world/message/network/variables/events/macro and false for request headers; add default/preset assertions and rerun focused plus existing runtime tests.
-- [ ] Commit the complete Task 1 diff.
+- [x] Write resolver tests for eligible SOLO text/HTML, missing card, group assistant, and every unsupported part family; run the two focused test classes and confirm missing-symbol failures.
+- [x] Implement the minimal resolver and rerun until green.
+- [x] Write metadata round-trip, malformed metadata, stable SHA-256 fingerprint, and legacy `first_mes` recognition tests; verify RED.
+- [x] Implement typed metadata helpers without adding Room columns; rerun focused tests.
+- [x] Change runtime permission defaults to true for scripts/world/message/network/variables/events/macro and false for request headers; add default/preset assertions and rerun focused plus existing runtime tests.
+- [x] Commit the complete Task 1 diff.
 
 ### Task 2: Snapshot, patch diff, and ST conversation document
 
@@ -189,4 +189,3 @@ fun buildStatusHudPresentation(conversation: Conversation): StatusHudPresentatio
 - [ ] Install the enumerated arm64 Debug APK on Huawei MNA-AL00 and verify with the real cards in `/sdcard/Download/角色卡/` and `/sdcard/Pictures/角色卡/`.
 - [ ] Exercise at least 12 simultaneous greeting candidates, first-message collapse/icon replay, ST/Compose fallback, HUD option prefill, light/dark, rotation/back, and inspect logcat for FATAL/ANR.
 - [ ] Record exact commands/results and commit the verification record.
-
