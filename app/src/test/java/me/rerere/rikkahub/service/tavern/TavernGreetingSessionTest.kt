@@ -111,6 +111,48 @@ class TavernGreetingSessionTest {
     }
 
     @Test
+    fun `global and world commit state is an operation journal not a stale snapshot`() {
+        val candidate = greetingSession(card = card).candidates.first()
+        candidate.runtime.setVariable(TavernGreetingVariableScope.GLOBAL, "route", JsonPrimitive("left"))
+        candidate.runtime.deleteVariable(TavernGreetingVariableScope.GLOBAL, "obsolete")
+        candidate.runtime.upsertWorldEntry(buildJsonObject { put("id", "door"); put("content", "open") })
+        candidate.runtime.deleteWorldEntry("removed")
+
+        val snapshot = candidate.snapshot()
+
+        assertEquals(JsonPrimitive("left"), snapshot.journal.globalVariables["route"])
+        assertTrue(snapshot.journal.globalVariables.containsKey("obsolete"))
+        assertNull(snapshot.journal.globalVariables["obsolete"])
+        assertEquals("open", (snapshot.journal.worldUpserts["door"]?.get("content") as JsonPrimitive).content)
+        assertTrue("removed" in snapshot.journal.worldDeletes)
+
+        val concurrentlyChanged = buildJsonObject {
+            put("route", "old")
+            put("unrelated", "preserved")
+            put("obsolete", "delete me")
+        }
+        val rebased = rebaseGreetingGlobalVariables(concurrentlyChanged, snapshot.journal)
+        assertEquals(JsonPrimitive("left"), rebased["route"])
+        assertEquals(JsonPrimitive("preserved"), rebased["unrelated"])
+        assertNull(rebased["obsolete"])
+    }
+
+    @Test
+    fun `selection freezes candidate writes and failed commit reopens the journal`() = runBlocking {
+        lateinit var selected: TavernGreetingCandidate
+        val session = greetingSession(card = card) { candidate ->
+            selected.runtime.setVariable(TavernGreetingVariableScope.CHAT, "late", JsonPrimitive(1))
+            error("fail")
+        }
+        selected = session.candidates.first()
+
+        assertThrows(IllegalStateException::class.java) { runBlocking { session.commit(selected.id) } }
+        assertNull(selected.overlay().chatVariables["late"])
+        selected.runtime.setVariable(TavernGreetingVariableScope.CHAT, "retry", JsonPrimitive(2))
+        assertEquals(JsonPrimitive(2), selected.overlay().chatVariables["retry"])
+    }
+
+    @Test
     fun `selected candidate is committed once and all unselected candidates are discarded`() = runBlocking {
         val commits = mutableListOf<TavernGreetingCandidateSnapshot>()
         val session = greetingSession(card = card) { candidate -> commits += candidate }
@@ -223,6 +265,10 @@ class TavernGreetingSessionTest {
         assertEquals(listOf(system.id, chosen.overlay.messages.single().id), merged.currentMessages.map { it.id })
         assertEquals(chosen.overlay.chatVariables, merged.statusVariables)
         assertEquals(1, (merged.currentMessages.last().parts.single() as UIMessagePart.Text).tavernOpeningRef()?.greetingIndex)
+        assertTrue(
+            (merged.currentMessages.last().parts.single() as UIMessagePart.Text).metadata
+                ?.containsKey("runtimeState") == true,
+        )
     }
 
     private fun greetingSession(

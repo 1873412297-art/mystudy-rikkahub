@@ -70,3 +70,30 @@ Generated APKs:
 - No Room schema/version change.
 - No plan checkbox or shared SDD ledger edits.
 - Instrumented/physical-device validation remains assigned to the later reliability task in the plan.
+
+## Second review hardening
+
+The first re-review found remaining stale-snapshot, selection-race, process-restoration, replay, permission, navigation,
+cleanup, and test-evidence gaps. The follow-up implementation:
+
+- records global-variable and world-book operations as mutation journals and rebases them onto state read at commit;
+- freezes the selected runtime at the commit boundary, reopens it on failure, and disables selection until its WebView is
+  ready;
+- persists macro/slash/send-hook runtime state inside typed opening message metadata, restores it during conversation
+  initialization and before sending with current permissions, and cleans conversation-owned runtime state on deletion;
+- renders committed replay with a no-script sandbox, restrictive offline CSP, nested active-element removal, and URL-bearing
+  attribute stripping;
+- consumes greeting navigation once and skips it for already locked conversations;
+- removes the obsolete unscoped send-hook path and expands tests for journal rebasing, freeze/retry, metadata round-trip,
+  cleanup, and static replay.
+
+Final verification after this wave:
+
+```text
+.\gradlew.bat :app:testDebugUnitTest --no-daemon
+BUILD SUCCESSFUL in 12s
+100 test classes / 732 tests / 0 failures / 0 errors
+
+.\gradlew.bat :app:compileDebugKotlin :app:assembleDebug --no-daemon
+BUILD SUCCESSFUL in 17s
+```

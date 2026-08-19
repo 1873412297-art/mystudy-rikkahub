@@ -84,6 +84,7 @@ import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.data.model.TavernCharacterCard
+import me.rerere.rikkahub.service.tavern.requiresNewConversationForGreetingChange
 import me.rerere.rikkahub.data.model.inferLegacyOpening
 import me.rerere.rikkahub.data.model.tavernOpeningRef
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
@@ -185,13 +186,20 @@ fun ChatPage(
     val inputState = vm.inputState
 
     // 初始化输入状态（处理传入的 files 和 text 参数）
+    var greetingRouteHandled by remember(conversation.id, greetingIndex, greeting) { mutableStateOf(false) }
     LaunchedEffect(greetingIndex, greeting, setting.assistants, conversation.assistantId) {
+        if (greetingRouteHandled) return@LaunchedEffect
+        if (requiresNewConversationForGreetingChange(conversation)) {
+            greetingRouteHandled = true
+            return@LaunchedEffect
+        }
         val assistant = setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
         val greetings = assistant.tavernCardJson
             ?.let(TavernCharacterCard::fromJson)
             ?.allGreetings()
             .orEmpty()
         resolveGreetingNavigation(greetingIndex, greeting, greetings)?.let { navigation ->
+            greetingRouteHandled = true
             if (navigation.greetingIndex != null) {
                 vm.selectInitialGreeting(navigation.greetingIndex)
             } else if (!navigation.legacyGreeting.isNullOrBlank()) {

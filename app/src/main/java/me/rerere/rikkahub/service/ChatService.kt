@@ -107,7 +107,7 @@ import me.rerere.rikkahub.data.model.toMessageNode
 import me.rerere.rikkahub.data.model.TavernCharacterCard
 import me.rerere.rikkahub.data.model.inferLegacyOpening
 import me.rerere.rikkahub.data.model.openingRef
-import me.rerere.rikkahub.data.model.markTavernOpeningRuntimeExecuted
+import me.rerere.rikkahub.data.model.tavernOpeningRuntimeState
 import me.rerere.rikkahub.data.model.tavernOpeningRef
 import me.rerere.rikkahub.data.model.withTavernOpening
 import me.rerere.rikkahub.data.repository.ConversationRepository
@@ -144,6 +144,7 @@ import me.rerere.rikkahub.service.tavern.TavernGreetingCommitTarget
 import me.rerere.rikkahub.service.tavern.TavernGreetingSession
 import me.rerere.rikkahub.service.tavern.mergeCommittedGreeting
 import me.rerere.rikkahub.service.tavern.requiresNewConversationForGreetingChange
+import me.rerere.rikkahub.service.tavern.rebaseGreetingGlobalVariables
 import me.rerere.rikkahub.service.tavern.withTavernGreetingAtomicCommit
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsBackedTavernWorldRepository
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernWorldSettingsGateway
@@ -172,7 +173,6 @@ private data class TavernGreetingCommitSnapshot(
 
 private fun Conversation.withLegacyOpeningMetadata(card: TavernCharacterCard): Conversation {
     var marked = false
-    val openingRuntimeAlreadyExecuted = currentMessages.any { it.role == MessageRole.USER }
     val nodes = messageNodes.map { node ->
         val current = node.currentMessage
         val existingRef = current.parts.filterIsInstance<UIMessagePart.Text>().singleOrNull()?.tavernOpeningRef()
@@ -186,9 +186,7 @@ private fun Conversation.withLegacyOpeningMetadata(card: TavernCharacterCard): C
                     if (message.id != current.id) message else message.copy(
                         parts = message.parts.map { part ->
                             if (part is UIMessagePart.Text) {
-                                part.withTavernOpening(ref).let { typed ->
-                                    if (openingRuntimeAlreadyExecuted) typed.markTavernOpeningRuntimeExecuted() else typed
-                                }
+                                part.withTavernOpening(ref)
                             } else {
                                 part
                             }
@@ -537,6 +535,7 @@ class ChatService(
             val annotatedConversation = card?.let { cleanedConversation.withLegacyOpeningMetadata(it) }
                 ?: cleanedConversation
             updateConversation(conversationId, annotatedConversation)
+            restoreCommittedOpeningRuntime(conversationId, annotatedConversation, settings)
             when {
                 withoutNudges != renderedConversation -> saveConversationAfterRemovingMessages(
                     conversationId = conversationId,
@@ -762,7 +761,12 @@ class ChatService(
         apply = { before ->
             val ownerId = conversationId.toString()
             val beforeSettings = before.settings
-            var stagedSettings = beforeSettings.copy(tavernGlobalVariables = candidate.overlay.globalVariables)
+            var stagedSettings = beforeSettings.copy(
+                tavernGlobalVariables = rebaseGreetingGlobalVariables(
+                    beforeSettings.tavernGlobalVariables,
+                    candidate.journal,
+                ),
+            )
             val stagingGateway = object : TavernWorldSettingsGateway {
                 override fun currentSettings() = stagedSettings
                 override fun updateSettings(
@@ -772,13 +776,8 @@ class ChatService(
                 }
             }
             val stagedWorld = SettingsBackedTavernWorldRepository(stagingGateway)
-            val desiredIds = candidate.overlay.worldEntries.mapNotNull { entry ->
-                (entry["id"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
-            }.toSet()
-            stagedWorld.listEntries().mapNotNull { entry ->
-                (entry["id"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
-            }.filterNot { it in desiredIds }.forEach(stagedWorld::deleteEntry)
-            candidate.overlay.worldEntries.forEach(stagedWorld::upsertEntry)
+            candidate.journal.worldDeletes.forEach(stagedWorld::deleteEntry)
+            candidate.journal.worldUpserts.values.forEach(stagedWorld::upsertEntry)
 
             val mergedConversation = mergeCommittedGreeting(before.conversation, candidate)
             check(
@@ -831,6 +830,7 @@ class ChatService(
         val settings = settingsStore.settingsFlow.first()
         val assistant = settings.getAssistantById(currentConversation.assistantId)
             ?: settings.getCurrentAssistant()
+        restoreCommittedOpeningRuntime(conversationId, currentConversation, settings)
         val processedContent = preprocessUserInputParts(content, assistant, conversationId)
         val userMessage = UIMessage(
             role = MessageRole.USER,
@@ -860,6 +860,7 @@ class ChatService(
                 val settings = settingsStore.settingsFlow.first()
                 val assistant = settings.getAssistantById(currentConversation.assistantId)
                     ?: settings.getCurrentAssistant()
+                restoreCommittedOpeningRuntime(conversationId, currentConversation, settings)
                 val processedContent = preprocessUserInputParts(content, assistant, conversationId)
                 // 酒馆脚本 sendHook（best-effort：无活跃 WebView 时跳过，超时默认原样）
                 val hookedContent = tavernSendHookStore.mutateOutgoing(
@@ -990,6 +991,34 @@ class ChatService(
             }
         }
         session.setJob(job)
+    }
+
+    private fun restoreCommittedOpeningRuntime(
+        conversationId: Uuid,
+        conversation: Conversation,
+        settings: Settings,
+    ) {
+        val state = conversation.currentMessages.asSequence()
+            .flatMap { it.parts.asSequence() }
+            .filterIsInstance<UIMessagePart.Text>()
+            .mapNotNull { it.tavernOpeningRuntimeState() }
+            .firstOrNull() ?: return
+        val ownerId = conversationId.toString()
+        check(tavernScriptRegistry.registerBatch(
+            macros = state.macros,
+            slashCommands = state.slashCommands.mapValues { (_, value) ->
+                SlashCommandRegistration(value.source, value.aliases, value.helpString)
+            },
+            ownerId = ownerId,
+        ))
+        val controller = state.sendHookSource?.let { source ->
+            TavernRuntimeController(
+                conversationId = conversationId,
+                permissionStore = TavernRuntimePermissionStore(settings.runtimePermissions),
+                scriptRegistry = tavernScriptRegistry,
+            ).also { check(it.installSendHook(source)) }
+        }
+        tavernSendHookStore.installCommitted(conversationId, controller)
     }
 
     private fun preprocessUserInputParts(

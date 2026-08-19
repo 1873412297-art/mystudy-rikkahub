@@ -208,20 +208,23 @@ class TavernConversationBridgeTest {
     @Test
     fun `fullscreen viewer does not replace or clear conversation send hook owner`() {
         val store = TavernSendHookStore()
-        val conversationController = TavernRuntimeController()
+        val conversationId = kotlin.uuid.Uuid.random()
+        val conversationController = TavernRuntimeController(conversationId = conversationId)
         val viewerController = TavernRuntimeController()
-        val conversationBinding = TavernSendHookControllerBinding(store, conversationController, enabled = true)
+        val conversationBinding = TavernSendHookControllerBinding(
+            store, conversationController, enabled = true, conversationId = conversationId,
+        )
         val viewerBinding = TavernSendHookControllerBinding(store, viewerController, enabled = false)
 
         conversationBinding.attach()
         viewerBinding.attach()
-        assertTrue(store.activeController === conversationController)
+        assertTrue(store.controllerFor(conversationId) === conversationController)
 
         viewerBinding.detach()
-        assertTrue(store.activeController === conversationController)
+        assertTrue(store.controllerFor(conversationId) === conversationController)
 
         conversationBinding.detach()
-        assertEquals(null, store.activeController)
+        assertEquals(null, store.controllerFor(conversationId))
     }
 
     @Test

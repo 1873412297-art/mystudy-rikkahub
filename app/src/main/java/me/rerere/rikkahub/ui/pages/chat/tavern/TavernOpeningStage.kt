@@ -17,6 +17,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -48,6 +49,7 @@ internal fun TavernOpeningStage(
     val candidates = session.candidates
     if (candidates.isEmpty()) return
     var selectedIndex by rememberSaveable(session.conversationId) { mutableIntStateOf(0) }
+    val readyCandidates = remember(session) { mutableStateMapOf<Uuid, Boolean>() }
     selectedIndex = selectedIndex.coerceIn(candidates.indices)
     LaunchedEffect(session, selectedIndex) {
         if (!session.isLocked) session.selectCandidate(candidates[selectedIndex].id)
@@ -78,6 +80,9 @@ internal fun TavernOpeningStage(
                 actions = inertActions,
                 ownsSendHookController = false,
                 candidateRuntime = candidate.runtime,
+                onRenderStatus = { status ->
+                    readyCandidates[candidate.id] = status == TavernConversationRenderStatus.READY
+                },
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer { alpha = if (index == selectedIndex) 1f else 0f }
@@ -130,7 +135,10 @@ internal fun TavernOpeningStage(
                     },
                     enabled = candidates.size > 1,
                 ) { Text("上一个") }
-                Button(onClick = { onCommit(candidates[selectedIndex].id) }) { Text("使用这个开场") }
+                Button(
+                    onClick = { onCommit(candidates[selectedIndex].id) },
+                    enabled = readyCandidates[candidates[selectedIndex].id] == true,
+                ) { Text("使用这个开场") }
                 TextButton(
                     onClick = {
                         selectedIndex = (selectedIndex + 1) % candidates.size

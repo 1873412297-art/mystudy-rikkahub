@@ -92,6 +92,23 @@ class TavernOpeningMetadataTest {
     }
 
     @Test
+    fun `opening runtime registrations persist in message metadata`() {
+        val text = UIMessagePart.Text("Opening").withTavernOpening(
+            TavernOpeningRef(0, "content", "card"),
+        )
+        val state = TavernOpeningRuntimeState(
+            macros = mapOf("route" to "() => 'left'"),
+            slashCommands = mapOf("choose" to TavernOpeningSlashRegistration("() => 'ok'", listOf("c"), "help")),
+            sendHookSource = "() => 'hooked'",
+        )
+
+        val persisted = text.withTavernOpeningRuntimeState(state).markTavernOpeningRuntimeExecuted()
+
+        assertEquals(state, persisted.tavernOpeningRuntimeState())
+        assertTrue(persisted.isTavernOpeningRuntimeExecuted())
+    }
+
+    @Test
     fun `malformed opening metadata is ignored`() {
         val malformed = listOf(
             buildJsonObject { put("kind", "tavern_opening") },

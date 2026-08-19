@@ -15,6 +15,8 @@ import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.db.fts.MessageFtsManager
 import me.rerere.rikkahub.data.db.fts.MessageSearchSort
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
+import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernSendHookStore
 import me.rerere.rikkahub.data.db.dao.ConversationDAO
 import me.rerere.rikkahub.data.db.dao.FavoriteDAO
 import me.rerere.rikkahub.data.db.dao.MessageNodeDAO
@@ -37,6 +39,8 @@ class ConversationRepository(
     private val filesManager: FilesManager,
     private val messageFtsManager: MessageFtsManager,
     private val statusVariableStore: StatusVariableStore,
+    private val tavernScriptRegistry: TavernScriptRegistry,
+    private val tavernSendHookStore: TavernSendHookStore,
 ) {
     companion object {
         private const val PAGE_SIZE = 20
@@ -326,6 +330,8 @@ class ConversationRepository(
         filesManager.deleteChatFiles(fullConversation.files)
         // 清理该会话在内存中的状态变量（避免 per-conversation 存储长期累积）
         statusVariableStore.remove(conversation.id)
+        tavernScriptRegistry.removeOwner(conversation.id.toString())
+        tavernSendHookStore.remove(conversation.id)
     }
 
     suspend fun searchMessages(

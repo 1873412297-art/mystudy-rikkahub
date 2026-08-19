@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.model
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
@@ -14,6 +15,18 @@ data class TavernOpeningRef(
     val greetingIndex: Int,
     val contentFingerprint: String,
     val cardFingerprint: String,
+)
+
+data class TavernOpeningSlashRegistration(
+    val source: String,
+    val aliases: List<String> = emptyList(),
+    val helpString: String = "",
+)
+
+data class TavernOpeningRuntimeState(
+    val macros: Map<String, String> = emptyMap(),
+    val slashCommands: Map<String, TavernOpeningSlashRegistration> = emptyMap(),
+    val sendHookSource: String? = null,
 )
 
 fun UIMessagePart.Text.withTavernOpening(ref: TavernOpeningRef): UIMessagePart.Text {
@@ -50,6 +63,42 @@ fun UIMessagePart.Text.markTavernOpeningRuntimeExecuted(): UIMessagePart.Text {
             put(OPENING_RUNTIME_EXECUTED_KEY, true)
         },
     )
+}
+
+fun UIMessagePart.Text.withTavernOpeningRuntimeState(state: TavernOpeningRuntimeState): UIMessagePart.Text = copy(
+    metadata = buildJsonObject {
+        metadata.orEmpty().forEach { (key, value) -> put(key, value) }
+        put(OPENING_RUNTIME_STATE_KEY, buildJsonObject {
+            put("macros", buildJsonObject { state.macros.forEach { (name, source) -> put(name, source) } })
+            put("slashCommands", buildJsonObject {
+                state.slashCommands.forEach { (name, registration) ->
+                    put(name, buildJsonObject {
+                        put("source", registration.source)
+                        put("aliases", JsonArray(registration.aliases.map(::JsonPrimitive)))
+                        put("helpString", registration.helpString)
+                    })
+                }
+            })
+            state.sendHookSource?.let { put("sendHookSource", it) }
+        })
+    },
+)
+
+fun UIMessagePart.Text.tavernOpeningRuntimeState(): TavernOpeningRuntimeState? {
+    val state = metadata?.get(OPENING_RUNTIME_STATE_KEY) as? JsonObject ?: return null
+    val macros = (state["macros"] as? JsonObject).orEmpty().mapNotNull { (name, value) ->
+        (value as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { name to it }
+    }.toMap()
+    val slash = (state["slashCommands"] as? JsonObject).orEmpty().mapNotNull { (name, value) ->
+        val entry = value as? JsonObject ?: return@mapNotNull null
+        val source = entry.stringAt("source") ?: return@mapNotNull null
+        val aliases = (entry["aliases"] as? JsonArray).orEmpty().mapNotNull {
+            (it as? JsonPrimitive)?.takeIf { primitive -> primitive.isString }?.content
+        }
+        name to TavernOpeningSlashRegistration(source, aliases, entry.stringAt("helpString").orEmpty())
+    }.toMap()
+    val sendHook = state.stringAt("sendHookSource")
+    return TavernOpeningRuntimeState(macros, slash, sendHook)
 }
 
 fun UIMessagePart.Text.isTavernOpeningRuntimeExecuted(): Boolean =
@@ -111,3 +160,4 @@ private const val OPENING_INDEX_KEY = "greetingIndex"
 private const val OPENING_CONTENT_FINGERPRINT_KEY = "contentFingerprint"
 private const val OPENING_CARD_FINGERPRINT_KEY = "cardFingerprint"
 private const val OPENING_RUNTIME_EXECUTED_KEY = "runtimeExecuted"
+private const val OPENING_RUNTIME_STATE_KEY = "runtimeState"

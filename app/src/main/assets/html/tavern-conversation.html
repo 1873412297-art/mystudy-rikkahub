@@ -257,12 +257,17 @@
 
       function suppressRepeatedRuntime(rawHtml) {
         var parsed = new DOMParser().parseFromString(rawHtml, 'text/html');
-        parsed.querySelectorAll('script').forEach(function (node) { node.remove(); });
+        var policy = parsed.createElement('meta');
+        policy.setAttribute('http-equiv', 'Content-Security-Policy');
+        policy.setAttribute('content', "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; frame-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'");
+        parsed.head.prepend(policy);
+        parsed.querySelectorAll('script,iframe,frame,frameset,object,embed,form,base,meta[http-equiv="refresh"],link').forEach(function (node) { node.remove(); });
         parsed.querySelectorAll('*').forEach(function (node) {
           Array.from(node.attributes || []).forEach(function (attribute) {
             var name = String(attribute.name || '').toLowerCase();
             var value = String(attribute.value || '').trim().toLowerCase();
-            if (name.indexOf('on') === 0 || value.indexOf('javascript:') === 0) {
+            if (name.indexOf('on') === 0 || value.indexOf('javascript:') === 0 ||
+                ['src', 'srcset', 'poster', 'data', 'action', 'formaction'].indexOf(name) >= 0) {
               node.removeAttribute(attribute.name);
             }
           });
@@ -279,9 +284,13 @@
         section.dataset.messageId = message.id;
         iframe.dataset.messageId = message.id;
         iframe.dataset.fullscreenTarget = target;
-        iframe.srcdoc = part.executeScripts === false
-          ? suppressRepeatedRuntime(part.text)
-          : injectIframeRuntime(part.text, message.id, target);
+        if (part.executeScripts === false) {
+          iframe.setAttribute('sandbox', '');
+          iframe.style.height = '75vh';
+          iframe.srcdoc = suppressRepeatedRuntime(part.text);
+        } else {
+          iframe.srcdoc = injectIframeRuntime(part.text, message.id, target);
+        }
         iframe.addEventListener('load', function () {
           try { window.TavernConversationBridge.ready(actionToken); } catch (_) {}
         });

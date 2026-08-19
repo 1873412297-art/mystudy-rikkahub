@@ -176,15 +176,13 @@ internal fun MarkdownWebView(
     DisposableEffect(runtimeController) {
         onDispose {
             runtimeController.cancelHostEventCollection()
-            if (tavernSendHookStore.activeController === runtimeController) {
-                tavernSendHookStore.activeController = null
-            }
+            tavernConversationId?.let { tavernSendHookStore.detach(it, runtimeController) }
         }
     }
     // 发送前钩子桥登记：最近组合的消息 WebView 的 controller 成为发送管线问询对象
     // （多 WebView 并发时最后组合者生效，best-effort 语义）
     SideEffect {
-        tavernSendHookStore.activeController = runtimeController
+        tavernConversationId?.let { tavernSendHookStore.attach(it, runtimeController) }
     }
     // 宿主注入当前消息（messages.getCurrent 的数据源）与上下文快照（getContext 数据源）。
     // setContext 内部按内容哈希去重，LaunchedEffect 每次 key 变化调用即可。

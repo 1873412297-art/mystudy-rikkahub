@@ -6,6 +6,7 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.isTavernOpeningRuntimeExecuted
+import me.rerere.rikkahub.data.model.tavernOpeningRuntimeState
 
 @Serializable
 data class TavernConversationSnapshot(
@@ -119,7 +120,7 @@ fun buildTavernConversationSnapshot(
                     TavernConversationTextPart(
                         text = part.text,
                         renderMode = part.renderMode,
-                        executeScripts = !part.isTavernOpeningRuntimeExecuted(),
+                    executeScripts = !part.isTavernOpeningRuntimeExecuted() || part.tavernOpeningRuntimeState() == null,
                     )
                 },
             ),

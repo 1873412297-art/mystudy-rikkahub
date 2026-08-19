@@ -16,9 +16,12 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.TavernCharacterCard
 import me.rerere.rikkahub.data.model.TavernOpeningRef
+import me.rerere.rikkahub.data.model.TavernOpeningRuntimeState
+import me.rerere.rikkahub.data.model.TavernOpeningSlashRegistration
 import me.rerere.rikkahub.data.model.openingMessage
 import me.rerere.rikkahub.data.model.openingRef
 import me.rerere.rikkahub.data.model.markTavernOpeningRuntimeExecuted
+import me.rerere.rikkahub.data.model.withTavernOpeningRuntimeState
 import me.rerere.rikkahub.data.model.tavernOpeningRef
 import me.rerere.rikkahub.data.model.toMessageNode
 import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
@@ -51,6 +54,21 @@ data class TavernGreetingOverlay(
     val registrations: TavernGreetingRegistrations,
 )
 
+data class TavernGreetingMutationJournal(
+    val globalVariables: Map<String, JsonElement?> = emptyMap(),
+    val worldUpserts: Map<String, JsonObject> = emptyMap(),
+    val worldDeletes: Set<String> = emptySet(),
+)
+
+internal fun rebaseGreetingGlobalVariables(
+    current: JsonObject,
+    journal: TavernGreetingMutationJournal,
+): JsonObject = JsonObject(current.toMutableMap().apply {
+    journal.globalVariables.forEach { (key, value) ->
+        if (value == null) remove(key) else put(key, value)
+    }
+})
+
 /** Candidate-local journal. Every mutating operation stays here until the candidate is selected. */
 class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetingOverlay) :
     TavernRuntimeVariableGateway,
@@ -64,17 +82,25 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
     private val macros = initial.registrations.macros.toMutableMap()
     private val slashCommands = initial.registrations.slashCommands.toMutableMap()
     private var sendHookSource = initial.registrations.sendHookSource
+    private val globalVariableMutations = linkedMapOf<String, JsonElement?>()
+    private val worldUpserts = linkedMapOf<String, JsonObject>()
+    private val worldDeletes = linkedSetOf<String>()
+    private var frozen = false
     private val candidateScriptRegistry = TavernScriptRegistry()
     private val _overlayFlow = MutableStateFlow(initial)
     val overlayFlow: StateFlow<TavernGreetingOverlay> = _overlayFlow.asStateFlow()
 
     fun setVariable(scope: TavernGreetingVariableScope, key: String, value: JsonElement) = synchronized(lock) {
+        if (frozen) return@synchronized
         variables(scope)[key] = value
+        if (scope == TavernGreetingVariableScope.GLOBAL) globalVariableMutations[key] = value
         publishLocked()
     }
 
     fun deleteVariable(scope: TavernGreetingVariableScope, key: String): Boolean = synchronized(lock) {
+        if (frozen) return@synchronized false
         val removed = variables(scope).remove(key) != null
+        if (scope == TavernGreetingVariableScope.GLOBAL) globalVariableMutations[key] = null
         publishLocked()
         removed
     }
@@ -84,33 +110,43 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
     }
 
     fun upsertWorldEntry(entry: JsonObject): String = synchronized(lock) {
+        if (frozen) return@synchronized ""
         val id = entry["id"]?.let { (it as? JsonPrimitive)?.content }?.takeIf { it.isNotBlank() }
             ?: Uuid.random().toString()
-        worldEntries[id] = buildJsonObject {
+        val normalized = buildJsonObject {
             entry.forEach { (key, value) -> put(key, value) }
             put("id", id)
         }
+        worldEntries[id] = normalized
+        worldUpserts[id] = normalized
+        worldDeletes.remove(id)
         publishLocked()
         id
     }
 
     fun deleteWorldEntry(id: String): Boolean = synchronized(lock) {
+        if (frozen) return@synchronized false
         val removed = worldEntries.remove(id) != null
+        worldUpserts.remove(id)
+        worldDeletes += id
         publishLocked()
         removed
     }
 
     fun updateOpening(message: UIMessage) = synchronized(lock) {
+        if (frozen) return@synchronized
         messages = listOf(message)
         publishLocked()
     }
 
     fun registerMacro(name: String, source: String) = synchronized(lock) {
+        if (frozen) return@synchronized
         macros[name] = source
         publishLocked()
     }
 
     fun removeMacro(name: String) = synchronized(lock) {
+        if (frozen) return@synchronized
         macros.remove(name)
         publishLocked()
     }
@@ -121,21 +157,35 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
         aliases: List<String> = emptyList(),
         helpString: String = "",
     ) = synchronized(lock) {
+        if (frozen) return@synchronized
         slashCommands[name] = TavernGreetingSlashRegistration(source, aliases, helpString)
         publishLocked()
     }
 
     fun removeSlashCommand(name: String) = synchronized(lock) {
+        if (frozen) return@synchronized
         slashCommands.remove(name)
         publishLocked()
     }
 
     fun registerSendHook(source: String) = synchronized(lock) {
+        if (frozen) return@synchronized
         sendHookSource = source
         publishLocked()
     }
 
     fun snapshot(): TavernGreetingOverlay = _overlayFlow.value
+
+    fun freezeAndSnapshot(): Pair<TavernGreetingOverlay, TavernGreetingMutationJournal> = synchronized(lock) {
+        frozen = true
+        snapshotLocked() to TavernGreetingMutationJournal(
+            globalVariables = globalVariableMutations.toMap(),
+            worldUpserts = worldUpserts.toMap(),
+            worldDeletes = worldDeletes.toSet(),
+        )
+    }
+
+    fun unfreeze() = synchronized(lock) { frozen = false }
 
     private fun snapshotLocked(): TavernGreetingOverlay = TavernGreetingOverlay(
         messages = messages.toList(),
@@ -197,6 +247,7 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
     override fun onSendHookRegistered(source: String) = registerSendHook(source)
 
     private fun writeCurrentMessage(patch: JsonElement) = synchronized(lock) {
+        if (frozen) return@synchronized
         val replacementText = when (patch) {
             is JsonPrimitive -> patch.content
             is JsonObject -> (patch["text"] as? JsonPrimitive)?.content
@@ -249,13 +300,10 @@ data class TavernGreetingCandidate(
 ) {
     fun overlay(): TavernGreetingOverlay = runtime.snapshot()
 
-    fun snapshot(): TavernGreetingCandidateSnapshot = TavernGreetingCandidateSnapshot(
-        id = id,
-        greetingIndex = greetingIndex,
-        openingRef = openingRef,
-        renderedOpening = renderedOpening,
-        overlay = overlay(),
-    )
+    fun snapshot(): TavernGreetingCandidateSnapshot {
+        val (overlay, journal) = runtime.freezeAndSnapshot()
+        return TavernGreetingCandidateSnapshot(id, greetingIndex, openingRef, renderedOpening, overlay, journal)
+    }
 }
 
 data class TavernGreetingCandidateSnapshot(
@@ -264,6 +312,7 @@ data class TavernGreetingCandidateSnapshot(
     val openingRef: TavernOpeningRef,
     val renderedOpening: String,
     val overlay: TavernGreetingOverlay,
+    val journal: TavernGreetingMutationJournal = TavernGreetingMutationJournal(),
 )
 
 fun interface TavernGreetingCommitTarget {
@@ -306,7 +355,12 @@ class TavernGreetingSession private constructor(
         val candidate = activeCandidates.firstOrNull { it.id == candidateId }
             ?: throw IllegalStateException("Greeting candidate is no longer active")
         val snapshot = candidate.snapshot()
-        commitTarget.commit(snapshot)
+        try {
+            commitTarget.commit(snapshot)
+        } catch (error: Throwable) {
+            candidate.runtime.unfreeze()
+            throw error
+        }
         committedCandidateId = candidate.id
         selectedCandidateId = null
         activeCandidates = emptyList()
@@ -376,7 +430,15 @@ internal fun mergeCommittedGreeting(
             message.copy(
                 parts = message.parts.map { part ->
                     if (part is me.rerere.ai.ui.UIMessagePart.Text && part.tavernOpeningRef() != null) {
-                        part.markTavernOpeningRuntimeExecuted()
+                        part.withTavernOpeningRuntimeState(
+                            TavernOpeningRuntimeState(
+                                macros = candidate.overlay.registrations.macros,
+                                slashCommands = candidate.overlay.registrations.slashCommands.mapValues { (_, value) ->
+                                    TavernOpeningSlashRegistration(value.source, value.aliases, value.helpString)
+                                },
+                                sendHookSource = candidate.overlay.registrations.sendHookSource,
+                            ),
+                        ).markTavernOpeningRuntimeExecuted()
                     } else {
                         part
                     }

@@ -96,6 +96,7 @@ internal fun TavernConversationPane(
     visibleMessageId: Uuid? = null,
     ownsSendHookController: Boolean = true,
     candidateRuntime: TavernGreetingCandidateRuntime? = null,
+    onRenderStatus: (TavernConversationRenderStatus) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val statusVariableStore: StatusVariableStore = koinInject()
@@ -180,6 +181,7 @@ internal fun TavernConversationPane(
         actions = actions,
         ownsSendHookController = ownsSendHookController,
         runtimeBindings = candidateRuntime?.runtimeBindings(),
+        onRenderStatus = onRenderStatus,
         modifier = modifier,
     )
 }
@@ -194,6 +196,7 @@ internal fun TavernConversationWebView(
     actions: TavernConversationActions,
     ownsSendHookController: Boolean = true,
     runtimeBindings: TavernGreetingRuntimeBindings? = null,
+    onRenderStatus: (TavernConversationRenderStatus) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -274,6 +277,7 @@ internal fun TavernConversationWebView(
             delay(INITIAL_RENDER_TIMEOUT_MS)
             if (renderState.generation == generation && renderState.status == TavernConversationRenderStatus.LOADING) {
                 renderState = renderState.onFailure(generation, "酒馆消息区加载超时，已保留原始文本")
+                onRenderStatus(TavernConversationRenderStatus.FAILED)
             }
         }
     }
@@ -321,6 +325,7 @@ internal fun TavernConversationWebView(
                                     if (patches.isNotEmpty()) webView.postConversationPatches(patches)
                                     renderedSnapshot = latestSnapshot
                                     renderState = renderState.onReady(generation)
+                                    onRenderStatus(TavernConversationRenderStatus.READY)
                                 },
                                 dispatch = { callback -> webView.post(callback) },
                             )
@@ -342,6 +347,7 @@ internal fun TavernConversationWebView(
                                 networkAllowed = networkAllowed,
                                 onFailure = { reason ->
                                     renderState = renderState.onFailure(generation, reason)
+                                    onRenderStatus(TavernConversationRenderStatus.FAILED)
                                 },
                                 onOpenExternal = { openExternalLink(ctx, it.toString()) },
                             )

@@ -266,6 +266,14 @@ class TavernScriptRegistry : MacroExpander {
         )
     }
 
+    fun removeOwner(ownerId: String) = synchronized(registrationLock) {
+        macros.keys.filter { it.ownerId == ownerId }.forEach { macros.remove(it); loadedMacros.remove(it) }
+        slashCommands.keys.filter { it.ownerId == ownerId }.forEach {
+            slashCommands.remove(it)
+            loadedSlashCommands.remove(it)
+        }
+    }
+
     /**
      * 同步展开注册宏：`{{name::args}}` 形态。
      * 无注册宏/无可用引擎/执行失败时保留原文。

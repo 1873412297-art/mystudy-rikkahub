@@ -13,7 +13,7 @@ class TavernSendHookStoreTest {
     fun `mutateOutgoing returns parts unchanged when no controller is active`() = runBlocking {
         val store = TavernSendHookStore()
         val parts = listOf<UIMessagePart>(UIMessagePart.Text(text = "hello"))
-        assertEquals(parts, store.mutateOutgoing(parts))
+        assertEquals(parts, store.mutateOutgoing(kotlin.uuid.Uuid.random(), parts))
     }
 
     @Test
@@ -24,16 +24,17 @@ class TavernSendHookStoreTest {
                 TavernRuntimePermissions().copy(allowScripts = true, allowMacroRegister = true)
             ),
         )
-        store.activeController = controller
+        val conversationId = kotlin.uuid.Uuid.random()
+        store.attach(conversationId, controller)
         try {
             val parts = listOf<UIMessagePart>(
                 UIMessagePart.Text(text = "hello"),
                 UIMessagePart.Image(url = "https://example.com/x.png"),
             )
             // 无 sendHook 注册 → controller 兜底原样；非文本 part 不动
-            assertEquals(parts, store.mutateOutgoing(parts))
+            assertEquals(parts, store.mutateOutgoing(conversationId, parts))
         } finally {
-            store.activeController = null
+            store.detach(conversationId, controller)
         }
     }
 
@@ -68,5 +69,18 @@ class TavernSendHookStoreTest {
         store.attach(conversationId, activeWithoutHook)
 
         assertSame(committed, store.controllerFor(conversationId))
+    }
+
+    @Test
+    fun `conversation cleanup removes active and committed controllers`() {
+        val store = TavernSendHookStore()
+        val id = kotlin.uuid.Uuid.random()
+        val controller = TavernRuntimeController(conversationId = id)
+        store.attach(id, controller)
+        store.installCommitted(id, controller)
+
+        store.remove(id)
+
+        assertEquals(null, store.controllerFor(id))
     }
 }

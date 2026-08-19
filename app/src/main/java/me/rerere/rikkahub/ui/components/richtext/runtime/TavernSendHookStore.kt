@@ -19,14 +19,6 @@ class TavernSendHookStore {
     private val activeControllers = ConcurrentHashMap<Uuid, TavernRuntimeController>()
     private val committedControllers = ConcurrentHashMap<Uuid, TavernRuntimeController>()
 
-    /**
-     * 最近组合的消息 WebView controller。
-     * MarkdownWebView 组合时写入（多 WebView 并发时最后组合者生效），
-     * 离开组合/被重建时按身份清空（`===` 判定避免清掉更新的 controller）。
-     */
-    @Volatile
-    internal var activeController: TavernRuntimeController? = null
-
     internal fun attach(conversationId: Uuid, controller: TavernRuntimeController) {
         activeControllers[conversationId] = controller
     }
@@ -42,6 +34,11 @@ class TavernSendHookStore {
     internal fun committedController(conversationId: Uuid): TavernRuntimeController? =
         committedControllers[conversationId]
 
+    internal fun remove(conversationId: Uuid) {
+        activeControllers.remove(conversationId)
+        committedControllers.remove(conversationId)
+    }
+
     internal fun controllerFor(conversationId: Uuid): TavernRuntimeController? {
         val active = activeControllers[conversationId]
         return active?.takeIf { it.hasSendHook() } ?: committedControllers[conversationId] ?: active
@@ -52,10 +49,6 @@ class TavernSendHookStore {
         parts: List<UIMessagePart>,
         timeoutMs: Long = 500,
     ): List<UIMessagePart> = mutateWithController(controllerFor(conversationId), parts, timeoutMs)
-
-    suspend fun mutateOutgoing(parts: List<UIMessagePart>, timeoutMs: Long = 500): List<UIMessagePart> {
-        return mutateWithController(activeController, parts, timeoutMs)
-    }
 
     private suspend fun mutateWithController(
         controller: TavernRuntimeController?,

@@ -11,6 +11,7 @@ import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.TavernOpeningRef
 import me.rerere.rikkahub.data.model.markTavernOpeningRuntimeExecuted
 import me.rerere.rikkahub.data.model.withTavernOpening
+import me.rerere.rikkahub.data.model.withTavernOpeningRuntimeState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -89,6 +90,7 @@ class TavernConversationSnapshotTest {
             text = "<script>window.sideEffect()</script><p>hello</p>",
             renderMode = UIMessagePart.RenderMode.HTML,
         ).withTavernOpening(TavernOpeningRef(0, "content", "card"))
+            .withTavernOpeningRuntimeState(me.rerere.rikkahub.data.model.TavernOpeningRuntimeState())
             .markTavernOpeningRuntimeExecuted()
         val opening = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(openingPart))
 

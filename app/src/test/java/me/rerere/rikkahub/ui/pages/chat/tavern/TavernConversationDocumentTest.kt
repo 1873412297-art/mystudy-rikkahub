@@ -34,8 +34,8 @@ class TavernConversationDocumentTest {
         assertTrue(template.contains("data-render-mode=\"html\""))
         assertTrue(template.contains("data-html-frame"))
         assertTrue(template.contains("data-fullscreen-target"))
-        assertTrue(template.contains("? suppressRepeatedRuntime(part.text)"))
-        assertTrue(template.contains(": injectIframeRuntime(part.text"))
+        assertTrue(template.contains("iframe.srcdoc = suppressRepeatedRuntime(part.text)"))
+        assertTrue(template.contains("iframe.srcdoc = injectIframeRuntime(part.text"))
         assertTrue(template.contains("window.__RIKKAHUB_RUNTIME_SOURCE__"))
         assertTrue(template.contains("__rikkahubFrameHeight"))
         assertTrue(template.contains("sandbox"))
@@ -46,7 +46,7 @@ class TavernConversationDocumentTest {
         val suppression = template.substringAfter("function suppressRepeatedRuntime")
             .substringBefore("function renderHtmlPart")
 
-        assertTrue(suppression.contains("querySelectorAll('script')"))
+        assertTrue(suppression.contains("querySelectorAll('script,iframe"))
         assertTrue(suppression.contains("name.indexOf('on') === 0"))
         assertTrue(suppression.contains("javascript:"))
     }
@@ -240,6 +240,15 @@ class TavernConversationDocumentTest {
         assertTrue("katex.min.js" in names)
         assertTrue("mermaid.min.js" in names)
         assertTrue("katex.min.css" in names)
+    }
+
+    @Test
+    fun `committed opener replay is static and network inert`() {
+        assertTrue(template.contains("iframe.setAttribute('sandbox', '')"))
+        assertTrue(template.contains("connect-src 'none'"))
+        assertTrue(template.contains("frame-src 'none'"))
+        assertTrue(template.contains("script,iframe,frame,frameset,object,embed,form"))
+        assertTrue(template.contains("['src', 'srcset', 'poster', 'data', 'action', 'formaction']"))
     }
 
     private fun assertNoExternalCdn(value: String) {
