@@ -307,6 +307,12 @@ class ChatVM(
         }
     }
 
+    fun selectMessageBranch(nodeId: Uuid, index: Int) {
+        viewModelScope.launch {
+            chatService.selectMessageNode(_conversationId, nodeId, index)
+        }
+    }
+
     fun showDeleteBlockedWhileGeneratingError() {
         chatService.addError(
             error = IllegalStateException("请先停止生成再删除消息"),

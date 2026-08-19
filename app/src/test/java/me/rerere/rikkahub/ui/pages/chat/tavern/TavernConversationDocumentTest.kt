@@ -34,7 +34,10 @@ class TavernConversationDocumentTest {
         assertTrue(template.contains("data-render-mode=\"html\""))
         assertTrue(template.contains("data-html-frame"))
         assertTrue(template.contains("data-fullscreen-target"))
-        assertTrue(template.contains("iframe.srcdoc = part.text"))
+        assertTrue(template.contains("iframe.srcdoc = injectIframeRuntime(part.text"))
+        assertTrue(template.contains("window.__RIKKAHUB_RUNTIME_SOURCE__"))
+        assertTrue(template.contains("window.TavernConversationBridge.ready()"))
+        assertTrue(template.contains("__rikkahubFrameHeight"))
         assertTrue(template.contains("sandbox"))
     }
 
@@ -84,6 +87,15 @@ class TavernConversationDocumentTest {
         assertTrue(template.contains("var appliedThemeVariables = []"))
         assertTrue(template.contains("document.documentElement.style.removeProperty(name)"))
         assertTrue(template.contains("appliedThemeVariables = nextThemeVariables"))
+    }
+
+    @Test
+    fun `conversation document reports ready and delegates native actions`() {
+        assertTrue(template.contains("TavernConversationBridge.ready()"))
+        assertTrue(template.contains("TavernConversationBridge.longPress"))
+        assertTrue(template.contains("TavernConversationBridge.selectBranch"))
+        assertTrue(template.contains("TavernConversationBridge.openHtml"))
+        assertTrue(template.contains("TavernConversationBridge.openLink"))
     }
 
     @Test

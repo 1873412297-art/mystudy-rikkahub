@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'unsafe-eval'; img-src data: blob: https:; font-src data:; frame-src data: blob:; child-src data: blob:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'unsafe-eval'; connect-src http: https:; img-src data: blob: http: https:; media-src data: blob: http: https:; font-src data:; frame-src data: blob:; child-src data: blob:;">
   {{VENDOR_STYLES}}
   {{VENDOR_LIBS}}
   <style>
@@ -36,7 +36,10 @@
     .html-part { position: relative; min-height: 120px; max-height: 100vh; overflow: hidden; border-radius: 8px; }
     .html-part iframe { display: block; width: 100%; min-height: 120px; max-height: 100vh; border: 0; background: transparent; }
     .html-fullscreen { position: absolute; top: 6px; right: 6px; z-index: 2; }
-    .message-actions, .branch-actions { display: none; }
+    .message-actions { display: none; }
+    .branch-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+    .branch-actions:empty { display: none; }
+    .branch-actions button { border: 0; border-radius: 999px; padding: 3px 9px; color: var(--rikkahub-text-secondary); background: transparent; }
   </style>
 </head>
 <body>
@@ -157,6 +160,25 @@
         return fallback;
       }
 
+      function injectIframeRuntime(rawHtml, messageId, frameTarget) {
+        var runtime = window.__RIKKAHUB_RUNTIME_SOURCE__ || '';
+        if (!runtime) return rawHtml;
+        var helper = runtime + "\n" +
+          "window.addEventListener('message',function(e){var d=e.data||{};" +
+          "if(d.__rikkahubEvent){document.dispatchEvent(new CustomEvent(d.__rikkahubEvent,{detail:d.detail,bubbles:true}));}});" +
+          "document.addEventListener('contextmenu',function(e){e.preventDefault();" +
+          "try{window.TavernConversationBridge.longPress(" + JSON.stringify(messageId) + ");}catch(_){}});" +
+          "document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;" +
+          "if(a){e.preventDefault();try{window.TavernConversationBridge.openLink(a.href||a.getAttribute('href')||'');}catch(_){}}},true);" +
+          "try{window.open=function(u){try{window.TavernConversationBridge.openLink(String(u||''));}catch(_){}return null;};}catch(_){}" +
+          "function __rhSize(){try{var h=Math.max(document.documentElement.scrollHeight,document.body?document.body.scrollHeight:0);" +
+          "parent.postMessage({__rikkahubFrameHeight:h,frameTarget:" + JSON.stringify(frameTarget) + "},'*');}catch(_){}}" +
+          "if(typeof ResizeObserver!=='undefined'){try{new ResizeObserver(__rhSize).observe(document.documentElement);}catch(_){}}" +
+          "addEventListener('load',__rhSize);setTimeout(__rhSize,50);setTimeout(__rhSize,400);" +
+          "try{window.TavernConversationBridge.ready();}catch(_){};";
+        return rawHtml + '<script>' + helper.replace(/<\/script/gi, '<\\/script') + '<\/script>';
+      }
+
       function renderHtmlPart(part, node, message, partIndex) {
         var fragment = rawHtmlTemplate.content.cloneNode(true);
         var section = fragment.querySelector('[data-render-mode="html"]');
@@ -165,7 +187,11 @@
         var target = message.id + ':' + partIndex;
         section.dataset.messageId = message.id;
         iframe.dataset.messageId = message.id;
-        iframe.srcdoc = part.text;
+        iframe.dataset.fullscreenTarget = target;
+        iframe.srcdoc = injectIframeRuntime(part.text, message.id, target);
+        iframe.addEventListener('load', function () {
+          try { window.TavernConversationBridge.ready(); } catch (_) {}
+        });
         fullscreen.dataset.nodeId = node.id;
         fullscreen.dataset.messageId = message.id;
         fullscreen.dataset.fullscreenTarget = target;
@@ -218,6 +244,8 @@
           button.setAttribute('data-node-id', node.id);
           button.setAttribute('data-message-id', message.id);
           button.setAttribute('data-branch-index', String(branchIndex));
+          button.textContent = String(branchIndex + 1);
+          if (branchIndex === node.selectedIndex) button.setAttribute('aria-current', 'true');
           branches.appendChild(button);
         }
         block.appendChild(branches);
@@ -296,9 +324,53 @@
         snapshot: function () { return state; }
       };
 
+      function nativeBridge() {
+        return window.TavernConversationBridge || null;
+      }
+
+      root.addEventListener('click', function (event) {
+        var action = event.target.closest('[data-message-action]');
+        var bridge = nativeBridge();
+        if (action && bridge) {
+          event.preventDefault();
+          var kind = action.getAttribute('data-message-action');
+          if (kind === 'select-branch') {
+            window.TavernConversationBridge.selectBranch(action.dataset.nodeId || '', Number(action.dataset.branchIndex));
+          } else if (kind === 'open-html') {
+            window.TavernConversationBridge.openHtml(action.dataset.messageId || '');
+          } else if (kind === 'long-press') {
+            window.TavernConversationBridge.longPress(action.dataset.messageId || '');
+          }
+          return;
+        }
+        var anchor = event.target.closest('a[href]');
+        if (anchor) {
+          event.preventDefault();
+          if (bridge) window.TavernConversationBridge.openLink(anchor.href || anchor.getAttribute('href') || '');
+        }
+      });
+
+      root.addEventListener('contextmenu', function (event) {
+        var message = event.target.closest('.mes[data-message-id]');
+        var bridge = nativeBridge();
+        if (!message || !bridge) return;
+        event.preventDefault();
+        window.TavernConversationBridge.longPress(message.dataset.messageId || '');
+      });
+
+      window.addEventListener('message', function (event) {
+        var data = event.data || {};
+        if (!data.__rikkahubFrameHeight || !data.frameTarget) return;
+        var frame = root.querySelector('iframe[data-fullscreen-target="' + CSS.escape(String(data.frameTarget)) + '"]');
+        if (!frame || event.source !== frame.contentWindow) return;
+        var height = Math.max(120, Math.min(Number(data.__rikkahubFrameHeight) || 120, window.innerHeight || 800));
+        frame.style.height = height + 'px';
+      });
+
       markdown = configureMarkdown();
       initializeMermaid();
       renderAll();
+      if (window.TavernConversationBridge) window.TavernConversationBridge.ready();
     })();
   </script>
 </body>

@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.pages.chat
 
+import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.BackHandler
@@ -86,6 +87,8 @@ import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.ai.completion.GroupMentionCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.useCropLauncher
+import me.rerere.rikkahub.ui.components.message.ChatMessageActionsSheet
+import me.rerere.rikkahub.ui.components.message.ChatMessageCopySheet
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
 import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
@@ -96,6 +99,10 @@ import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.ui.hooks.EditStateContent
 import me.rerere.rikkahub.ui.hooks.useEditState
 import me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsoleEntry
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationActions
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationPane
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernPresentationMode
+import me.rerere.rikkahub.ui.pages.chat.tavern.resolveTavernPresentation
 import me.rerere.rikkahub.utils.ImageUtils
 import me.rerere.rikkahub.utils.base64Decode
 import me.rerere.rikkahub.utils.isAllowedFileType
@@ -105,6 +112,8 @@ import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
 import java.io.File
 import kotlin.uuid.Uuid
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 @Composable
 fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null, greeting: String? = null) {
@@ -298,6 +307,10 @@ private fun ChatPageContent(
     val toaster = LocalToaster.current
     val workspaceRepository: WorkspaceRepository = koinInject()
     var previewMode by rememberSaveable { mutableStateOf(false) }
+    var forceComposeTavern by rememberSaveable(conversation.id) { mutableStateOf(false) }
+    var tavernActionMessageId by remember { mutableStateOf<Uuid?>(null) }
+    var tavernCopyMessageId by remember { mutableStateOf<Uuid?>(null) }
+    var tavernFullscreenMessageId by remember { mutableStateOf<Uuid?>(null) }
     val hazeState = rememberHazeState()
     val assistant = remember(setting.assistants, conversation.assistantId) {
         setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
@@ -357,6 +370,27 @@ private fun ChatPageContent(
     }
 
     val context = LocalContext.current
+    val latestConversation by androidx.compose.runtime.rememberUpdatedState(conversation)
+    val tavernActions = remember(vm, conversation.id) {
+        object : TavernConversationActions {
+            override fun onMessageLongPress(messageId: Uuid) {
+                tavernActionMessageId = messageId
+            }
+
+            override fun onSelectBranch(nodeId: Uuid, index: Int) {
+                val node = latestConversation.messageNodes.firstOrNull { it.id == nodeId } ?: return
+                if (index in node.messages.indices) vm.selectMessageBranch(nodeId, index)
+            }
+
+            override fun onOpenHtml(messageId: Uuid) {
+                tavernFullscreenMessageId = messageId
+            }
+
+            override fun onFallbackRequested() {
+                forceComposeTavern = true
+            }
+        }
+    }
     LaunchedEffect(vm) {
         vm.groupDirectorNotices.collect { status ->
             val message = when (status) {
@@ -544,87 +578,128 @@ private fun ChatPageContent(
                 },
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
-            ChatList(
-                innerPadding = PaddingValues(0.dp),
-                conversation = conversation,
-                state = chatListState,
-                loading = loadingJob != null,
-                processingStatus = processingStatus,
-                previewMode = previewMode,
-                settings = setting,
-                hazeState = hazeState,
-                errors = errors,
-                onDismissError = onDismissError,
-                onClearAllErrors = onClearAllErrors,
-                onRegenerate = {
-                    vm.regenerateAtMessage(it)
-                },
-                onEdit = {
-                    inputState.editingMessage = it.id
-                    inputState.setContents(it.parts)
-                },
-                onForkMessage = {
-                    scope.launch {
-                        val fork = vm.forkMessage(message = it)
-                        navigateToChatPage(navController, chatId = fork.id)
-                    }
-                },
-                onDelete = {
-                    if (loadingJob != null) {
-                        vm.showDeleteBlockedWhileGeneratingError()
-                    } else {
-                        vm.deleteMessage(it)
-                    }
-                },
-                onUpdateMessage = { newNode ->
-                    vm.updateConversation(
-                        conversation.copy(
-                            messageNodes = conversation.messageNodes.map { node ->
-                                if (node.id == newNode.id) {
-                                    newNode
+            val tavernDecision = remember(assistant, conversation) {
+                resolveTavernPresentation(assistant, conversation)
+            }
+            val useTavernWeb = !previewMode && !forceComposeTavern &&
+                tavernDecision.mode == TavernPresentationMode.ST_WEB
+            if (useTavernWeb) {
+                TavernConversationPane(
+                    conversation = conversation,
+                    assistant = assistant,
+                    settings = setting,
+                    loading = loadingJob != null,
+                    actions = tavernActions,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
+            } else {
+                val showTavernFallbackReason = assistant.tavernCardJson?.isNotBlank() == true &&
+                    assistant.assistantType == AssistantType.SOLO && !previewMode
+                if (showTavernFallbackReason) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) {
+                            Text(
+                                text = if (forceComposeTavern) {
+                                    "已切换兼容视图"
                                 } else {
-                                    node
+                                    tavernDecision.fallbackReason.orEmpty()
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                            if (forceComposeTavern && tavernDecision.mode == TavernPresentationMode.ST_WEB) {
+                                TextButton(onClick = { forceComposeTavern = false }) {
+                                    Text("重试酒馆视图")
                                 }
                             }
-                        ))
-                    vm.saveConversationAsync()
-                },
-                onClickSuggestion = { suggestion ->
-                    inputState.editingMessage = null
-                    inputState.setMessageText(suggestion)
-                },
-                onTranslate = { message, locale ->
-                    vm.translateMessage(message, locale)
-                },
-                onClearTranslation = { message ->
-                    vm.clearTranslationField(message.id)
-                },
-                onJumpToMessage = { index ->
-                    previewMode = false
-                    scope.launch {
-                        chatListState.requestScrollToItem(index)
+                        }
                     }
-                },
-                onToolApproval = { toolCallId, approved, reason ->
-                    vm.handleToolApproval(toolCallId, approved, reason)
-                },
-                onToolAnswer = { toolCallId, answer ->
-                    vm.handleToolAnswer(toolCallId, answer)
-                },
-                onToggleFavorite = { node ->
-                    vm.toggleMessageFavorite(node)
-                },
-                onConversationSystemPromptChange = { newPrompt ->
-                    vm.updateConversation(conversation.copy(customSystemPrompt = newPrompt))
-                    vm.saveConversationAsync()
-                },
-                onConversationAuthorNoteChange = { note ->
-                    vm.updateConversation(conversation.copy(authorNote = note))
-                    vm.saveConversationAsync()
-                },
-                onMentionRole = onMentionRole,
-            )
+                }
+                ChatList(
+                    innerPadding = PaddingValues(0.dp),
+                    conversation = conversation,
+                    state = chatListState,
+                    loading = loadingJob != null,
+                    processingStatus = processingStatus,
+                    previewMode = previewMode,
+                    settings = setting,
+                    hazeState = hazeState,
+                    errors = errors,
+                    onDismissError = onDismissError,
+                    onClearAllErrors = onClearAllErrors,
+                    onRegenerate = {
+                        vm.regenerateAtMessage(it)
+                    },
+                    onEdit = {
+                        inputState.editingMessage = it.id
+                        inputState.setContents(it.parts)
+                    },
+                    onForkMessage = {
+                        scope.launch {
+                            val fork = vm.forkMessage(message = it)
+                            navigateToChatPage(navController, chatId = fork.id)
+                        }
+                    },
+                    onDelete = {
+                        if (loadingJob != null) {
+                            vm.showDeleteBlockedWhileGeneratingError()
+                        } else {
+                            vm.deleteMessage(it)
+                        }
+                    },
+                    onUpdateMessage = { newNode ->
+                        vm.updateConversation(
+                            conversation.copy(
+                                messageNodes = conversation.messageNodes.map { node ->
+                                    if (node.id == newNode.id) {
+                                        newNode
+                                    } else {
+                                        node
+                                    }
+                                }
+                            ))
+                        vm.saveConversationAsync()
+                    },
+                    onClickSuggestion = { suggestion ->
+                        inputState.editingMessage = null
+                        inputState.setMessageText(suggestion)
+                    },
+                    onTranslate = { message, locale ->
+                        vm.translateMessage(message, locale)
+                    },
+                    onClearTranslation = { message ->
+                        vm.clearTranslationField(message.id)
+                    },
+                    onJumpToMessage = { index ->
+                        previewMode = false
+                        scope.launch {
+                            chatListState.requestScrollToItem(index)
+                        }
+                    },
+                    onToolApproval = { toolCallId, approved, reason ->
+                        vm.handleToolApproval(toolCallId, approved, reason)
+                    },
+                    onToolAnswer = { toolCallId, answer ->
+                        vm.handleToolAnswer(toolCallId, answer)
+                    },
+                    onToggleFavorite = { node ->
+                        vm.toggleMessageFavorite(node)
+                    },
+                    onConversationSystemPromptChange = { newPrompt ->
+                        vm.updateConversation(conversation.copy(customSystemPrompt = newPrompt))
+                        vm.saveConversationAsync()
+                    },
+                    onConversationAuthorNoteChange = { note ->
+                        vm.updateConversation(conversation.copy(authorNote = note))
+                        vm.saveConversationAsync()
+                    },
+                    onMentionRole = onMentionRole,
+                )
             }
+        }
         }
 
         if (showDirectorSheet && directorUiState != null) {
@@ -644,6 +719,96 @@ private fun ChatPageContent(
                 vm = vm,
                 onDismiss = { showFilesSheet = false },
             )
+        }
+
+        val actionMessage = conversation.currentMessages.firstOrNull { it.id == tavernActionMessageId }
+        val actionNode = conversation.messageNodes.firstOrNull { it.currentMessage.id == tavernActionMessageId }
+        if (actionMessage != null && actionNode != null) {
+            ChatMessageActionsSheet(
+                message = actionMessage,
+                model = actionMessage.modelId?.let { modelId ->
+                    setting.providers.flatMap { it.models }.firstOrNull { it.id == modelId }
+                },
+                onDelete = {
+                    tavernActionMessageId = null
+                    if (loadingJob != null) vm.showDeleteBlockedWhileGeneratingError() else vm.deleteMessage(actionMessage)
+                },
+                onEdit = {
+                    tavernActionMessageId = null
+                    inputState.editingMessage = actionMessage.id
+                    inputState.setContents(actionMessage.parts)
+                },
+                onShare = {
+                    tavernActionMessageId = null
+                    val share = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, actionMessage.toText())
+                    }
+                    context.startActivity(Intent.createChooser(share, context.getString(R.string.share)))
+                },
+                onFork = {
+                    tavernActionMessageId = null
+                    scope.launch {
+                        val fork = vm.forkMessage(actionMessage)
+                        navigateToChatPage(navController, chatId = fork.id)
+                    }
+                },
+                onSelectAndCopy = {
+                    tavernActionMessageId = null
+                    tavernCopyMessageId = actionMessage.id
+                },
+                onRegenerate = {
+                    tavernActionMessageId = null
+                    vm.regenerateAtMessage(actionMessage)
+                },
+                isFavorite = actionNode.isFavorite,
+                onToggleFavorite = {
+                    tavernActionMessageId = null
+                    vm.toggleMessageFavorite(actionNode)
+                },
+                onWebViewPreview = {
+                    tavernActionMessageId = null
+                    tavernFullscreenMessageId = actionMessage.id
+                },
+                onDismissRequest = { tavernActionMessageId = null },
+            )
+        }
+
+        conversation.currentMessages.firstOrNull { it.id == tavernCopyMessageId }?.let { message ->
+            ChatMessageCopySheet(
+                message = message,
+                onDismissRequest = { tavernCopyMessageId = null },
+            )
+        }
+
+        val fullscreenNode = conversation.messageNodes.firstOrNull { node ->
+            node.messages.any { it.id == tavernFullscreenMessageId }
+        }
+        if (fullscreenNode != null && assistant.tavernCardJson?.isNotBlank() == true) {
+            Dialog(
+                onDismissRequest = { tavernFullscreenMessageId = null },
+                properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        IconButton(onClick = { tavernFullscreenMessageId = null }) {
+                            Icon(HugeIcons.Cancel01, contentDescription = "关闭")
+                        }
+                        TavernConversationPane(
+                            conversation = conversation,
+                            assistant = assistant,
+                            settings = setting,
+                            loading = false,
+                            actions = tavernActions,
+                            visibleMessageId = tavernFullscreenMessageId,
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                        )
+                    }
+                }
+            }
         }
     }
 }

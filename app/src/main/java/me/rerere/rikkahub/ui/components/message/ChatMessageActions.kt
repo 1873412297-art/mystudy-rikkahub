@@ -366,6 +366,7 @@ fun ChatMessageActionsSheet(
     onShare: () -> Unit,
     onFork: () -> Unit,
     onSelectAndCopy: () -> Unit,
+    onRegenerate: (() -> Unit)? = null,
     isFavorite: Boolean = false,
     onToggleFavorite: (() -> Unit)? = null,
     onWebViewPreview: () -> Unit,
@@ -437,6 +438,25 @@ fun ChatMessageActionsSheet(
                             text = stringResource(R.string.render_with_webview),
                             style = MaterialTheme.typography.titleMedium,
                         )
+                    }
+                }
+            }
+
+            if (onRegenerate != null) {
+                Card(
+                    onClick = {
+                        onDismissRequest()
+                        onRegenerate()
+                    },
+                    shape = MaterialTheme.shapes.medium,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                    ) {
+                        Icon(HugeIcons.Refresh03, contentDescription = null, modifier = Modifier.padding(4.dp))
+                        Text(stringResource(R.string.regenerate), style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
