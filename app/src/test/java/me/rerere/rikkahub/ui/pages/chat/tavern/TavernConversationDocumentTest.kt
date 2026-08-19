@@ -45,8 +45,34 @@ class TavernConversationDocumentTest {
         val iframeRuntime = template.substringAfter("function injectIframeRuntime").substringBefore("function renderHtmlPart")
 
         assertTrue(iframeRuntime.contains("window.__RIKKAHUB_RUNTIME_SOURCE__"))
+        assertTrue(iframeRuntime.contains("window.__RIKKAHUB_RUNTIME_CALL__"))
+        assertTrue(iframeRuntime.contains("__rikkahubRuntimeRequest"))
+        assertTrue(iframeRuntime.contains("__rikkahubRuntimeResponse"))
+        assertTrue(iframeRuntime.contains("requestId"))
+        assertTrue(iframeRuntime.contains("event.source !== parent"))
         assertFalse(iframeRuntime.contains("TavernConversationBridge"))
         assertFalse(iframeRuntime.contains("actionToken"))
+    }
+
+    @Test
+    fun `trusted parent broker binds runtime request to originating iframe`() {
+        assertTrue(template.contains("data.__rikkahubRuntimeRequest"))
+        assertTrue(template.contains("event.source !== frame.contentWindow"))
+        assertTrue(template.contains("pending.source.postMessage"))
+        assertTrue(template.contains("__rikkahubRuntimeResponse"))
+        assertTrue(template.contains("requestId: pending.requestId"))
+        assertTrue(template.contains("delete window[callbackName]"))
+        assertTrue(template.contains("TavernRuntimeBridge.call(requestJson, callbackName, actionToken)"))
+    }
+
+    @Test
+    fun `iframe bootstrap is structurally inserted before user scripts`() {
+        val iframeRuntime = template.substringAfter("function injectIframeRuntime").substringBefore("function renderHtmlPart")
+
+        assertTrue(iframeRuntime.contains("new DOMParser()"))
+        assertTrue(iframeRuntime.contains("parsed.head.insertBefore(bootstrap, parsed.head.firstChild)"))
+        assertTrue(iframeRuntime.contains("parsed.documentElement.outerHTML"))
+        assertFalse(iframeRuntime.contains("return rawHtml + '<script>'"))
     }
 
     @Test

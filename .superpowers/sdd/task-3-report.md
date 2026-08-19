@@ -104,3 +104,62 @@ Command:
 ```
 
 Result: `BUILD SUCCESSFUL`; 98 JVM test classes / 703 tests / 0 failures / 0 errors / 0 skipped. Debug APK assembly succeeded. `git diff --check` reported no whitespace errors (only Git's CRLF conversion notices).
+
+## Second review fix — iframe runtime RPC broker
+
+- Raw-HTML frames now install a broker transport before the shared Tavern runtime, and the bootstrap script is inserted as the first node of a structurally parsed `<head>`. Inline scripts at the beginning of a supplied document therefore see `TavernHelperCompat`, `SillyTavern`, and related APIs immediately.
+- Each iframe call receives a high-entropy `requestId`. The trusted parent accepts requests only when `event.source` is the current `contentWindow` of a retained conversation iframe, creates a separate high-entropy native callback, and posts the result only to that originating source and request ID. Released/replaced frames cannot receive a late response.
+- The native conversation runtime bridge now requires the same parent-only per-generation token as the action bridge. Raw frames cannot bypass the broker by directly invoking the globally visible JavaScript interface or collide with predictable callbacks in the main document. Valid calls still delegate to the existing permission-gated `TavernRuntimeController`.
+- Added visible-Activity instrumentation using the actual sandbox iframe, shared runtime script, native controller, and Java bridge. Its first inline user script checks API availability and awaits `runtime.ping()` through the complete child → parent broker → native → parent → originating child path.
+
+### Second review RED
+
+JVM contract command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationDocumentTest"
+```
+
+Observed: 13 tests, 3 expected failures for the missing source-correlated broker, request/response protocol, and structural head-first bootstrap.
+
+Physical-device instrumentation command:
+
+```powershell
+.\gradlew.bat :app:connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationDocumentInstrumentedTest#rawHtmlEarlyScriptSeesRuntimeAndIframeRpcReturnsToOriginatingFrame"
+```
+
+Observed on Huawei MNA-AL00 (`XHD0223523008702`): expected failure, `runtime APIs must exist before the first user script`.
+
+Authenticated-native-channel RED command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationBridgeTest" --tests "me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationDocumentTest"
+```
+
+Observed: `Unresolved reference 'TavernConversationRuntimeBridge'`, proving the raw-frame native bypass was not yet closed.
+
+### Second review GREEN
+
+Focused JVM command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationBridgeTest" --tests "me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationDocumentTest" --tests "me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeScriptTest" --tests "me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeScriptApiTest"
+```
+
+Result: `BUILD SUCCESSFUL`.
+
+Physical-device visible-Activity command:
+
+```powershell
+.\gradlew.bat :app:connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationDocumentInstrumentedTest"
+```
+
+Result on Huawei MNA-AL00: `BUILD SUCCESSFUL`; all 3 instrumented document tests passed, including early inline API visibility and real iframe `runtime.ping()` response resolution.
+
+Full JVM/build command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest :app:compileDebugKotlin :app:assembleDebug
+```
+
+Result: `BUILD SUCCESSFUL`; 98 JVM test classes / 706 tests / 0 failures / 0 errors / 0 skipped. Debug APK assembly succeeded.

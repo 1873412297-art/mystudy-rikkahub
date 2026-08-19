@@ -6,7 +6,12 @@ internal fun buildTavernRuntimeScript(): String = """
   var seq = 0;
   function call(method, params) {
     return new Promise(function(resolve, reject){
-      if (!window.TavernRuntimeBridge || typeof window.TavernRuntimeBridge.call !== 'function') {
+      var transport = typeof window.__RIKKAHUB_RUNTIME_CALL__ === 'function'
+        ? window.__RIKKAHUB_RUNTIME_CALL__
+        : (window.TavernRuntimeBridge && typeof window.TavernRuntimeBridge.call === 'function'
+          ? function(request, callback){ window.TavernRuntimeBridge.call(request, callback); }
+          : null);
+      if (!transport) {
         reject({ code: 'BRIDGE_MISSING', message: 'TavernRuntimeBridge is not available' });
         return;
       }
@@ -23,7 +28,7 @@ internal fun buildTavernRuntimeScript(): String = """
       };
       try {
         var request = JSON.stringify({ id: id, method: method, params: params || {} });
-        window.TavernRuntimeBridge.call(request, cb);
+        transport(request, cb);
       } catch (e) {
         delete window[cb];
         reject({ code: 'BRIDGE_ERROR', message: String(e && e.message || e) });

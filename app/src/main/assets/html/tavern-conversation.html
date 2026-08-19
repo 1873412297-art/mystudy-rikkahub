@@ -61,6 +61,69 @@
       var state = window.__RIKKAHUB_TAVERN_CONVERSATION__;
       var markdown = null;
       var appliedThemeVariables = [];
+      var runtimeBrokerSequence = 0;
+      var runtimeBrokerPrefix = createRuntimeBrokerPrefix();
+      window.__RIKKAHUB_RUNTIME_CALL__ = function (requestJson, callbackName) {
+        window.TavernRuntimeBridge.call(requestJson, callbackName, actionToken);
+      };
+
+      function createRuntimeBrokerPrefix() {
+        try {
+          var values = new Uint32Array(4);
+          window.crypto.getRandomValues(values);
+          return Array.prototype.map.call(values, function (value) { return value.toString(16); }).join('_');
+        } catch (_) {
+          return String(Date.now()) + '_' + String(Math.random()).slice(2);
+        }
+      }
+
+      function iframeForSource(source) {
+        var frames = root.querySelectorAll('iframe[data-html-frame]');
+        for (var index = 0; index < frames.length; index += 1) {
+          if (frames[index].contentWindow === source) return frames[index];
+        }
+        return null;
+      }
+
+      function dispatchIframeRuntimeRequest(event, data) {
+        var frame = iframeForSource(event.source);
+        if (!frame || event.source !== frame.contentWindow) return;
+        if (typeof data.requestId !== 'string' || !data.requestId || data.requestId.length > 128) return;
+        if (typeof data.requestJson !== 'string' || data.requestJson.length > 256000) return;
+        if (!window.TavernRuntimeBridge || typeof window.TavernRuntimeBridge.call !== 'function') return;
+
+        var callbackName = '__rikkahubParentRuntimeCallback_' + runtimeBrokerPrefix + '_' + (++runtimeBrokerSequence);
+        var pending = { source: event.source, frame: frame, requestId: data.requestId };
+        var timeout = window.setTimeout(function () {
+          if (!window[callbackName]) return;
+          delete window[callbackName];
+          if (pending.frame.isConnected && pending.source === pending.frame.contentWindow) {
+            pending.source.postMessage({
+              __rikkahubRuntimeResponse: true,
+              requestId: pending.requestId,
+              response: { ok: false, error: { code: 'BROKER_TIMEOUT', message: 'Runtime request timed out' } }
+            }, '*');
+          }
+        }, 30000);
+        window[callbackName] = function (response) {
+          window.clearTimeout(timeout);
+          delete window[callbackName];
+          if (!pending.frame.isConnected || pending.source !== pending.frame.contentWindow) return;
+          pending.source.postMessage({
+            __rikkahubRuntimeResponse: true,
+            requestId: pending.requestId,
+            response: response
+          }, '*');
+        };
+        try {
+          window.TavernRuntimeBridge.call(data.requestJson, callbackName, actionToken);
+        } catch (error) {
+          window[callbackName]({
+            ok: false,
+            error: { code: 'BROKER_ERROR', message: String(error && error.message || error) }
+          });
+        }
+      }
 
       function configureMarkdown() {
         if (!window.MarkdownIt || !window.DOMPurify) return null;
@@ -165,14 +228,31 @@
       function injectIframeRuntime(rawHtml, messageId, frameTarget) {
         var runtime = window.__RIKKAHUB_RUNTIME_SOURCE__ || '';
         if (!runtime) return rawHtml;
-        var helper = runtime + "\n" +
+        var helper =
+          "(function(){" +
+          "var pending=Object.create(null),sequence=0,prefix=(function(){try{var v=new Uint32Array(4);" +
+          "crypto.getRandomValues(v);return Array.prototype.map.call(v,function(n){return n.toString(16);}).join('_');" +
+          "}catch(_){return String(Date.now())+'_'+String(Math.random()).slice(2);}})();" +
+          "window.addEventListener('message',function(event){if(event.source !== parent)return;var data=event.data||{};" +
+          "if(!data.__rikkahubRuntimeResponse||typeof data.requestId!=='string')return;" +
+          "var callbackName=pending[data.requestId];if(!callbackName)return;delete pending[data.requestId];" +
+          "var callback=window[callbackName];if(typeof callback==='function')callback(data.response);});" +
+          "window.__RIKKAHUB_RUNTIME_CALL__=function(requestJson,callbackName){" +
+          "if(typeof requestJson!=='string'||requestJson.length>256000||typeof callbackName!=='string')return;" +
+          "var requestId=prefix+'_'+(++sequence);pending[requestId]=callbackName;" +
+          "parent.postMessage({__rikkahubRuntimeRequest:true,requestId:requestId,requestJson:requestJson},'*');};" +
+          "})();\n" + runtime + "\n" +
           "window.addEventListener('message',function(e){var d=e.data||{};" +
           "if(d.__rikkahubEvent){document.dispatchEvent(new CustomEvent(d.__rikkahubEvent,{detail:d.detail,bubbles:true}));}});" +
           "function __rhSize(){try{var h=Math.max(document.documentElement.scrollHeight,document.body?document.body.scrollHeight:0);" +
           "parent.postMessage({__rikkahubFrameHeight:h,frameTarget:" + JSON.stringify(frameTarget) + "},'*');}catch(_){}}" +
           "if(typeof ResizeObserver!=='undefined'){try{new ResizeObserver(__rhSize).observe(document.documentElement);}catch(_){}}" +
           "addEventListener('load',__rhSize);setTimeout(__rhSize,50);setTimeout(__rhSize,400);";
-        return rawHtml + '<script>' + helper.replace(/<\/script/gi, '<\\/script') + '<\/script>';
+        var parsed = new DOMParser().parseFromString(rawHtml, 'text/html');
+        var bootstrap = parsed.createElement('script');
+        bootstrap.textContent = helper;
+        parsed.head.insertBefore(bootstrap, parsed.head.firstChild);
+        return '<!DOCTYPE html>\n' + parsed.documentElement.outerHTML;
       }
 
       function renderHtmlPart(part, node, message, partIndex) {
@@ -359,6 +439,10 @@
 
       window.addEventListener('message', function (event) {
         var data = event.data || {};
+        if (data.__rikkahubRuntimeRequest) {
+          dispatchIframeRuntimeRequest(event, data);
+          return;
+        }
         if (!data.__rikkahubFrameHeight || !data.frameTarget) return;
         var frame = root.querySelector('iframe[data-fullscreen-target="' + CSS.escape(String(data.frameTarget)) + '"]');
         if (!frame || event.source !== frame.contentWindow) return;

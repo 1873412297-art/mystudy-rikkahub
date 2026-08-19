@@ -68,7 +68,6 @@ import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernVari
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernWorldGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.StatusStoreTavernVariableGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernContextSnapshotInput
-import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeBridge
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeController
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimePermissionStore
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernSendHookStore
@@ -306,7 +305,10 @@ fun TavernConversationWebView(
                             )
                             addJavascriptInterface(actionBridge, "TavernConversationBridge")
                             addJavascriptInterface(
-                                TavernRuntimeBridge(runtimeController) { callbackName, responseJson ->
+                                TavernConversationRuntimeBridge(
+                                    actionToken = actionToken,
+                                    controller = runtimeController,
+                                ) { callbackName, responseJson ->
                                     val payload = JSONObject.quote(responseJson)
                                     webView.postEvaluate(
                                         "(function(){var cb=window['$callbackName'];" +

@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import me.rerere.ai.core.MessageRole
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeController
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeBridge
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernSendHookStore
 import kotlin.uuid.Uuid
 
@@ -93,6 +94,26 @@ class TavernConversationBridge(
     companion object {
         const val MAX_BRANCH_INDEX = 4096
         private const val MAX_IDENTIFIER_LENGTH = 64
+    }
+}
+
+/** Runtime entry point that only the trusted parent document can invoke. */
+internal class TavernConversationRuntimeBridge(
+    actionToken: String,
+    controller: TavernRuntimeController,
+    emitResult: (callbackName: String, responseJson: String) -> Unit,
+) {
+    private val trustedToken = actionToken.toByteArray(StandardCharsets.UTF_8)
+    private val delegate = TavernRuntimeBridge(controller, emitResult)
+
+    init {
+        require(actionToken.isNotBlank()) { "A non-empty action token is required" }
+    }
+
+    @JavascriptInterface
+    fun call(requestJson: String, callbackName: String, actionToken: String) {
+        if (!MessageDigest.isEqual(trustedToken, actionToken.toByteArray(StandardCharsets.UTF_8))) return
+        delegate.call(requestJson, callbackName)
     }
 }
 

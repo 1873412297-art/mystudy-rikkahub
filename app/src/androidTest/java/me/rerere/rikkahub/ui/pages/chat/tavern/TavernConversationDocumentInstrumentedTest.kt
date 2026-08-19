@@ -10,6 +10,9 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeController
+import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScript
+import android.webkit.JavascriptInterface
 import org.json.JSONObject
 import org.json.JSONTokener
 import org.junit.Assert.assertEquals
@@ -23,6 +26,85 @@ import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(AndroidJUnit4::class)
 class TavernConversationDocumentInstrumentedTest {
+
+    @Test
+    fun rawHtmlEarlyScriptSeesRuntimeAndIframeRpcReturnsToOriginatingFrame() {
+        val observed = AtomicReference<String>()
+        val responseLatch = CountDownLatch(1)
+        val rawHtml = """
+            <!DOCTYPE html><html><head>
+              <script>
+                (function(){
+                  var earlyApi = !!(window.TavernHelperCompat && window.TavernHelperCompat.runtime);
+                  if (!earlyApi) {
+                    parent.postMessage({__runtimeProbe:true,earlyApi:false,result:'missing'}, '*');
+                    return;
+                  }
+                  window.TavernHelperCompat.runtime.ping().then(function(result){
+                    parent.postMessage({__runtimeProbe:true,earlyApi:true,result:String(result)}, '*');
+                  }).catch(function(error){
+                    parent.postMessage({__runtimeProbe:true,earlyApi:true,result:'error:' + String(error && error.code)}, '*');
+                  });
+                })();
+              </script>
+            </head><body>runtime probe</body></html>
+        """.trimIndent()
+        val parentObserver = """
+            (function(){
+              if (window !== window.top) return;
+              window.addEventListener('message', function(event){
+                var data = event.data || {};
+                if (data.__runtimeProbe) AndroidSmoke.signal(JSON.stringify(data));
+              });
+            })();
+        """.trimIndent()
+        val html = buildTavernConversationDocument(
+            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            initial = snapshot(
+                nodes = listOf(node("n1", 0, 1, message("m1", rawHtml, UIMessagePart.RenderMode.HTML))),
+            ),
+            runtimeScript = buildTavernRuntimeScript() + "\n" + parentObserver,
+            actionToken = "instrumentation-action-token",
+        )
+
+        withVisibleWebView(
+            html = html,
+            configure = { webView ->
+                webView.addJavascriptInterface(
+                    object {
+                        @JavascriptInterface
+                        fun signal(payload: String) {
+                            observed.set(payload)
+                            responseLatch.countDown()
+                        }
+                    },
+                    "AndroidSmoke",
+                )
+                webView.addJavascriptInterface(
+                    TavernConversationRuntimeBridge(
+                        actionToken = "instrumentation-action-token",
+                        controller = TavernRuntimeController(),
+                    ) { callbackName, responseJson ->
+                        val payload = JSONObject.quote(responseJson)
+                        webView.post {
+                            webView.evaluateJavascript(
+                                "(function(){var cb=window['$callbackName'];" +
+                                    "if(typeof cb==='function'){cb(JSON.parse($payload));}})();",
+                                null,
+                            )
+                        }
+                    },
+                    "TavernRuntimeBridge",
+                )
+            },
+        ) {
+            assertTrue("iframe runtime RPC timed out", responseLatch.await(20, TimeUnit.SECONDS))
+        }
+
+        val result = JSONObject(observed.get())
+        assertTrue("runtime APIs must exist before the first user script", result.getBoolean("earlyApi"))
+        assertEquals("pong", result.getString("result"))
+    }
 
     @Test
     fun documentRendersSTShapePluginsRawHtmlAndSanitizesMarkdownStyleChannel() {
@@ -47,8 +129,10 @@ class TavernConversationDocumentInstrumentedTest {
             ),
         )
         val html = buildTavernConversationDocument(
-            InstrumentationRegistry.getInstrumentation().targetContext,
-            initial,
+            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            initial = initial,
+            runtimeScript = buildTavernRuntimeScript(),
+            actionToken = "render-instrumentation-action-token",
         )
 
         val result = withVisibleWebView(html) { view ->
@@ -85,7 +169,9 @@ class TavernConversationDocumentInstrumentedTest {
         assertFalse(result.getBoolean("badStyleTag"))
         assertTrue(result.isNull("unsafeStyle"))
         assertTrue(result.isNull("unsafeClick"))
-        assertEquals(rawHtml, result.getString("rawSrcdoc"))
+        val rawSrcdoc = result.getString("rawSrcdoc")
+        assertTrue(rawSrcdoc.contains("raw-html"))
+        assertTrue(rawSrcdoc.indexOf("__RIKKAHUB_RUNTIME_CALL__") < rawSrcdoc.indexOf("window.rawRan"))
         assertEquals("allow-scripts", result.getString("sandbox"))
     }
 
@@ -215,7 +301,11 @@ class TavernConversationDocumentInstrumentedTest {
         return JSONObject(summary.get())
     }
 
-    private fun <T> withVisibleWebView(html: String, block: (WebView) -> T): T {
+    private fun <T> withVisibleWebView(
+        html: String,
+        configure: (WebView) -> Unit = {},
+        block: (WebView) -> T,
+    ): T {
         lateinit var webView: WebView
         val loaded = CountDownLatch(1)
         @Suppress("UNCHECKED_CAST")
@@ -233,8 +323,9 @@ class TavernConversationDocumentInstrumentedTest {
                         }
                     }
                 }
+                configure(webView)
                 activity.setContentView(webView)
-                webView.loadDataWithBaseURL("https://rikkahub.local/", html, "text/html", "UTF-8", null)
+                webView.loadDataWithBaseURL(TAVERN_CONVERSATION_BASE_URL, html, "text/html", "UTF-8", null)
             }
             assertTrue("conversation document load timed out", loaded.await(30, TimeUnit.SECONDS))
             try {

@@ -115,6 +115,25 @@ class TavernConversationBridgeTest {
     }
 
     @Test
+    fun `runtime native bridge only accepts calls authenticated by trusted parent`() {
+        val results = mutableListOf<Pair<String, String>>()
+        val bridge = TavernConversationRuntimeBridge(
+            actionToken = actionToken,
+            controller = TavernRuntimeController(),
+            emitResult = { callback, response -> results += callback to response },
+        )
+        val request = """{"id":"1","method":"runtime.ping","params":{}}"""
+
+        bridge.call(request, "child_callback", "wrong-token")
+        assertTrue(results.isEmpty())
+
+        bridge.call(request, "parent_callback", actionToken)
+        assertEquals(1, results.size)
+        assertEquals("parent_callback", results.single().first)
+        assertTrue(results.single().second.contains("\"result\":\"pong\""))
+    }
+
+    @Test
     fun `signals every document ready event without deduplication`() {
         var readyCount = 0
         val bridge = TavernConversationBridge(
