@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import me.rerere.common.http.await
@@ -17,7 +18,47 @@ import me.rerere.rikkahub.BuildConfig
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-private const val API_URL = "https://updates.rikka-ai.com/"
+private const val API_URL = "https://api.github.com/repos/1873412297-art/mystudy-rikkahub/releases/latest"
+
+@Serializable
+internal data class GitHubRelease(
+    @SerialName("tag_name") val tagName: String,
+    @SerialName("published_at") val publishedAt: String,
+    val body: String? = null,
+    val assets: List<GitHubReleaseAsset> = emptyList(),
+)
+
+@Serializable
+internal data class GitHubReleaseAsset(
+    val name: String,
+    @SerialName("browser_download_url") val browserDownloadUrl: String,
+    val size: Long,
+)
+
+internal fun GitHubRelease.toUpdateInfo(): UpdateInfo {
+    val version = tagName.removePrefix("v").removePrefix("V")
+    require(version.matches(RELEASE_VERSION_PATTERN)) { "Invalid release version: $tagName" }
+
+    val downloads = assets
+        .filter { it.name.endsWith(".apk", ignoreCase = true) }
+        .map { asset ->
+            UpdateDownload(
+                name = asset.name,
+                url = asset.browserDownloadUrl,
+                size = asset.size.fileSizeToString(),
+            )
+        }
+    require(downloads.isNotEmpty()) { "Release contains no APK assets" }
+
+    return UpdateInfo(
+        version = version,
+        publishedAt = publishedAt,
+        changelog = body.orEmpty(),
+        downloads = downloads,
+    )
+}
+
+private val RELEASE_VERSION_PATTERN = Regex("""\d+(?:\.\d+){1,3}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?""")
 
 class UpdateChecker(private val client: OkHttpClient) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -35,10 +76,11 @@ class UpdateChecker(private val client: OkHttpClient) {
                                 "User-Agent",
                                 "RikkaHub ${BuildConfig.VERSION_NAME} #${BuildConfig.VERSION_CODE}"
                             )
+                            .addHeader("Accept", "application/vnd.github+json")
                             .build()
                     ).await()
                     if (response.isSuccessful) {
-                        json.decodeFromString<UpdateInfo>(response.body.string())
+                        json.decodeFromString<GitHubRelease>(response.body.string()).toUpdateInfo()
                     } else {
                         throw Exception("Failed to fetch update info")
                     }

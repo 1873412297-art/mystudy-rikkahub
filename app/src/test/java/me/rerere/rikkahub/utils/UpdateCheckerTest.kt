@@ -22,7 +22,7 @@ class UpdateCheckerTest {
             "https://github.com/1873412297-art/mystudy-rikkahub/releases/download/v2.4.6/app-universal-release.apk",
             update.downloads.single().url,
         )
-        assertEquals("2.0 MB", update.downloads.single().size)
+        assertEquals("2.00 MB", update.downloads.single().size)
     }
 
     @Test
