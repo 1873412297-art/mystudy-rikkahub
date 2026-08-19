@@ -79,7 +79,6 @@ import me.rerere.rikkahub.ui.components.webview.WebViewContentCache
 import androidx.compose.ui.tooling.preview.Preview
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.ImageUtils
-import me.rerere.rikkahub.utils.base64Encode
 import org.koin.compose.koinInject
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -126,14 +125,12 @@ fun TavernCardViewerPage(
                     else -> null to null
                 }
             }
-            if (result != null) {
-                rawCardJson.set(result.first)
-                card = result.second
-                // fromJson 解析失败返回 null（不再抛异常）——补一个错误提示，保持旧行为：
-                // 此前 parseCardFromJson 抛异常被下方 catch 转成 error 展示。
-                if (result.second == null) {
-                    error = defaultError
-                }
+            rawCardJson.set(result.first)
+            card = result.second
+            // fromJson 解析失败返回 null（不再抛异常）——补一个错误提示，保持旧行为：
+            // 此前 parseCardFromJson 抛异常被下方 catch 转成 error 展示。
+            if (result.second == null) {
+                error = defaultError
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -322,7 +319,7 @@ fun TavernCardViewerPage(
                         // 仅当从 assistant detail 进来（assistantId != null）时给「使用此开场白」按钮，
                         // 因为新建对话需要确定的 assistant id；从 share/file 临时查看的卡没有这个上下文。
                         onUseGreeting = if (assistantId != null) {
-                            { greeting ->
+                            { greetingIndex ->
                                 scope.launch {
                                     // 切到当前查看的 assistant，确保新对话用这张卡
                                     runCatching {
@@ -332,11 +329,10 @@ fun TavernCardViewerPage(
                                     navController.navigate(
                                         Screen.Chat(
                                             id = newConvId,
-                                            greeting = greeting.base64Encode()
+                                            greetingIndex = greetingIndex,
                                         )
                                     )
                                 }
-                                Unit
                             }
                         } else null,
                     )
@@ -350,7 +346,7 @@ fun TavernCardViewerPage(
 private fun TavernCardContent(
     card: TavernCharacterCard,
     modifier: Modifier = Modifier,
-    onUseGreeting: ((String) -> Unit)? = null,
+    onUseGreeting: ((Int) -> Unit)? = null,
 ) {
     var selectedSection by remember { mutableIntStateOf(0) }
 
@@ -648,7 +644,7 @@ private fun DetailsSection(card: TavernCharacterCard) {
 }
 
 @Composable
-private fun ExamplesSection(card: TavernCharacterCard, onUseGreeting: ((String) -> Unit)? = null) {
+private fun ExamplesSection(card: TavernCharacterCard, onUseGreeting: ((Int) -> Unit)? = null) {
     val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
 
@@ -670,7 +666,7 @@ private fun ExamplesSection(card: TavernCharacterCard, onUseGreeting: ((String) 
                     )
                     if (onUseGreeting != null) {
                         Spacer(modifier = Modifier.height(8.dp))
-                        UseGreetingButton(onClick = { onUseGreeting(card.firstMes) })
+                        UseGreetingButton(onClick = { onUseGreeting(0) })
                     }
                 }
             }
@@ -687,7 +683,7 @@ private fun ExamplesSection(card: TavernCharacterCard, onUseGreeting: ((String) 
                     )
                     if (onUseGreeting != null) {
                         Spacer(modifier = Modifier.height(8.dp))
-                        UseGreetingButton(onClick = { onUseGreeting(greeting) })
+                        UseGreetingButton(onClick = { onUseGreeting(index + 1) })
                     }
                 }
             }

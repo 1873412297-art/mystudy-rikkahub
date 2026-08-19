@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -88,6 +89,7 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.ai.slash.MacroExpandContext
 import me.rerere.rikkahub.data.ai.slash.ScriptManager
 import me.rerere.rikkahub.data.ai.slash.SlashCommandInterceptor
+import me.rerere.rikkahub.data.ai.slash.SlashCommandRegistration
 import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
 import me.rerere.rikkahub.data.ai.slash.expandMacrosIfAllowed
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
@@ -100,6 +102,11 @@ import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.data.model.toMessageNode
+import me.rerere.rikkahub.data.model.TavernCharacterCard
+import me.rerere.rikkahub.data.model.inferLegacyOpening
+import me.rerere.rikkahub.data.model.openingRef
+import me.rerere.rikkahub.data.model.tavernOpeningRef
+import me.rerere.rikkahub.data.model.withTavernOpening
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
@@ -129,6 +136,13 @@ import me.rerere.rikkahub.service.group.resolveEffectiveGroupMemberAssistant
 import me.rerere.rikkahub.service.group.resolveManualReplyMemberIds
 import me.rerere.rikkahub.service.group.selectModeratorTurn
 import me.rerere.rikkahub.service.group.toStorableGroupGeneratedMessages
+import me.rerere.rikkahub.service.tavern.TavernGreetingCandidateSnapshot
+import me.rerere.rikkahub.service.tavern.TavernGreetingCommitTarget
+import me.rerere.rikkahub.service.tavern.TavernGreetingSession
+import me.rerere.rikkahub.service.tavern.mergeCommittedGreeting
+import me.rerere.rikkahub.service.tavern.requiresNewConversationForGreetingChange
+import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsBackedTavernWorldRepository
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernWorldSettingsGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernSendHookStore
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
@@ -141,6 +155,38 @@ import kotlin.coroutines.coroutineContext
 import kotlin.uuid.Uuid
 
 private const val TAG = "ChatService"
+
+private fun Conversation.withLegacyOpeningMetadata(card: TavernCharacterCard): Conversation {
+    var marked = false
+    val nodes = messageNodes.map { node ->
+        val current = node.currentMessage
+        val existingRef = current.parts.filterIsInstance<UIMessagePart.Text>().singleOrNull()?.tavernOpeningRef()
+        val ref = existingRef ?: if (!marked) inferLegacyOpening(current, card) else null
+        if (ref == null) {
+            node
+        } else {
+            marked = true
+            node.copy(
+                messages = node.messages.map { message ->
+                    if (message.id != current.id) message else message.copy(
+                        parts = message.parts.map { part ->
+                            if (part is UIMessagePart.Text) part.withTavernOpening(ref) else part
+                        },
+                    )
+                },
+            )
+        }
+    }
+    return if (nodes == messageNodes) this else copy(messageNodes = nodes)
+}
+
+private fun Conversation.withoutOpeningMessages(): Conversation = copy(
+    messageNodes = messageNodes.filterNot { node ->
+        node.currentMessage.parts.any { part ->
+            part is UIMessagePart.Text && part.tavernOpeningRef() != null
+        }
+    },
+)
 
 internal fun backgroundTextGenerationParams(
     model: Model,
@@ -302,6 +348,7 @@ class ChatService(
     // 统一会话管理
     private val sessions = ConcurrentHashMap<Uuid, ConversationSession>()
     private val _sessionsVersion = MutableStateFlow(0L)
+    private val greetingSessionFlows = ConcurrentHashMap<Uuid, MutableStateFlow<TavernGreetingSession?>>()
 
     // 错误状态
     private val _errors = MutableStateFlow<List<ChatError>>(emptyList())
@@ -310,6 +357,9 @@ class ChatService(
     /** 供 web 层订阅每会话状态变量变化（status_variables SSE 事件）。 */
     fun getStatusVariablesFlow(conversationId: Uuid): StateFlow<JsonObject> =
         statusVariableStore.getState(conversationId)
+
+    internal fun getGreetingSessionFlow(conversationId: Uuid): StateFlow<TavernGreetingSession?> =
+        greetingSessionFlows.getOrPut(conversationId) { MutableStateFlow(null) }.asStateFlow()
 
     fun addError(
         error: Throwable,
@@ -461,15 +511,23 @@ class ChatService(
             } else {
                 renderedConversation
             }
-            updateConversation(conversationId, cleanedConversation)
+            val card = assistant.tavernCardJson?.let(TavernCharacterCard::fromJson)
+            val annotatedConversation = card?.let { cleanedConversation.withLegacyOpeningMetadata(it) }
+                ?: cleanedConversation
+            updateConversation(conversationId, annotatedConversation)
             when {
                 withoutNudges != renderedConversation -> saveConversationAfterRemovingMessages(
                     conversationId = conversationId,
                     before = renderedConversation,
-                    after = cleanedConversation,
+                    after = annotatedConversation,
                 )
 
-                cleanedConversation != renderedConversation -> saveConversation(conversationId, cleanedConversation)
+                annotatedConversation != renderedConversation -> saveConversation(conversationId, annotatedConversation)
+            }
+            if (card != null && card.allGreetings().isNotEmpty() &&
+                !requiresNewConversationForGreetingChange(annotatedConversation)
+            ) {
+                prepareGreetingSession(conversationId, annotatedConversation, card)
             }
         } else {
             // 新建对话, 并添加预设消息
@@ -481,13 +539,24 @@ class ChatService(
                 settings = currentSettings,
                 assistant = assistant,
             )
-            val newConversation = Conversation.ofId(
+            var newConversation = Conversation.ofId(
                 id = conversationId,
                 assistantId = assistant.id,
                 newConversation = true
             ).updateCurrentMessages(presetMessages)
                 .copy(statusVariables = statusVariableStore.getValue(conversationId))
+            val card = assistant.tavernCardJson?.let(TavernCharacterCard::fromJson)
+            if (card != null && card.allGreetings().isNotEmpty()) {
+                newConversation = newConversation.withLegacyOpeningMetadata(card).withoutOpeningMessages()
+            }
             updateConversation(conversationId, newConversation)
+            if (card != null && card.allGreetings().isNotEmpty()) {
+                val greetingSession = prepareGreetingSession(conversationId, newConversation, card)
+                if (!currentSettings.displaySetting.autoShowGreetingPicker) {
+                    greetingSession?.candidates?.firstOrNull()?.let { greetingSession.commit(it.id) }
+                    greetingSessionFlows[conversationId]?.value = null
+                }
+            }
         }
     }
 
@@ -558,27 +627,150 @@ class ChatService(
         val conversation = getConversationFlow(conversationId).value
         val assistant = settings.getAssistantById(conversation.assistantId)
             ?: settings.getCurrentAssistant()
+        val card = assistant.tavernCardJson?.let(TavernCharacterCard::fromJson)
+        val index = card?.allGreetings()?.indexOf(greeting)?.takeIf { it >= 0 }
+        if (index != null) {
+            selectInitialGreeting(conversationId, index)
+            return
+        }
+        if (requiresNewConversationForGreetingChange(conversation)) return
         val renderedGreeting = renderPresetMessages(
             conversationId = conversationId,
             settings = settings,
             assistant = assistant,
             messages = listOf(UIMessage.assistantHtml(greeting)),
         )
-        if (renderedGreeting.isEmpty()) return
-
-        val hasUserMessages = conversation.currentMessages.any { it.role == MessageRole.USER }
-        val updatedConversation = if (hasUserMessages) {
-            conversation.copy(
-                messageNodes = conversation.messageNodes + renderedGreeting.map { it.toMessageNode() },
-                statusVariables = statusVariableStore.getValue(conversationId),
-            )
-        } else {
-            conversation.copy(
-                messageNodes = renderedGreeting.map { it.toMessageNode() },
-                statusVariables = statusVariableStore.getValue(conversationId),
+        if (renderedGreeting.isNotEmpty()) {
+            saveConversation(
+                conversationId,
+                conversation.copy(
+                    messageNodes = renderedGreeting.map { it.toMessageNode() },
+                    statusVariables = statusVariableStore.getValue(conversationId),
+                ),
             )
         }
-        saveConversation(conversationId, updatedConversation)
+    }
+
+    suspend fun selectInitialGreeting(conversationId: Uuid, greetingIndex: Int) {
+        initializeConversation(conversationId)
+        val conversation = getConversationFlow(conversationId).value
+        if (requiresNewConversationForGreetingChange(conversation)) {
+            throw me.rerere.rikkahub.service.tavern.TavernGreetingLockedException(
+                "Opening changes require a new conversation",
+            )
+        }
+        val settings = settingsStore.settingsFlowRaw.first()
+        val assistant = settings.getAssistantById(conversation.assistantId) ?: settings.getCurrentAssistant()
+        val card = assistant.tavernCardJson?.let(TavernCharacterCard::fromJson) ?: return
+        val session = greetingSessionFlows[conversationId]?.value
+            ?: prepareGreetingSession(conversationId, conversation, card)
+            ?: return
+        val candidate = session.candidates.firstOrNull { it.greetingIndex == greetingIndex }
+            ?: throw IndexOutOfBoundsException("No Tavern greeting at index $greetingIndex")
+        session.commit(candidate.id)
+        greetingSessionFlows[conversationId]?.value = null
+    }
+
+    suspend fun commitGreetingCandidate(conversationId: Uuid, candidateId: Uuid) {
+        val session = greetingSessionFlows[conversationId]?.value
+            ?: throw IllegalStateException("No active greeting selection")
+        session.commit(candidateId)
+        greetingSessionFlows[conversationId]?.value = null
+    }
+
+    suspend fun createConversationFromGreeting(assistantId: Uuid, greetingIndex: Int): Uuid {
+        val settings = settingsStore.settingsFlowRaw.first()
+        val assistant = settings.getAssistantById(assistantId)
+            ?: throw IllegalArgumentException("Unknown assistant $assistantId")
+        val card = assistant.tavernCardJson?.let(TavernCharacterCard::fromJson)
+            ?: throw IllegalArgumentException("Assistant has no Tavern card")
+        card.openingRef(greetingIndex)
+        val conversationId = Uuid.random()
+        settingsStore.updateAssistant(assistantId)
+        initializeConversation(conversationId)
+        selectInitialGreeting(conversationId, greetingIndex)
+        return conversationId
+    }
+
+    private fun prepareGreetingSession(
+        conversationId: Uuid,
+        conversation: Conversation,
+        card: TavernCharacterCard,
+    ): TavernGreetingSession? {
+        if (card.allGreetings().isEmpty()) return null
+        val flow = greetingSessionFlows.getOrPut(conversationId) { MutableStateFlow(null) }
+        flow.value?.let { active ->
+            if (!active.isLocked && active.candidates.isNotEmpty()) return active
+        }
+        val currentSettings = settingsStore.settingsFlow.value
+        val worldRepository = SettingsBackedTavernWorldRepository(
+            object : TavernWorldSettingsGateway {
+                override fun currentSettings() = currentSettings
+                override fun updateSettings(transform: (me.rerere.rikkahub.data.datastore.Settings) -> me.rerere.rikkahub.data.datastore.Settings) = Unit
+            },
+        )
+        val session = TavernGreetingSession.create(
+            conversation = conversation,
+            card = card,
+            initialChatVariables = statusVariableStore.getValue(conversationId),
+            initialGlobalVariables = currentSettings.tavernGlobalVariables,
+            initialWorldEntries = worldRepository.listEntries(),
+            commitTarget = TavernGreetingCommitTarget { candidate ->
+                commitGreetingOverlay(conversationId, candidate)
+            },
+        )
+        flow.value = session
+        return session
+    }
+
+    private suspend fun commitGreetingOverlay(
+        conversationId: Uuid,
+        candidate: TavernGreetingCandidateSnapshot,
+    ) {
+        val beforeConversation = getConversationFlow(conversationId).value
+        val beforeSettings = settingsStore.settingsFlowRaw.first()
+        val beforeVariables = statusVariableStore.getValue(conversationId)
+        var stagedSettings = beforeSettings.copy(tavernGlobalVariables = candidate.overlay.globalVariables)
+        val stagingGateway = object : TavernWorldSettingsGateway {
+            override fun currentSettings() = stagedSettings
+            override fun updateSettings(
+                transform: (me.rerere.rikkahub.data.datastore.Settings) -> me.rerere.rikkahub.data.datastore.Settings,
+            ) {
+                stagedSettings = transform(stagedSettings)
+            }
+        }
+        val stagedWorld = SettingsBackedTavernWorldRepository(stagingGateway)
+        val desiredIds = candidate.overlay.worldEntries.mapNotNull { entry ->
+            (entry["id"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+        }.toSet()
+        stagedWorld.listEntries().mapNotNull { entry ->
+            (entry["id"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+        }.filterNot { it in desiredIds }.forEach(stagedWorld::deleteEntry)
+        candidate.overlay.worldEntries.forEach(stagedWorld::upsertEntry)
+
+        val mergedConversation = mergeCommittedGreeting(beforeConversation, candidate)
+        try {
+            settingsStore.update(stagedSettings)
+            statusVariableStore.set(conversationId, candidate.overlay.chatVariables)
+            saveConversation(conversationId, mergedConversation)
+            check(
+                tavernScriptRegistry.registerBatch(
+                    macros = candidate.overlay.registrations.macros,
+                    slashCommands = candidate.overlay.registrations.slashCommands.mapValues { (_, registration) ->
+                        SlashCommandRegistration(
+                            source = registration.source,
+                            aliases = registration.aliases,
+                            helpString = registration.helpString,
+                        )
+                    },
+                ),
+            ) { "Unable to commit Tavern opening registrations" }
+        } catch (error: Throwable) {
+            settingsStore.update(beforeSettings)
+            statusVariableStore.set(conversationId, beforeVariables)
+            saveConversation(conversationId, beforeConversation)
+            throw error
+        }
     }
 
     private suspend fun appendUserMessage(
@@ -586,6 +778,7 @@ class ChatService(
         session: ConversationSession,
         content: List<UIMessagePart>,
     ) {
+        commitSelectedGreetingIfNeeded(conversationId)
         val currentConversation = session.state.value
         val settings = settingsStore.settingsFlow.first()
         val assistant = settings.getAssistantById(currentConversation.assistantId)
@@ -614,6 +807,7 @@ class ChatService(
                 runCatching { previousJob?.join() }
                 finishInterruptedPendingTools(conversationId)
 
+                commitSelectedGreetingIfNeeded(conversationId)
                 val currentConversation = session.state.value
                 val settings = settingsStore.settingsFlow.first()
                 val assistant = settings.getAssistantById(currentConversation.assistantId)
@@ -692,6 +886,14 @@ class ChatService(
             }
         }
         session.setJob(job)
+    }
+
+    private suspend fun commitSelectedGreetingIfNeeded(conversationId: Uuid) {
+        val flow = greetingSessionFlows[conversationId] ?: return
+        val greetingSession = flow.value ?: return
+        if (greetingSession.isLocked || greetingSession.candidates.isEmpty()) return
+        greetingSession.commitSelected()
+        flow.value = null
     }
 
     fun sendGroupMessage(conversationId: Uuid, content: List<UIMessagePart>, memberIds: List<Uuid>) {
@@ -1777,6 +1979,10 @@ class ChatService(
                 conversationRepo.insertConversation(persistedConversation)
             } else {
                 conversationRepo.updateConversation(persistedConversation)
+            }
+            if (requiresNewConversationForGreetingChange(persistedConversation)) {
+                greetingSessionFlows[conversationId]?.value?.lock()
+                greetingSessionFlows[conversationId]?.value = null
             }
         }
     }

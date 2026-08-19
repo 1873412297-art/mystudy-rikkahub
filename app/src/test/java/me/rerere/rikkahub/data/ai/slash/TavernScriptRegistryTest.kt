@@ -139,4 +139,44 @@ class TavernScriptRegistryTest {
         assertTrue(registry.registerMacro("m0", "function macro(args){ return 'x'; }"))
         assertEquals(64, registry.listMacros().size)
     }
+
+    @Test
+    fun `registration batch rejects atomically when any entry is invalid`() {
+        val registry = registry()
+        registry.registerMacro("existing", "function macro(args){ return 'old'; }")
+        val oversized = "function callback(args){ return '" + "x".repeat(70 * 1024) + "'; }"
+
+        assertFalse(
+            registry.registerBatch(
+                macros = mapOf("acceptedOnlyIfWholeBatchCommits" to "function macro(args){ return 'x'; }"),
+                slashCommands = mapOf(
+                    "invalid" to SlashCommandRegistration(oversized, emptyList(), "invalid"),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("existing"), registry.listMacros())
+        assertTrue(registry.listSlashCommands().isEmpty())
+    }
+
+    @Test
+    fun `registration batch commits macros and slash commands together`() {
+        val registry = registry()
+
+        assertTrue(
+            registry.registerBatch(
+                macros = mapOf("hello" to "function macro(args){ return args; }"),
+                slashCommands = mapOf(
+                    "wave" to SlashCommandRegistration(
+                        source = "function callback(args){ return args; }",
+                        aliases = listOf("w"),
+                        helpString = "wave",
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("hello"), registry.listMacros())
+        assertEquals(listOf("wave"), registry.listSlashCommands().map { it.name })
+    }
 }

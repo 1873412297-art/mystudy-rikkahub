@@ -19,6 +19,12 @@ data class SlashCommandInfo(
     val helpString: String,
 )
 
+data class SlashCommandRegistration(
+    val source: String,
+    val aliases: List<String> = emptyList(),
+    val helpString: String = "",
+)
+
 /** 宏/命令执行结果（与 SlashScriptEngine 的 Result 语义对齐） */
 data class SlashCommandResult(
     val text: String? = null,
@@ -63,6 +69,7 @@ class TavernScriptRegistry : MacroExpander {
 
     private val macros = ConcurrentHashMap<String, MacroEntry>()
     private val slashCommands = ConcurrentHashMap<String, SlashEntry>()
+    private val registrationLock = Any()
 
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "TavernScriptRegistry").apply { isDaemon = true }
@@ -137,7 +144,7 @@ class TavernScriptRegistry : MacroExpander {
         return loaded
     }
 
-    fun registerMacro(name: String, source: String): Boolean {
+    fun registerMacro(name: String, source: String): Boolean = synchronized(registrationLock) {
         if (source.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES) return false
         if (macros.size >= MAX_REGISTRATIONS && !macros.containsKey(name)) return false
         macros[name] = MacroEntry(name, source)
@@ -145,14 +152,19 @@ class TavernScriptRegistry : MacroExpander {
         return true
     }
 
-    fun removeMacro(name: String) {
+    fun removeMacro(name: String) = synchronized(registrationLock) {
         macros.remove(name)
         loadedMacros.remove(name)
     }
 
     fun listMacros(): List<String> = macros.keys.toList()
 
-    fun registerSlashCommand(name: String, callbackSource: String, aliases: List<String>, helpString: String): Boolean {
+    fun registerSlashCommand(
+        name: String,
+        callbackSource: String,
+        aliases: List<String>,
+        helpString: String,
+    ): Boolean = synchronized(registrationLock) {
         if (callbackSource.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES) return false
         if (slashCommands.size >= MAX_REGISTRATIONS && !slashCommands.containsKey(name)) return false
         slashCommands[name] = SlashEntry(SlashCommandInfo(name, aliases, helpString), callbackSource)
@@ -160,9 +172,33 @@ class TavernScriptRegistry : MacroExpander {
         return true
     }
 
-    fun removeSlashCommand(name: String) {
+    fun removeSlashCommand(name: String) = synchronized(registrationLock) {
         slashCommands.remove(name)
         loadedSlashCommands.remove(name)
+    }
+
+    /** Validates and applies a selected opening's registrations as one indivisible registry update. */
+    fun registerBatch(
+        macros: Map<String, String>,
+        slashCommands: Map<String, SlashCommandRegistration>,
+    ): Boolean = synchronized(registrationLock) {
+        if (macros.values.any { it.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES }) return false
+        if (slashCommands.values.any { it.source.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES }) return false
+        if ((this.macros.keys + macros.keys).size > MAX_REGISTRATIONS) return false
+        if ((this.slashCommands.keys + slashCommands.keys).size > MAX_REGISTRATIONS) return false
+
+        macros.forEach { (name, source) ->
+            this.macros[name] = MacroEntry(name, source)
+            loadedMacros.remove(name)
+        }
+        slashCommands.forEach { (name, registration) ->
+            this.slashCommands[name] = SlashEntry(
+                SlashCommandInfo(name, registration.aliases, registration.helpString),
+                registration.source,
+            )
+            loadedSlashCommands.remove(name)
+        }
+        true
     }
 
     fun listSlashCommands(): List<SlashCommandInfo> = slashCommands.values.map { it.info }

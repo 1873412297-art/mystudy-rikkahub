@@ -62,6 +62,8 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.TavernCharacterCard
+import me.rerere.rikkahub.service.tavern.TavernGreetingCandidateRuntime
+import me.rerere.rikkahub.service.tavern.TavernGreetingRuntimeBindings
 import me.rerere.rikkahub.ui.components.richtext.hex
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsBackedTavernWorldRepository
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernVariableGateway
@@ -85,7 +87,7 @@ private val hostJson = Json { encodeDefaults = true; classDiscriminator = "type"
 
 /** Builds the app/runtime inputs for the single conversation WebView. */
 @Composable
-fun TavernConversationPane(
+internal fun TavernConversationPane(
     conversation: Conversation,
     assistant: Assistant,
     settings: Settings,
@@ -93,10 +95,12 @@ fun TavernConversationPane(
     actions: TavernConversationActions,
     visibleMessageId: Uuid? = null,
     ownsSendHookController: Boolean = true,
+    candidateRuntime: TavernGreetingCandidateRuntime? = null,
     modifier: Modifier = Modifier,
 ) {
     val statusVariableStore: StatusVariableStore = koinInject()
-    val variables by statusVariableStore.getState(conversation.id).collectAsState()
+    val persistedVariables by statusVariableStore.getState(conversation.id).collectAsState()
+    val variables = candidateRuntime?.snapshot()?.chatVariables ?: persistedVariables
     val colorScheme = MaterialTheme.colorScheme
     val card = remember(assistant.tavernCardJson) {
         assistant.tavernCardJson?.let { runCatching { TavernCharacterCard.fromJson(it) }.getOrNull() }
@@ -133,8 +137,11 @@ fun TavernConversationPane(
             streaming = loading,
         )
     }
-    val worldEntries = remember(settings.lorebooks, conversation.lorebookIds) {
-        settings.lorebooks
+    val worldEntries = remember(settings.lorebooks, conversation.lorebookIds, candidateRuntime) {
+        candidateRuntime?.snapshot()?.worldEntries?.map { entry ->
+            ((entry["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "Entry") to
+                ((entry["content"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "")
+        } ?: settings.lorebooks
             .filter { it.id in conversation.lorebookIds }
             .flatMap { book -> book.entries.map { it.name to it.content } }
     }
@@ -171,19 +178,21 @@ fun TavernConversationPane(
         headerSource = headerSource,
         actions = actions,
         ownsSendHookController = ownsSendHookController,
+        runtimeBindings = candidateRuntime?.runtimeBindings(),
         modifier = modifier,
     )
 }
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun TavernConversationWebView(
+internal fun TavernConversationWebView(
     snapshot: TavernConversationSnapshot,
     contextSnapshot: JsonObject,
     currentMessage: JsonElement?,
     headerSource: () -> List<Pair<String, String>>,
     actions: TavernConversationActions,
     ownsSendHookController: Boolean = true,
+    runtimeBindings: TavernGreetingRuntimeBindings? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -196,19 +205,24 @@ fun TavernConversationWebView(
     val runtimeScope = rememberCoroutineScope()
     val permissionStore = remember { TavernRuntimePermissionStore(appSettings.runtimePermissions) }
     val latestHeaderSource by rememberUpdatedState(headerSource)
-    val runtimeController = remember(snapshot.conversationId) {
+    val runtimeController = remember(snapshot.conversationId, runtimeBindings) {
         TavernRuntimeController(
             conversationId = runCatching { kotlin.uuid.Uuid.parse(snapshot.conversationId) }.getOrNull(),
-            worldRepository = SettingsBackedTavernWorldRepository(SettingsStoreTavernWorldGateway(settingsStore)),
+            worldRepository = runtimeBindings?.worldRepository
+                ?: SettingsBackedTavernWorldRepository(SettingsStoreTavernWorldGateway(settingsStore)),
             permissionStore = permissionStore,
-            variableGateway = StatusStoreTavernVariableGateway(
-                statusVariableStore,
-                SettingsStoreTavernVariableGateway(settingsStore),
-            ),
+            variableGateway = runtimeBindings?.variableGateway
+                ?: StatusStoreTavernVariableGateway(
+                    statusVariableStore,
+                    SettingsStoreTavernVariableGateway(settingsStore),
+                ),
             hostEventFlow = hostEventBus.events,
             hostEventScope = runtimeScope,
-            scriptRegistry = scriptRegistry,
+            scriptRegistry = runtimeBindings?.scriptRegistry ?: scriptRegistry,
             headerSource = { latestHeaderSource() },
+            registrationObserver = runtimeBindings?.registrationObserver
+                ?: me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeRegistrationObserver.NONE,
+            currentMessageWriter = runtimeBindings?.currentMessageWriter,
         )
     }
     val sendHookBinding = remember(sendHookStore, runtimeController, ownsSendHookController) {

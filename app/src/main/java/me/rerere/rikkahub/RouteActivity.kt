@@ -350,7 +350,8 @@ class RouteActivity : ComponentActivity() {
                                     text = key.text,
                                     files = key.files.map { it.toUri() },
                                     nodeId = key.nodeId?.let { Uuid.parse(it) },
-                                    greeting = key.greeting
+                                    greetingIndex = key.greetingIndex,
+                                    greeting = key.greeting,
                                 )
                             }
 
@@ -638,7 +639,9 @@ sealed interface Screen : NavKey {
         val text: String? = null,
         val files: List<String> = emptyList(),
         val nodeId: String? = null,
-        /** 角色卡查看页选定开场白后传入新对话；base64-encoded 文本，由 ChatPage 解码并作为首条 ASSISTANT 消息插入。null = 不预置。 */
+        /** Typed greeting route. Avoids putting large role-card HTML in navigation state. */
+        val greetingIndex: Int? = null,
+        /** Legacy compatibility only: base64-encoded opening used by older saved navigation entries. */
         val greeting: String? = null,
     ) : Screen
 

@@ -53,6 +53,29 @@ fun inferLegacyOpening(message: UIMessage, card: TavernCharacterCard): TavernOpe
     )
 }
 
+/** Builds the stable typed reference for one entry in [TavernCharacterCard.allGreetings]. */
+fun TavernCharacterCard.openingRef(greetingIndex: Int): TavernOpeningRef {
+    val greeting = allGreetings().getOrNull(greetingIndex)
+        ?: throw IndexOutOfBoundsException("No Tavern greeting at index $greetingIndex")
+    return TavernOpeningRef(
+        greetingIndex = greetingIndex,
+        contentFingerprint = greeting.sha256(),
+        cardFingerprint = greetingFingerprint(),
+    )
+}
+
+/** Creates the persisted HTML assistant opening without introducing a Room column. */
+fun TavernCharacterCard.openingMessage(greetingIndex: Int): UIMessage {
+    val greeting = allGreetings().getOrNull(greetingIndex)
+        ?: throw IndexOutOfBoundsException("No Tavern greeting at index $greetingIndex")
+    val message = UIMessage.assistantHtml(greeting)
+    return message.copy(
+        parts = message.parts.map { part ->
+            if (part is UIMessagePart.Text) part.withTavernOpening(openingRef(greetingIndex)) else part
+        },
+    )
+}
+
 private fun JsonObject.stringAt(key: String): String? =
     (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
 

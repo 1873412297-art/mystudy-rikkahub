@@ -49,6 +49,8 @@ internal class TavernRuntimeController(
     hostEventScope: CoroutineScope? = null,
     private val scriptRegistry: TavernScriptRegistry = TavernScriptRegistry(),
     private val headerSource: (() -> List<Pair<String, String>>)? = null,
+    private val registrationObserver: TavernRuntimeRegistrationObserver = TavernRuntimeRegistrationObserver.NONE,
+    private val currentMessageWriter: ((JsonElement) -> Unit)? = null,
 ) {
     // dispatch 在 WebView JavaBridge 线程上读，setContext/setCurrentMessage 在宿主线程上写
     @Volatile
@@ -345,6 +347,7 @@ internal class TavernRuntimeController(
             return permissionDenied(request, "Message write access is disabled for this script")
         }
         currentMessage = request.params["patch"] ?: JsonNull
+        currentMessageWriter?.invoke(currentMessage)
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
     }
 
@@ -361,6 +364,7 @@ internal class TavernRuntimeController(
         val source = request.params.getString("source")
             ?: return badRequest(request, "macros.register requires params.source")
         val ok = scriptRegistry.registerMacro(name, source)
+        if (ok) registrationObserver.onMacroRegistered(name, source)
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(ok))
     }
 
@@ -371,6 +375,7 @@ internal class TavernRuntimeController(
         val name = request.params.getString("name")
             ?: return badRequest(request, "macros.remove requires params.name")
         scriptRegistry.removeMacro(name)
+        registrationObserver.onMacroRemoved(name)
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
     }
 
@@ -393,6 +398,7 @@ internal class TavernRuntimeController(
             ?: emptyList()
         val helpString = request.params.getString("helpString") ?: ""
         val ok = scriptRegistry.registerSlashCommand(name, source, aliases, helpString)
+        if (ok) registrationObserver.onSlashCommandRegistered(name, source, aliases, helpString)
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(ok))
     }
 
@@ -403,6 +409,7 @@ internal class TavernRuntimeController(
         val name = request.params.getString("name")
             ?: return badRequest(request, "slash.unregister requires params.name")
         scriptRegistry.removeSlashCommand(name)
+        registrationObserver.onSlashCommandRemoved(name)
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
     }
 
@@ -461,6 +468,27 @@ internal class TavernRuntimeController(
         }
         // 展开失败（引擎不可用/超时/异常）→ best-effort 原样
         return expanded ?: text
+    }
+}
+
+internal interface TavernRuntimeRegistrationObserver {
+    fun onMacroRegistered(name: String, source: String)
+    fun onMacroRemoved(name: String)
+    fun onSlashCommandRegistered(name: String, source: String, aliases: List<String>, helpString: String)
+    fun onSlashCommandRemoved(name: String)
+
+    companion object {
+        val NONE = object : TavernRuntimeRegistrationObserver {
+            override fun onMacroRegistered(name: String, source: String) = Unit
+            override fun onMacroRemoved(name: String) = Unit
+            override fun onSlashCommandRegistered(
+                name: String,
+                source: String,
+                aliases: List<String>,
+                helpString: String,
+            ) = Unit
+            override fun onSlashCommandRemoved(name: String) = Unit
+        }
     }
 }
 

@@ -48,6 +48,7 @@ import me.rerere.rikkahub.service.group.GroupDirectorCommand
 import me.rerere.rikkahub.service.group.GroupDirectorCommandStatus
 import me.rerere.rikkahub.service.group.sanitizeManualSelection
 import me.rerere.rikkahub.service.group.toggleManualSelection
+import me.rerere.rikkahub.service.tavern.TavernGreetingSession
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.utils.UiState
@@ -70,6 +71,8 @@ class ChatVM(
 ) : ViewModel() {
     private val _conversationId: Uuid = Uuid.parse(id)
     val conversation: StateFlow<Conversation> = chatService.getConversationFlow(_conversationId)
+    internal val greetingSession: StateFlow<TavernGreetingSession?> =
+        chatService.getGreetingSessionFlow(_conversationId)
     private val initializationJob: Job
     var chatListInitialized by mutableStateOf(false) // 聊天列表是否已经滚动到底部
 
@@ -306,6 +309,23 @@ class ChatVM(
             chatService.deleteMessage(_conversationId, message)
         }
     }
+
+    fun selectInitialGreeting(greetingIndex: Int) {
+        viewModelScope.launch {
+            initializationJob.join()
+            chatService.selectInitialGreeting(_conversationId, greetingIndex)
+        }
+    }
+
+    fun commitGreetingCandidate(candidateId: Uuid) {
+        viewModelScope.launch {
+            initializationJob.join()
+            chatService.commitGreetingCandidate(_conversationId, candidateId)
+        }
+    }
+
+    suspend fun createConversationFromGreeting(assistantId: Uuid, greetingIndex: Int): Uuid =
+        chatService.createConversationFromGreeting(assistantId, greetingIndex)
 
     fun selectMessageBranch(nodeId: Uuid, index: Int) {
         viewModelScope.launch {

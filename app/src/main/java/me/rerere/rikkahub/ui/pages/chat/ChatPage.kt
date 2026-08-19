@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
@@ -67,6 +69,7 @@ import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.MessageAdd01
+import me.rerere.hugeicons.stroke.BookOpen01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.ai.trace.isTavernPromptTraceEligible
@@ -80,6 +83,9 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
+import me.rerere.rikkahub.data.model.TavernCharacterCard
+import me.rerere.rikkahub.data.model.inferLegacyOpening
+import me.rerere.rikkahub.data.model.tavernOpeningRef
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.group.GroupDirectorCommandStatus
@@ -104,6 +110,7 @@ import me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsoleEntry
 import me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationActions
 import me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationPane
 import me.rerere.rikkahub.ui.pages.chat.tavern.TavernPresentationMode
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernOpeningStage
 import me.rerere.rikkahub.ui.pages.chat.tavern.resolveTavernPresentation
 import me.rerere.rikkahub.ui.pages.chat.tavern.requiresTavernRegenerateConfirmation
 import me.rerere.rikkahub.utils.ImageUtils
@@ -119,7 +126,14 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
 @Composable
-fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null, greeting: String? = null) {
+fun ChatPage(
+    id: Uuid,
+    text: String?,
+    files: List<Uri>,
+    nodeId: Uuid? = null,
+    greetingIndex: Int? = null,
+    greeting: String? = null,
+) {
     val vm: ChatVM = koinViewModel(
         parameters = {
             parametersOf(id.toString())
@@ -136,6 +150,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null, gr
     val currentChatModel by vm.currentChatModel.collectAsStateWithLifecycle()
     val enableWebSearch by vm.enableWebSearch.collectAsStateWithLifecycle()
     val errors by vm.errors.collectAsStateWithLifecycle()
+    val greetingSession by vm.greetingSession.collectAsStateWithLifecycle()
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
@@ -169,8 +184,10 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null, gr
     val inputState = vm.inputState
 
     // 初始化输入状态（处理传入的 files 和 text 参数）
-    LaunchedEffect(greeting) {
-        greeting?.base64Decode()?.let { decodedGreeting ->
+    LaunchedEffect(greetingIndex, greeting) {
+        if (greetingIndex != null) {
+            vm.selectInitialGreeting(greetingIndex)
+        } else greeting?.base64Decode()?.let { decodedGreeting ->
             if (decodedGreeting.isNotBlank()) {
                 vm.applyInitialGreeting(decodedGreeting)
             }
@@ -245,6 +262,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null, gr
                     currentChatModel = currentChatModel,
                     bigScreen = true,
                     errors = errors,
+                    greetingSession = greetingSession,
                     onDismissError = { vm.dismissError(it) },
                     onClearAllErrors = { vm.clearAllErrors() },
                 )
@@ -277,6 +295,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null, gr
                     currentChatModel = currentChatModel,
                     bigScreen = false,
                     errors = errors,
+                    greetingSession = greetingSession,
                     onDismissError = { vm.dismissError(it) },
                     onClearAllErrors = { vm.clearAllErrors() },
                 )
@@ -303,6 +322,7 @@ private fun ChatPageContent(
     enableWebSearch: Boolean,
     currentChatModel: Model?,
     errors: List<ChatError>,
+    greetingSession: me.rerere.rikkahub.service.tavern.TavernGreetingSession?,
     onDismissError: (Uuid) -> Unit,
     onClearAllErrors: () -> Unit,
 ) {
@@ -315,10 +335,21 @@ private fun ChatPageContent(
     var tavernCopyMessageId by remember { mutableStateOf<Uuid?>(null) }
     var tavernFullscreenMessageId by remember { mutableStateOf<Uuid?>(null) }
     var tavernRegenerateMessageId by remember { mutableStateOf<Uuid?>(null) }
+    var showGreetingSwitchDialog by rememberSaveable { mutableStateOf(false) }
     val hazeState = rememberHazeState()
     val assistant = remember(setting.assistants, conversation.assistantId) {
         setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
     }
+    val tavernCard = remember(assistant.tavernCardJson) {
+        assistant.tavernCardJson?.let(TavernCharacterCard::fromJson)
+    }
+    val currentOpeningMessage = remember(conversation, tavernCard) {
+        conversation.currentMessages.firstOrNull { message ->
+            message.parts.filterIsInstance<UIMessagePart.Text>().singleOrNull()?.tavernOpeningRef() != null ||
+                (tavernCard != null && inferLegacyOpening(message, tavernCard) != null)
+        }
+    }
+    val hasUserMessage = conversation.currentMessages.any { it.role == MessageRole.USER }
     val tavernPromptTraceEligible = remember(assistant, setting.assistants) {
         assistant.isTavernPromptTraceEligible(setting.assistants)
     }
@@ -428,6 +459,9 @@ private fun ChatPageContent(
                     drawerState = drawerState,
                     previewMode = previewMode,
                     tavernPromptTraceEligible = tavernPromptTraceEligible,
+                    onOpenOpening = currentOpeningMessage?.takeIf { hasUserMessage }?.let { opening ->
+                        { tavernFullscreenMessageId = opening.id }
+                    },
                     onNewChat = {
                         navigateToChatPage(navController)
                     },
@@ -582,12 +616,24 @@ private fun ChatPageContent(
                 },
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
+            val activeGreetingSession = greetingSession?.takeIf {
+                !it.isLocked && it.candidates.isNotEmpty() && !hasUserMessage
+            }
             val tavernDecision = remember(assistant, conversation) {
                 resolveTavernPresentation(assistant, conversation)
             }
             val useTavernWeb = !previewMode && !forceComposeTavern &&
                 tavernDecision.mode == TavernPresentationMode.ST_WEB
-            if (useTavernWeb) {
+            if (activeGreetingSession != null && !previewMode && !forceComposeTavern) {
+                TavernOpeningStage(
+                    session = activeGreetingSession,
+                    conversation = conversation,
+                    assistant = assistant,
+                    settings = setting,
+                    onCommit = vm::commitGreetingCandidate,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
+            } else if (useTavernWeb) {
                 TavernConversationPane(
                     conversation = conversation,
                     assistant = assistant,
@@ -818,8 +864,22 @@ private fun ChatPageContent(
                     color = MaterialTheme.colorScheme.background,
                 ) {
                     Column(modifier = Modifier.fillMaxSize()) {
-                        IconButton(onClick = { tavernFullscreenMessageId = null }) {
-                            Icon(HugeIcons.Cancel01, contentDescription = "关闭")
+                        androidx.compose.foundation.layout.Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+                        ) {
+                            IconButton(onClick = { tavernFullscreenMessageId = null }) {
+                                Icon(HugeIcons.Cancel01, contentDescription = "关闭")
+                            }
+                            if (
+                                hasUserMessage &&
+                                currentOpeningMessage?.id == tavernFullscreenMessageId &&
+                                (tavernCard?.allGreetings()?.size ?: 0) > 1
+                            ) {
+                                TextButton(onClick = { showGreetingSwitchDialog = true }) {
+                                    Text("从其他开场新建对话")
+                                }
+                            }
                         }
                         TavernConversationPane(
                             conversation = conversation,
@@ -834,6 +894,49 @@ private fun ChatPageContent(
                     }
                 }
             }
+        }
+
+        if (showGreetingSwitchDialog && tavernCard != null) {
+            AlertDialog(
+                onDismissRequest = { showGreetingSwitchDialog = false },
+                title = { Text("选择新对话的开场") },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        Text("已有对话不会被修改。选择后会新建并打开一个独立对话。")
+                        tavernCard.allGreetings().forEachIndexed { index, opening ->
+                            TextButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    scope.launch {
+                                        val newConversationId = vm.createConversationFromGreeting(
+                                            assistantId = assistant.id,
+                                            greetingIndex = index,
+                                        )
+                                        showGreetingSwitchDialog = false
+                                        tavernFullscreenMessageId = null
+                                        navigateToChatPage(navController, chatId = newConversationId)
+                                    }
+                                },
+                            ) {
+                                Text(
+                                    text = "${index + 1}. ${opening.lineSequence().firstOrNull().orEmpty().take(80)}",
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showGreetingSwitchDialog = false }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+            )
         }
     }
 }
@@ -1051,6 +1154,7 @@ private fun TopBar(
     bigScreen: Boolean,
     previewMode: Boolean,
     tavernPromptTraceEligible: Boolean,
+    onOpenOpening: (() -> Unit)?,
     onClickMenu: () -> Unit,
     onNewChat: () -> Unit,
     onOpenTavernPromptConsole: () -> Unit,
@@ -1112,6 +1216,11 @@ private fun TopBar(
             }
         },
         actions = {
+            if (onOpenOpening != null) {
+                IconButton(onClick = onOpenOpening) {
+                    Icon(HugeIcons.BookOpen01, contentDescription = "查看开场")
+                }
+            }
             TavernPromptConsoleEntry(
                 visible = tavernPromptTraceEligible,
                 onOpen = onOpenTavernPromptConsole,

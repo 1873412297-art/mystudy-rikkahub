@@ -49,6 +49,10 @@ import me.rerere.rikkahub.data.model.InjectionPosition
 import me.rerere.rikkahub.data.model.Lorebook
 import me.rerere.rikkahub.data.model.PromptInjection
 import me.rerere.rikkahub.data.model.normalizeTavernCardText
+import me.rerere.rikkahub.data.model.TavernCharacterCard
+import me.rerere.rikkahub.data.model.openingRef
+import me.rerere.rikkahub.data.model.withTavernOpening
+import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.ui.components.ui.AutoAIIcon
@@ -723,6 +727,18 @@ private suspend fun importAssistantFromUri(
             tavernCardJson = jsonString,
             statusRenderJs = extras.statusRenderJs,
         )
+        TavernCharacterCard.fromJson(jsonString)?.takeIf { it.allGreetings().isNotEmpty() }?.let { card ->
+            val ref = card.openingRef(0)
+            finalAssistant = finalAssistant.copy(
+                presetMessages = finalAssistant.presetMessages.mapIndexed { index, message ->
+                    if (index != 0) message else message.copy(
+                        parts = message.parts.map { part ->
+                            if (part is UIMessagePart.Text) part.withTavernOpening(ref) else part
+                        },
+                    )
+                },
+            )
+        }
 
         // Import character book as lorebook
         if (extras.characterBook != null && extras.characterBook.entries.isNotEmpty()) {
