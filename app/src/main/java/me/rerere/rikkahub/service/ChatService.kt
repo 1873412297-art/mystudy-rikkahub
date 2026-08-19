@@ -743,7 +743,7 @@ class ChatService(
         session.setJob(job)
     }
 
-    private fun preprocessUserInputParts(
+    private suspend fun preprocessUserInputParts(
         parts: List<UIMessagePart>,
         assistant: Assistant,
         conversationId: Uuid,
@@ -758,17 +758,15 @@ class ChatService(
                     )
                     // 酒馆脚本注册宏：USER 正则之后同步展开（mutate 通道；失败保留原文）；
                     // 宏是脚本功能，受 allowScripts 总开关保护——关闭时跳过展开
-                    val macroExpanded = expandMacrosIfAllowed(
-                        expander = tavernScriptRegistry,
-                        text = regexApplied,
-                        context = MacroExpandContext(
+                    val macroContext = MacroExpandContext(
                             userName = settingsStore.settingsFlow.value.displaySetting.userNickname
                                 .ifBlank { "User" },
                             charName = assistant.name,
                             conversationId = conversationId.toString(),
-                        ),
-                        allowScripts = settingsStore.settingsFlow.value.runtimePermissions.allowScripts,
-                    )
+                        )
+                    val macroExpanded = if (settingsStore.settingsFlow.value.runtimePermissions.allowScripts) {
+                        tavernScriptRegistry.expandMacrosAsync(regexApplied, macroContext)
+                    } else regexApplied
                     part.copy(text = macroExpanded)
                 }
 

@@ -1,6 +1,8 @@
 package me.rerere.rikkahub.data.ai.slash
 
+import android.content.Context
 import com.whl.quickjs.wrapper.QuickJSContext
+import me.rerere.rikkahub.service.TavernScriptRunnerClient
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -57,7 +59,7 @@ private const val SEND_HOOK_KEY = "__send_hook__"
  * QuickJS 原生库不可用时（如 JVM 单测环境）自动降级为无引擎模式：
  * 注册/列表/配额照常工作，展开返回原文，执行返回 error 兜底。
  */
-class TavernScriptRegistry : MacroExpander {
+class TavernScriptRegistry(context: Context? = null) : MacroExpander {
 
     private class MacroEntry(val name: String, val source: String)
 
@@ -79,6 +81,7 @@ class TavernScriptRegistry : MacroExpander {
     private val loadedMacros = ConcurrentHashMap<String, Boolean>()
     private val loadedSlashCommands = ConcurrentHashMap<String, Boolean>()
     private val sendHook = AtomicReference<MacroEntry?>()
+    private val runnerClient = context?.applicationContext?.let(::TavernScriptRunnerClient)
 
     private fun macroKey(name: String): String = name.lowercase(Locale.ROOT)
 
@@ -213,6 +216,38 @@ class TavernScriptRegistry : MacroExpander {
         val entry = sendHook.get() ?: return null
         if (!ensureMacroLoaded(SEND_HOOK_KEY, entry.source)) return null
         return callGlobal(macroGlobalName(SEND_HOOK_KEY), args)
+    }
+
+    suspend fun expandMacrosAsync(text: String, context: MacroExpandContext): String {
+        if (runnerClient == null) return expandMacros(text, context)
+        val macroRegex = Regex("\\{\\{([A-Za-z_][A-Za-z0-9_]*)(?:::([^}]*))?\\}\\}")
+        var cursor = 0
+        val result = StringBuilder()
+        for (match in macroRegex.findAll(text)) {
+            result.append(text, cursor, match.range.first)
+            val entry = macros[macroKey(match.groupValues[1])]
+            val expanded = entry?.let { runnerClient.invoke(it.source, match.groupValues[2], MACRO_EXECUTION_TIMEOUT_MS) }
+            result.append(expanded ?: match.value)
+            cursor = match.range.last + 1
+        }
+        return result.append(text, cursor, text.length).toString()
+    }
+
+    suspend fun expandSendHookAsync(args: String): String? {
+        val entry = sendHook.get() ?: return null
+        return if (runnerClient != null) {
+            runnerClient.invoke(entry.source, args, MACRO_EXECUTION_TIMEOUT_MS)
+        } else {
+            expandSendHook(args)
+        }
+    }
+
+    suspend fun executeSlashCommandAsync(name: String, args: String, context: MacroExpandContext): SlashCommandResult? {
+        val entry = slashCommands[name] ?: return null
+        if (runnerClient == null) return executeSlashCommand(name, args, context)
+        val result = runnerClient.invoke(entry.source, args, MACRO_EXECUTION_TIMEOUT_MS)
+            ?: return SlashCommandResult(error = "callback execution failed")
+        return SlashCommandResult(text = result)
     }
 
     fun executeSlashCommand(name: String, args: String, context: MacroExpandContext): SlashCommandResult? {

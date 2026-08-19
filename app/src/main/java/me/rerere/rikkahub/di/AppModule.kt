@@ -86,7 +86,7 @@ val appModule = module {
     }
 
     single {
-        TavernScriptRegistry()
+        TavernScriptRegistry(get())
     }
 
     single {

@@ -450,7 +450,7 @@ internal class TavernRuntimeController(
         if (!permissionStore.current().allowMacroRegister) return text
         val expanded = withTimeoutOrNull(timeoutMs) {
             withContext(Dispatchers.IO) {
-                scriptRegistry.expandSendHook(text)
+                scriptRegistry.expandSendHookAsync(text)
             }
         }
         // 展开失败（引擎不可用/超时/异常）→ best-effort 原样
