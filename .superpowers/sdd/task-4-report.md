@@ -105,3 +105,9 @@ settings; failed deletes are not journaled; and static replay retains CSP-permit
 
 Final verification for this wave: full JVM `100 classes / 734 tests / 0 failures / 0 errors` (`BUILD SUCCESSFUL in 13s`),
 then `:app:compileDebugKotlin :app:assembleDebug` (`BUILD SUCCESSFUL in 17s`).
+
+The final review loop moved picker-disabled default selection onto the same real WebView-ready commit boundary (automatic
+first-candidate selection after ready), blocks native send without clearing input while a candidate loads, and makes
+failure rollback compare-and-restore so concurrent same-key settings/world updates survive. The obsolete duplicate staging
+path was removed. Combined full JVM + compile + assemble verification completed with `BUILD SUCCESSFUL in 26s`
+(`100 classes / 734 tests / 0 failures / 0 errors`).

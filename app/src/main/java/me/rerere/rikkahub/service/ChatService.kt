@@ -189,16 +189,30 @@ private fun rollbackGreetingSettingsJournal(
     before: Settings,
     journal: TavernGreetingMutationJournal,
 ): Settings {
-    val globalRollback = journal.globalVariables.keys.associateWith { before.tavernGlobalVariables[it] }
+    val globalRollback = journal.globalVariables.mapNotNull { (key, applied) ->
+        val stillApplied = if (applied == null) {
+            !current.tavernGlobalVariables.containsKey(key)
+        } else {
+            current.tavernGlobalVariables[key] == applied
+        }
+        if (stillApplied) key to before.tavernGlobalVariables[key] else null
+    }.toMap()
     val touchedWorld = journal.worldDeletes + journal.worldUpserts.keys
     val beforeWorld = SettingsBackedTavernWorldRepository(object : TavernWorldSettingsGateway {
         override fun currentSettings() = before
         override fun updateSettings(transform: (Settings) -> Settings) = Unit
     }).listEntries().associateBy { (it["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty() }
+    val currentWorld = SettingsBackedTavernWorldRepository(object : TavernWorldSettingsGateway {
+        override fun currentSettings() = current
+        override fun updateSettings(transform: (Settings) -> Settings) = Unit
+    }).listEntries().associateBy { (it["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty() }
+    val safeWorldIds = touchedWorld.filter { id ->
+        if (id in journal.worldDeletes) id !in currentWorld else currentWorld[id] == journal.worldUpserts[id]
+    }.toSet()
     val rollbackJournal = TavernGreetingMutationJournal(
         globalVariables = globalRollback,
-        worldUpserts = touchedWorld.mapNotNull { id -> beforeWorld[id]?.let { id to it } }.toMap(),
-        worldDeletes = touchedWorld.filterNot(beforeWorld::containsKey).toSet(),
+        worldUpserts = safeWorldIds.mapNotNull { id -> beforeWorld[id]?.let { id to it } }.toMap(),
+        worldDeletes = safeWorldIds.filterNot(beforeWorld::containsKey).toSet(),
     )
     return applyGreetingSettingsJournal(current, rollbackJournal)
 }
@@ -605,10 +619,6 @@ class ChatService(
             updateConversation(conversationId, newConversation)
             if (card != null && card.allGreetings().isNotEmpty()) {
                 val greetingSession = prepareGreetingSession(conversationId, newConversation, card)
-                if (!currentSettings.displaySetting.autoShowGreetingPicker) {
-                    greetingSession?.candidates?.firstOrNull()?.let { greetingSession.commit(it.id, requireReady = false) }
-                    greetingSessionFlows[conversationId]?.value = null
-                }
             }
         }
     }
@@ -793,24 +803,6 @@ class ChatService(
         apply = { before ->
             val ownerId = conversationId.toString()
             val beforeSettings = before.settings
-            var stagedSettings = beforeSettings.copy(
-                tavernGlobalVariables = rebaseGreetingGlobalVariables(
-                    beforeSettings.tavernGlobalVariables,
-                    candidate.journal,
-                ),
-            )
-            val stagingGateway = object : TavernWorldSettingsGateway {
-                override fun currentSettings() = stagedSettings
-                override fun updateSettings(
-                    transform: (Settings) -> Settings,
-                ) {
-                    stagedSettings = transform(stagedSettings)
-                }
-            }
-            val stagedWorld = SettingsBackedTavernWorldRepository(stagingGateway)
-            candidate.journal.worldDeletes.forEach(stagedWorld::deleteEntry)
-            candidate.journal.worldUpserts.values.forEach(stagedWorld::upsertEntry)
-
             val mergedConversation = mergeCommittedGreeting(before.conversation, candidate)
             check(
                 tavernScriptRegistry.registerBatch(

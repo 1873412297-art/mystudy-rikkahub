@@ -391,6 +391,11 @@ class TavernGreetingSession private constructor(
         activeCandidates.firstOrNull { it.id == candidateId }?.runtime?.markReady()
     }
 
+    fun isSelectedCandidateReady(): Boolean = activeCandidates
+        .firstOrNull { it.id == selectedCandidateId }
+        ?.runtime
+        ?.isReady() == true
+
     companion object {
         fun create(
             conversation: Conversation,

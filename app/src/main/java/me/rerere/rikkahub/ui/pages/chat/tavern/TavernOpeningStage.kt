@@ -44,12 +44,14 @@ internal fun TavernOpeningStage(
     assistant: Assistant,
     settings: Settings,
     onCommit: (Uuid) -> Unit,
+    autoCommitFirst: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val candidates = session.candidates
     if (candidates.isEmpty()) return
     var selectedIndex by rememberSaveable(session.conversationId) { mutableIntStateOf(0) }
     val readyCandidates = remember(session) { mutableStateMapOf<Uuid, Boolean>() }
+    var autoCommitStarted by remember(session) { androidx.compose.runtime.mutableStateOf(false) }
     selectedIndex = selectedIndex.coerceIn(candidates.indices)
     LaunchedEffect(session, selectedIndex) {
         if (!session.isLocked) session.selectCandidate(candidates[selectedIndex].id)
@@ -83,6 +85,10 @@ internal fun TavernOpeningStage(
                 onRenderStatus = { status ->
                     readyCandidates[candidate.id] = status == TavernConversationRenderStatus.READY
                     if (status == TavernConversationRenderStatus.READY) session.markCandidateReady(candidate.id)
+                    if (autoCommitFirst && index == 0 && status == TavernConversationRenderStatus.READY && !autoCommitStarted) {
+                        autoCommitStarted = true
+                        onCommit(candidate.id)
+                    }
                 },
                 modifier = Modifier
                     .fillMaxSize()

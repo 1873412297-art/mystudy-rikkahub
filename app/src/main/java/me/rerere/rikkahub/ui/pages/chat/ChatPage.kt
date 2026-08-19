@@ -366,6 +366,9 @@ private fun ChatPageContent(
         }
     }
     val hasUserMessage = conversation.currentMessages.any { it.role == MessageRole.USER }
+    val activeGreetingSession = greetingSession?.takeIf {
+        !it.isLocked && it.candidates.isNotEmpty() && !hasUserMessage
+    }
     val tavernPromptTraceEligible = remember(assistant, setting.assistants) {
         assistant.isTavernPromptTraceEligible(setting.assistants)
     }
@@ -531,6 +534,10 @@ private fun ChatPageContent(
                         )
                     },
                     onSendClick = {
+                        if (activeGreetingSession != null && !activeGreetingSession.isSelectedCandidateReady()) {
+                            toaster.show("开场仍在加载，请稍候", type = ToastType.Warning)
+                            return@ChatInput
+                        }
                         if (currentChatModel == null) {
                             toaster.show("请先选择模型", type = ToastType.Error)
                             return@ChatInput
@@ -558,6 +565,10 @@ private fun ChatPageContent(
                         inputState.clearInput()
                     },
                     onLongSendClick = {
+                        if (activeGreetingSession != null && !activeGreetingSession.isSelectedCandidateReady()) {
+                            toaster.show("开场仍在加载，请稍候", type = ToastType.Warning)
+                            return@ChatInput
+                        }
                         if (inputState.isEditing()) {
                             vm.handleMessageEdit(
                                 parts = inputState.getContents(),
@@ -632,9 +643,6 @@ private fun ChatPageContent(
                 },
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
-            val activeGreetingSession = greetingSession?.takeIf {
-                !it.isLocked && it.candidates.isNotEmpty() && !hasUserMessage
-            }
             val tavernDecision = remember(assistant, conversation) {
                 resolveTavernPresentation(assistant, conversation)
             }
@@ -647,6 +655,7 @@ private fun ChatPageContent(
                     assistant = assistant,
                     settings = setting,
                     onCommit = vm::commitGreetingCandidate,
+                    autoCommitFirst = !setting.displaySetting.autoShowGreetingPicker,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             } else if (useTavernWeb) {
