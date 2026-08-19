@@ -89,6 +89,7 @@ import me.rerere.rikkahub.data.model.tavernOpeningRef
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.group.GroupDirectorCommandStatus
+import me.rerere.rikkahub.service.tavern.resolveGreetingNavigation
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.ai.completion.GroupMentionCompletionProvider
@@ -184,12 +185,17 @@ fun ChatPage(
     val inputState = vm.inputState
 
     // 初始化输入状态（处理传入的 files 和 text 参数）
-    LaunchedEffect(greetingIndex, greeting) {
-        if (greetingIndex != null) {
-            vm.selectInitialGreeting(greetingIndex)
-        } else greeting?.base64Decode()?.let { decodedGreeting ->
-            if (decodedGreeting.isNotBlank()) {
-                vm.applyInitialGreeting(decodedGreeting)
+    LaunchedEffect(greetingIndex, greeting, setting.assistants, conversation.assistantId) {
+        val assistant = setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
+        val greetings = assistant.tavernCardJson
+            ?.let(TavernCharacterCard::fromJson)
+            ?.allGreetings()
+            .orEmpty()
+        resolveGreetingNavigation(greetingIndex, greeting, greetings)?.let { navigation ->
+            if (navigation.greetingIndex != null) {
+                vm.selectInitialGreeting(navigation.greetingIndex)
+            } else if (!navigation.legacyGreeting.isNullOrBlank()) {
+                vm.applyInitialGreeting(navigation.legacyGreeting)
             }
         }
     }

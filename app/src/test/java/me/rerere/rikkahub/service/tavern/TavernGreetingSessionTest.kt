@@ -85,6 +85,7 @@ class TavernGreetingSessionTest {
         assertTrue(controller.dispatch(request("messages.updateCurrent", "patch" to JsonPrimitive("rewritten"))).ok)
         assertTrue(controller.dispatch(request("macros.register", "name" to "route", "source" to "() => 'A'")).ok)
         assertTrue(controller.dispatch(request("slash.register", "name" to "choose", "source" to "() => 'A'")).ok)
+        assertTrue(controller.dispatch(request("sendHook.register", "source" to "() => 'hooked'")).ok)
 
         val overlay = first.overlay()
         assertEquals(JsonPrimitive(9), overlay.chatVariables["hp"])
@@ -93,8 +94,20 @@ class TavernGreetingSessionTest {
         assertEquals("rewritten", overlay.messages.single().toText())
         assertTrue("route" in overlay.registrations.macros)
         assertTrue("choose" in overlay.registrations.slashCommands)
+        assertEquals("() => 'hooked'", overlay.registrations.sendHookSource)
         assertNull(second.overlay().chatVariables["hp"])
         assertTrue(second.overlay().worldEntries.isEmpty())
+    }
+
+    @Test
+    fun `candidate overlay flow publishes runtime mutations for context repush`() {
+        val candidate = greetingSession(card = card).candidates.first()
+        val before = candidate.runtime.overlayFlow.value
+
+        candidate.runtime.setVariable(TavernGreetingVariableScope.CHAT, "hp", JsonPrimitive(8))
+
+        assertNotEquals(before, candidate.runtime.overlayFlow.value)
+        assertEquals(JsonPrimitive(8), candidate.runtime.overlayFlow.value.chatVariables["hp"])
     }
 
     @Test

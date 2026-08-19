@@ -142,13 +142,20 @@ internal class TavernSendHookControllerBinding(
     private val store: TavernSendHookStore,
     private val controller: TavernRuntimeController,
     private val enabled: Boolean,
+    private val conversationId: Uuid? = null,
 ) {
     fun attach() {
-        if (enabled) store.activeController = controller
+        if (!enabled) return
+        if (conversationId == null) store.activeController = controller else store.attach(conversationId, controller)
     }
 
     fun detach() {
-        if (enabled && store.activeController === controller) store.activeController = null
+        if (!enabled) return
+        if (conversationId == null) {
+            if (store.activeController === controller) store.activeController = null
+        } else {
+            store.detach(conversationId, controller)
+        }
     }
 }
 

@@ -363,7 +363,7 @@ internal class TavernRuntimeController(
             ?: return badRequest(request, "macros.register requires params.name")
         val source = request.params.getString("source")
             ?: return badRequest(request, "macros.register requires params.source")
-        val ok = scriptRegistry.registerMacro(name, source)
+        val ok = scriptRegistry.registerMacro(name, source, ownerId = conversationId?.toString())
         if (ok) registrationObserver.onMacroRegistered(name, source)
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(ok))
     }
@@ -374,7 +374,12 @@ internal class TavernRuntimeController(
         }
         val name = request.params.getString("name")
             ?: return badRequest(request, "macros.remove requires params.name")
-        scriptRegistry.removeMacro(name)
+        val ownerId = conversationId?.toString()
+        if (ownerId != null && scriptRegistry.hasOwnedMacro(name, ownerId)) {
+            scriptRegistry.removeMacro(name, ownerId = ownerId)
+        } else {
+            scriptRegistry.removeMacro(name)
+        }
         registrationObserver.onMacroRemoved(name)
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
     }
@@ -382,7 +387,7 @@ internal class TavernRuntimeController(
     private fun listMacros(request: TavernRuntimeRequest): TavernRuntimeResponse {
         return TavernRuntimeResponse.success(
             request.id,
-            JsonArray(scriptRegistry.listMacros().map { JsonPrimitive(it) }),
+            JsonArray(scriptRegistry.listMacros(ownerId = conversationId?.toString()).map { JsonPrimitive(it) }),
         )
     }
 
@@ -397,7 +402,13 @@ internal class TavernRuntimeController(
         val aliases = (request.params["aliases"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }
             ?: emptyList()
         val helpString = request.params.getString("helpString") ?: ""
-        val ok = scriptRegistry.registerSlashCommand(name, source, aliases, helpString)
+        val ok = scriptRegistry.registerSlashCommand(
+            name,
+            source,
+            aliases,
+            helpString,
+            ownerId = conversationId?.toString(),
+        )
         if (ok) registrationObserver.onSlashCommandRegistered(name, source, aliases, helpString)
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(ok))
     }
@@ -408,7 +419,12 @@ internal class TavernRuntimeController(
         }
         val name = request.params.getString("name")
             ?: return badRequest(request, "slash.unregister requires params.name")
-        scriptRegistry.removeSlashCommand(name)
+        val ownerId = conversationId?.toString()
+        if (ownerId != null && scriptRegistry.hasOwnedSlashCommand(name, ownerId)) {
+            scriptRegistry.removeSlashCommand(name, ownerId = ownerId)
+        } else {
+            scriptRegistry.removeSlashCommand(name)
+        }
         registrationObserver.onSlashCommandRemoved(name)
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
     }
@@ -440,12 +456,21 @@ internal class TavernRuntimeController(
     }
 
     private fun registerSendHookInternal(request: TavernRuntimeRequest, source: String): TavernRuntimeResponse {
-        if (!scriptRegistry.registerMacro(SEND_HOOK_MACRO_NAME, source)) {
+        if (!scriptRegistry.registerMacro(SEND_HOOK_MACRO_NAME, source, ownerId = conversationId?.toString())) {
             return badRequest(request, "sendHook.register source exceeds the 64KB limit")
         }
         sendHookSource.set(source)
+        registrationObserver.onSendHookRegistered(source)
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
     }
+
+    internal fun installSendHook(source: String): Boolean {
+        if (!scriptRegistry.registerMacro(SEND_HOOK_MACRO_NAME, source, ownerId = conversationId?.toString())) return false
+        sendHookSource.set(source)
+        return true
+    }
+
+    internal fun hasSendHook(): Boolean = sendHookSource.get() != null
 
     /**
      * 发送前 best-effort 文本变换：把注册的 sendHook 源码作为特殊宏单宏直调执行。
@@ -476,6 +501,7 @@ internal interface TavernRuntimeRegistrationObserver {
     fun onMacroRemoved(name: String)
     fun onSlashCommandRegistered(name: String, source: String, aliases: List<String>, helpString: String)
     fun onSlashCommandRemoved(name: String)
+    fun onSendHookRegistered(source: String)
 
     companion object {
         val NONE = object : TavernRuntimeRegistrationObserver {
@@ -488,6 +514,7 @@ internal interface TavernRuntimeRegistrationObserver {
                 helpString: String,
             ) = Unit
             override fun onSlashCommandRemoved(name: String) = Unit
+            override fun onSendHookRegistered(source: String) = Unit
         }
     }
 }

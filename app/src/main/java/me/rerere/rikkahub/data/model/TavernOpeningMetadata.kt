@@ -42,6 +42,19 @@ fun UIMessagePart.Text.tavernOpeningRef(): TavernOpeningRef? {
     return TavernOpeningRef(greetingIndex, contentFingerprint, cardFingerprint)
 }
 
+fun UIMessagePart.Text.markTavernOpeningRuntimeExecuted(): UIMessagePart.Text {
+    require(tavernOpeningRef() != null) { "Only typed Tavern openings can be marked as executed" }
+    return copy(
+        metadata = buildJsonObject {
+            metadata.orEmpty().forEach { (key, value) -> put(key, value) }
+            put(OPENING_RUNTIME_EXECUTED_KEY, true)
+        },
+    )
+}
+
+fun UIMessagePart.Text.isTavernOpeningRuntimeExecuted(): Boolean =
+    (metadata?.get(OPENING_RUNTIME_EXECUTED_KEY) as? JsonPrimitive)?.content == "true"
+
 fun inferLegacyOpening(message: UIMessage, card: TavernCharacterCard): TavernOpeningRef? {
     if (message.role != MessageRole.ASSISTANT || message.parts.size != 1 || card.firstMes.isBlank()) return null
     val text = message.parts.singleOrNull() as? UIMessagePart.Text ?: return null
@@ -97,3 +110,4 @@ private const val OPENING_KIND = "tavern_opening"
 private const val OPENING_INDEX_KEY = "greetingIndex"
 private const val OPENING_CONTENT_FINGERPRINT_KEY = "contentFingerprint"
 private const val OPENING_CARD_FINGERPRINT_KEY = "cardFingerprint"
+private const val OPENING_RUNTIME_EXECUTED_KEY = "runtimeExecuted"

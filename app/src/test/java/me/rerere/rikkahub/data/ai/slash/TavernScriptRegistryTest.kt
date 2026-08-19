@@ -179,4 +179,35 @@ class TavernScriptRegistryTest {
         assertEquals(listOf("hello"), registry.listMacros())
         assertEquals(listOf("wave"), registry.listSlashCommands().map { it.name })
     }
+
+    @Test
+    fun `conversation owned registrations do not overwrite another conversation`() {
+        val registry = registry()
+        registry.registerBatch(mapOf("route" to "() => 'one'"), emptyMap(), ownerId = "one")
+        registry.registerBatch(mapOf("route" to "() => 'two'"), emptyMap(), ownerId = "two")
+
+        assertEquals(listOf("route"), registry.listMacros(ownerId = "one"))
+        assertEquals(listOf("route"), registry.listMacros(ownerId = "two"))
+        assertTrue(registry.hasMacro("route", ownerId = "one"))
+        assertTrue(registry.hasMacro("route", ownerId = "two"))
+        assertFalse(registry.hasMacro("route", ownerId = "three"))
+    }
+
+    @Test
+    fun `owned batch replaces removed registrations for that conversation only`() {
+        val registry = registry()
+        registry.registerBatch(
+            macros = mapOf("keep" to "() => 1", "remove" to "() => 2"),
+            slashCommands = emptyMap(),
+            ownerId = "chat",
+        )
+
+        registry.registerBatch(
+            macros = mapOf("keep" to "() => 3"),
+            slashCommands = emptyMap(),
+            ownerId = "chat",
+        )
+
+        assertEquals(listOf("keep"), registry.listMacros(ownerId = "chat"))
+    }
 }

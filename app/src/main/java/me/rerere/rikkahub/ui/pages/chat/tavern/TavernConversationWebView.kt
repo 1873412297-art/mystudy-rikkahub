@@ -100,7 +100,8 @@ internal fun TavernConversationPane(
 ) {
     val statusVariableStore: StatusVariableStore = koinInject()
     val persistedVariables by statusVariableStore.getState(conversation.id).collectAsState()
-    val variables = candidateRuntime?.snapshot()?.chatVariables ?: persistedVariables
+    val candidateOverlay = candidateRuntime?.overlayFlow?.collectAsState()?.value
+    val variables = candidateOverlay?.chatVariables ?: persistedVariables
     val colorScheme = MaterialTheme.colorScheme
     val card = remember(assistant.tavernCardJson) {
         assistant.tavernCardJson?.let { runCatching { TavernCharacterCard.fromJson(it) }.getOrNull() }
@@ -137,8 +138,8 @@ internal fun TavernConversationPane(
             streaming = loading,
         )
     }
-    val worldEntries = remember(settings.lorebooks, conversation.lorebookIds, candidateRuntime) {
-        candidateRuntime?.snapshot()?.worldEntries?.map { entry ->
+    val worldEntries = remember(settings.lorebooks, conversation.lorebookIds, candidateOverlay) {
+        candidateOverlay?.worldEntries?.map { entry ->
             ((entry["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "Entry") to
                 ((entry["content"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "")
         } ?: settings.lorebooks
@@ -203,11 +204,15 @@ internal fun TavernConversationWebView(
     val sendHookStore: TavernSendHookStore = koinInject()
     val appSettings by settingsStore.settingsFlow.collectAsState()
     val runtimeScope = rememberCoroutineScope()
+    val conversationUuid = remember(snapshot.conversationId) {
+        runCatching { kotlin.uuid.Uuid.parse(snapshot.conversationId) }.getOrNull()
+    }
+    val isolatedScriptRegistry = remember { TavernScriptRegistry() }
     val permissionStore = remember { TavernRuntimePermissionStore(appSettings.runtimePermissions) }
     val latestHeaderSource by rememberUpdatedState(headerSource)
-    val runtimeController = remember(snapshot.conversationId, runtimeBindings) {
+    val runtimeController = remember(snapshot.conversationId, runtimeBindings, ownsSendHookController) {
         TavernRuntimeController(
-            conversationId = runCatching { kotlin.uuid.Uuid.parse(snapshot.conversationId) }.getOrNull(),
+            conversationId = conversationUuid,
             worldRepository = runtimeBindings?.worldRepository
                 ?: SettingsBackedTavernWorldRepository(SettingsStoreTavernWorldGateway(settingsStore)),
             permissionStore = permissionStore,
@@ -218,7 +223,8 @@ internal fun TavernConversationWebView(
                 ),
             hostEventFlow = hostEventBus.events,
             hostEventScope = runtimeScope,
-            scriptRegistry = runtimeBindings?.scriptRegistry ?: scriptRegistry,
+            scriptRegistry = runtimeBindings?.scriptRegistry
+                ?: if (ownsSendHookController) scriptRegistry else isolatedScriptRegistry,
             headerSource = { latestHeaderSource() },
             registrationObserver = runtimeBindings?.registrationObserver
                 ?: me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeRegistrationObserver.NONE,
@@ -230,6 +236,7 @@ internal fun TavernConversationWebView(
             store = sendHookStore,
             controller = runtimeController,
             enabled = ownsSendHookController,
+            conversationId = conversationUuid,
         )
     }
     val latestSnapshot by rememberUpdatedState(snapshot)

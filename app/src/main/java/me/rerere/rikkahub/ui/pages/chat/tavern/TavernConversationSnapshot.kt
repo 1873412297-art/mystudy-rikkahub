@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.isTavernOpeningRuntimeExecuted
 
 @Serializable
 data class TavernConversationSnapshot(
@@ -44,6 +45,7 @@ data class TavernConversationMessage(
 data class TavernConversationTextPart(
     val text: String,
     val renderMode: UIMessagePart.RenderMode = UIMessagePart.RenderMode.MARKDOWN,
+    val executeScripts: Boolean = true,
 )
 
 @Serializable
@@ -114,7 +116,11 @@ fun buildTavernConversationSnapshot(
                     require(part is UIMessagePart.Text) {
                         "Tavern conversation snapshots only support selected Text parts, got ${part::class.simpleName}"
                     }
-                    TavernConversationTextPart(text = part.text, renderMode = part.renderMode)
+                    TavernConversationTextPart(
+                        text = part.text,
+                        renderMode = part.renderMode,
+                        executeScripts = !part.isTavernOpeningRuntimeExecuted(),
+                    )
                 },
             ),
         )

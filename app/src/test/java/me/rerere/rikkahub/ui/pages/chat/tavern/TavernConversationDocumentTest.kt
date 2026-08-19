@@ -34,10 +34,21 @@ class TavernConversationDocumentTest {
         assertTrue(template.contains("data-render-mode=\"html\""))
         assertTrue(template.contains("data-html-frame"))
         assertTrue(template.contains("data-fullscreen-target"))
-        assertTrue(template.contains("iframe.srcdoc = injectIframeRuntime(part.text"))
+        assertTrue(template.contains("? suppressRepeatedRuntime(part.text)"))
+        assertTrue(template.contains(": injectIframeRuntime(part.text"))
         assertTrue(template.contains("window.__RIKKAHUB_RUNTIME_SOURCE__"))
         assertTrue(template.contains("__rikkahubFrameHeight"))
         assertTrue(template.contains("sandbox"))
+    }
+
+    @Test
+    fun `committed opening removes scripts and event handlers before replay`() {
+        val suppression = template.substringAfter("function suppressRepeatedRuntime")
+            .substringBefore("function renderHtmlPart")
+
+        assertTrue(suppression.contains("querySelectorAll('script')"))
+        assertTrue(suppression.contains("name.indexOf('on') === 0"))
+        assertTrue(suppression.contains("javascript:"))
     }
 
     @Test

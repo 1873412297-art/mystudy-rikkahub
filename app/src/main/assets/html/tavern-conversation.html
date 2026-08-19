@@ -255,6 +255,21 @@
         return '<!DOCTYPE html>\n' + parsed.documentElement.outerHTML;
       }
 
+      function suppressRepeatedRuntime(rawHtml) {
+        var parsed = new DOMParser().parseFromString(rawHtml, 'text/html');
+        parsed.querySelectorAll('script').forEach(function (node) { node.remove(); });
+        parsed.querySelectorAll('*').forEach(function (node) {
+          Array.from(node.attributes || []).forEach(function (attribute) {
+            var name = String(attribute.name || '').toLowerCase();
+            var value = String(attribute.value || '').trim().toLowerCase();
+            if (name.indexOf('on') === 0 || value.indexOf('javascript:') === 0) {
+              node.removeAttribute(attribute.name);
+            }
+          });
+        });
+        return '<!DOCTYPE html>\n' + parsed.documentElement.outerHTML;
+      }
+
       function renderHtmlPart(part, node, message, partIndex) {
         var fragment = rawHtmlTemplate.content.cloneNode(true);
         var section = fragment.querySelector('[data-render-mode="html"]');
@@ -264,7 +279,9 @@
         section.dataset.messageId = message.id;
         iframe.dataset.messageId = message.id;
         iframe.dataset.fullscreenTarget = target;
-        iframe.srcdoc = injectIframeRuntime(part.text, message.id, target);
+        iframe.srcdoc = part.executeScripts === false
+          ? suppressRepeatedRuntime(part.text)
+          : injectIframeRuntime(part.text, message.id, target);
         iframe.addEventListener('load', function () {
           try { window.TavernConversationBridge.ready(actionToken); } catch (_) {}
         });

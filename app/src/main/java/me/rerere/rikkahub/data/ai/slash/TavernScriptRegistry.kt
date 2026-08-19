@@ -25,6 +25,11 @@ data class SlashCommandRegistration(
     val helpString: String = "",
 )
 
+data class TavernScriptRegistrationSnapshot(
+    val macros: Map<String, String>,
+    val slashCommands: Map<String, SlashCommandRegistration>,
+)
+
 /** 宏/命令执行结果（与 SlashScriptEngine 的 Result 语义对齐） */
 data class SlashCommandResult(
     val text: String? = null,
@@ -63,12 +68,13 @@ private const val MACRO_EXECUTION_TIMEOUT_MS = 2_000L
  */
 class TavernScriptRegistry : MacroExpander {
 
+    private data class RegistrationKey(val ownerId: String?, val name: String)
     private class MacroEntry(val name: String, val source: String)
 
     private class SlashEntry(val info: SlashCommandInfo, val source: String)
 
-    private val macros = ConcurrentHashMap<String, MacroEntry>()
-    private val slashCommands = ConcurrentHashMap<String, SlashEntry>()
+    private val macros = ConcurrentHashMap<RegistrationKey, MacroEntry>()
+    private val slashCommands = ConcurrentHashMap<RegistrationKey, SlashEntry>()
     private val registrationLock = Any()
 
     private val executor = Executors.newSingleThreadExecutor { runnable ->
@@ -81,8 +87,8 @@ class TavernScriptRegistry : MacroExpander {
     private var engineAvailable = true
 
     /** 已求值进共享 JS 上下文的宏/命令名集合（重注册时移除以重新求值） */
-    private val loadedMacros = ConcurrentHashMap<String, Boolean>()
-    private val loadedSlashCommands = ConcurrentHashMap<String, Boolean>()
+    private val loadedMacros = ConcurrentHashMap<RegistrationKey, Boolean>()
+    private val loadedSlashCommands = ConcurrentHashMap<RegistrationKey, Boolean>()
 
     private fun getOrCreateContext(): QuickJSContext? {
         contextRef.get()?.let { return it }
@@ -101,21 +107,23 @@ class TavernScriptRegistry : MacroExpander {
         }
     }
 
-    private fun macroGlobalName(name: String): String {
+    private fun macroGlobalName(key: RegistrationKey): String {
+        val name = key.name
         val sanitized = name.replace(Regex("[^A-Za-z0-9_]"), "_")
-        return "__rikkahub_macro_${sanitized}_${Integer.toHexString(name.hashCode())}"
+        return "__rikkahub_macro_${sanitized}_${Integer.toHexString(key.hashCode())}"
     }
 
-    private fun slashGlobalName(name: String): String {
+    private fun slashGlobalName(key: RegistrationKey): String {
+        val name = key.name
         val sanitized = name.replace(Regex("[^A-Za-z0-9_]"), "_")
-        return "__rikkahub_slash_${sanitized}_${Integer.toHexString(name.hashCode())}"
+        return "__rikkahub_slash_${sanitized}_${Integer.toHexString(key.hashCode())}"
     }
 
     /** 把宏源码求值成共享上下文中的全局函数（缓存；源码变化时由注册方移除缓存） */
-    private fun ensureMacroLoaded(name: String, source: String): Boolean {
-        if (loadedMacros.containsKey(name)) return true
+    private fun ensureMacroLoaded(key: RegistrationKey, source: String): Boolean {
+        if (loadedMacros.containsKey(key)) return true
         val context = getOrCreateContext() ?: return false
-        val script = "var ${macroGlobalName(name)} = ($source);"
+        val script = "var ${macroGlobalName(key)} = ($source);"
         val loaded = runOnExecutor<Boolean> {
             try {
                 context.evaluate(script)
@@ -124,14 +132,14 @@ class TavernScriptRegistry : MacroExpander {
                 false
             }
         } ?: false
-        if (loaded) loadedMacros[name] = true
+        if (loaded) loadedMacros[key] = true
         return loaded
     }
 
-    private fun ensureSlashLoaded(name: String, source: String): Boolean {
-        if (loadedSlashCommands.containsKey(name)) return true
+    private fun ensureSlashLoaded(key: RegistrationKey, source: String): Boolean {
+        if (loadedSlashCommands.containsKey(key)) return true
         val context = getOrCreateContext() ?: return false
-        val script = "var ${slashGlobalName(name)} = ($source);"
+        val script = "var ${slashGlobalName(key)} = ($source);"
         val loaded = runOnExecutor<Boolean> {
             try {
                 context.evaluate(script)
@@ -140,68 +148,123 @@ class TavernScriptRegistry : MacroExpander {
                 false
             }
         } ?: false
-        if (loaded) loadedSlashCommands[name] = true
+        if (loaded) loadedSlashCommands[key] = true
         return loaded
     }
 
-    fun registerMacro(name: String, source: String): Boolean = synchronized(registrationLock) {
+    fun registerMacro(name: String, source: String, ownerId: String? = null): Boolean = synchronized(registrationLock) {
+        val key = RegistrationKey(ownerId, name)
         if (source.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES) return false
-        if (macros.size >= MAX_REGISTRATIONS && !macros.containsKey(name)) return false
-        macros[name] = MacroEntry(name, source)
-        loadedMacros.remove(name) // 重新求值
+        val ownerCount = macros.keys.count { it.ownerId == ownerId }
+        if (ownerCount >= MAX_REGISTRATIONS && !macros.containsKey(key)) return false
+        macros[key] = MacroEntry(name, source)
+        loadedMacros.remove(key) // 重新求值
         return true
     }
 
-    fun removeMacro(name: String) = synchronized(registrationLock) {
-        macros.remove(name)
-        loadedMacros.remove(name)
+    fun removeMacro(name: String, ownerId: String? = null) = synchronized(registrationLock) {
+        val key = RegistrationKey(ownerId, name)
+        macros.remove(key)
+        loadedMacros.remove(key)
     }
 
-    fun listMacros(): List<String> = macros.keys.toList()
+    fun listMacros(ownerId: String? = null): List<String> = macros.keys
+        .filter { ownerId == null || it.ownerId == null || it.ownerId == ownerId }
+        .map { it.name }
+        .distinct()
+
+    fun hasMacro(name: String, ownerId: String? = null): Boolean =
+        macros.containsKey(RegistrationKey(ownerId, name)) ||
+            (ownerId != null && macros.containsKey(RegistrationKey(null, name)))
+
+    fun hasOwnedMacro(name: String, ownerId: String): Boolean =
+        macros.containsKey(RegistrationKey(ownerId, name))
 
     fun registerSlashCommand(
         name: String,
         callbackSource: String,
         aliases: List<String>,
         helpString: String,
+        ownerId: String? = null,
     ): Boolean = synchronized(registrationLock) {
+        val key = RegistrationKey(ownerId, name)
         if (callbackSource.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES) return false
-        if (slashCommands.size >= MAX_REGISTRATIONS && !slashCommands.containsKey(name)) return false
-        slashCommands[name] = SlashEntry(SlashCommandInfo(name, aliases, helpString), callbackSource)
-        loadedSlashCommands.remove(name) // 重新求值
+        val ownerCount = slashCommands.keys.count { it.ownerId == ownerId }
+        if (ownerCount >= MAX_REGISTRATIONS && !slashCommands.containsKey(key)) return false
+        slashCommands[key] = SlashEntry(SlashCommandInfo(name, aliases, helpString), callbackSource)
+        loadedSlashCommands.remove(key) // 重新求值
         return true
     }
 
-    fun removeSlashCommand(name: String) = synchronized(registrationLock) {
-        slashCommands.remove(name)
-        loadedSlashCommands.remove(name)
+    fun removeSlashCommand(name: String, ownerId: String? = null) = synchronized(registrationLock) {
+        val key = RegistrationKey(ownerId, name)
+        slashCommands.remove(key)
+        loadedSlashCommands.remove(key)
     }
+
+    fun hasOwnedSlashCommand(name: String, ownerId: String): Boolean =
+        slashCommands.containsKey(RegistrationKey(ownerId, name))
 
     /** Validates and applies a selected opening's registrations as one indivisible registry update. */
     fun registerBatch(
         macros: Map<String, String>,
         slashCommands: Map<String, SlashCommandRegistration>,
+        ownerId: String? = null,
     ): Boolean = synchronized(registrationLock) {
         if (macros.values.any { it.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES }) return false
         if (slashCommands.values.any { it.source.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES }) return false
-        if ((this.macros.keys + macros.keys).size > MAX_REGISTRATIONS) return false
-        if ((this.slashCommands.keys + slashCommands.keys).size > MAX_REGISTRATIONS) return false
+        if (macros.size > MAX_REGISTRATIONS || slashCommands.size > MAX_REGISTRATIONS) return false
+
+        if (ownerId != null) {
+            this.macros.keys.filter { it.ownerId == ownerId && it.name !in macros }.forEach {
+                this.macros.remove(it)
+                loadedMacros.remove(it)
+            }
+            this.slashCommands.keys.filter { it.ownerId == ownerId && it.name !in slashCommands }.forEach {
+                this.slashCommands.remove(it)
+                loadedSlashCommands.remove(it)
+            }
+        } else {
+            val projectedMacros = this.macros.keys.count { it.ownerId == null && it.name !in macros } + macros.size
+            val projectedSlash = this.slashCommands.keys.count { it.ownerId == null && it.name !in slashCommands } +
+                slashCommands.size
+            if (projectedMacros > MAX_REGISTRATIONS || projectedSlash > MAX_REGISTRATIONS) return false
+        }
 
         macros.forEach { (name, source) ->
-            this.macros[name] = MacroEntry(name, source)
-            loadedMacros.remove(name)
+            val key = RegistrationKey(ownerId, name)
+            this.macros[key] = MacroEntry(name, source)
+            loadedMacros.remove(key)
         }
         slashCommands.forEach { (name, registration) ->
-            this.slashCommands[name] = SlashEntry(
+            val key = RegistrationKey(ownerId, name)
+            this.slashCommands[key] = SlashEntry(
                 SlashCommandInfo(name, registration.aliases, registration.helpString),
                 registration.source,
             )
-            loadedSlashCommands.remove(name)
+            loadedSlashCommands.remove(key)
         }
         true
     }
 
-    fun listSlashCommands(): List<SlashCommandInfo> = slashCommands.values.map { it.info }
+    fun listSlashCommands(ownerId: String? = null): List<SlashCommandInfo> = slashCommands
+        .filterKeys { ownerId == null || it.ownerId == null || it.ownerId == ownerId }
+        .values
+        .map { it.info }
+        .distinctBy { it.name }
+
+    fun snapshot(ownerId: String? = null): TavernScriptRegistrationSnapshot = synchronized(registrationLock) {
+        TavernScriptRegistrationSnapshot(
+            macros = macros.filterKeys { it.ownerId == ownerId }.mapKeys { it.key.name }.mapValues { it.value.source },
+            slashCommands = slashCommands.filterKeys { it.ownerId == ownerId }.mapKeys { it.key.name }.mapValues {
+                SlashCommandRegistration(
+                    source = it.value.source,
+                    aliases = it.value.info.aliases,
+                    helpString = it.value.info.helpString,
+                )
+            },
+        )
+    }
 
     /**
      * 同步展开注册宏：`{{name::args}}` 形态。
@@ -225,17 +288,19 @@ class TavernScriptRegistry : MacroExpander {
      * 未注册/无可用引擎/执行失败 → null（调用方兜底原样）。
      */
     fun expandMacro(name: String, args: String, context: MacroExpandContext): String? {
-        val entry = macros[name] ?: return null
-        if (!ensureMacroLoaded(name, entry.source)) return null
-        return callGlobal(macroGlobalName(name), args)
+        val key = registrationKey(name, context.conversationId, macros) ?: return null
+        val entry = macros[key] ?: return null
+        if (!ensureMacroLoaded(key, entry.source)) return null
+        return callGlobal(macroGlobalName(key), args)
     }
 
     fun executeSlashCommand(name: String, args: String, context: MacroExpandContext): SlashCommandResult? {
-        val entry = slashCommands[name] ?: return null
-        if (!ensureSlashLoaded(name, entry.source)) {
+        val key = registrationKey(name, context.conversationId, slashCommands) ?: return null
+        val entry = slashCommands[key] ?: return null
+        if (!ensureSlashLoaded(key, entry.source)) {
             return SlashCommandResult(error = "callback evaluation failed")
         }
-        val result = callGlobal(slashGlobalName(name), args)
+        val result = callGlobal(slashGlobalName(key), args)
         if (result == null) return SlashCommandResult(error = "callback execution failed")
         return SlashCommandResult(text = result)
     }
@@ -267,6 +332,16 @@ class TavernScriptRegistry : MacroExpander {
         slashCommands.clear()
         loadedMacros.clear()
         loadedSlashCommands.clear()
+    }
+
+    private fun <T> registrationKey(
+        name: String,
+        ownerId: String?,
+        registrations: Map<RegistrationKey, T>,
+    ): RegistrationKey? {
+        val owned = ownerId?.let { RegistrationKey(it, name) }
+        if (owned != null && registrations.containsKey(owned)) return owned
+        return RegistrationKey(null, name).takeIf(registrations::containsKey)
     }
 
     private fun escapeJson(s: String): String {

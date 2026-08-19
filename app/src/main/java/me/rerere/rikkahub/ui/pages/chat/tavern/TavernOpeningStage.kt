@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -62,7 +63,7 @@ internal fun TavernOpeningStage(
 
     Box(modifier = modifier.fillMaxSize()) {
         candidates.forEachIndexed { index, candidate ->
-            val overlay = candidate.overlay()
+            val overlay by candidate.runtime.overlayFlow.collectAsState()
             val previewConversation = remember(conversation, candidate.id, overlay) {
                 conversation.copy(
                     messageNodes = overlay.messages.map { it.toMessageNode() },

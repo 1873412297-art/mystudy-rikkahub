@@ -3,6 +3,9 @@ package me.rerere.rikkahub.service.tavern
 import java.util.Base64
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -15,6 +18,7 @@ import me.rerere.rikkahub.data.model.TavernCharacterCard
 import me.rerere.rikkahub.data.model.TavernOpeningRef
 import me.rerere.rikkahub.data.model.openingMessage
 import me.rerere.rikkahub.data.model.openingRef
+import me.rerere.rikkahub.data.model.markTavernOpeningRuntimeExecuted
 import me.rerere.rikkahub.data.model.tavernOpeningRef
 import me.rerere.rikkahub.data.model.toMessageNode
 import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
@@ -36,6 +40,7 @@ data class TavernGreetingSlashRegistration(
 data class TavernGreetingRegistrations(
     val macros: Map<String, String> = emptyMap(),
     val slashCommands: Map<String, TavernGreetingSlashRegistration> = emptyMap(),
+    val sendHookSource: String? = null,
 )
 
 data class TavernGreetingOverlay(
@@ -58,14 +63,20 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
     private val worldEntries = initial.worldEntries.associateByTo(linkedMapOf()) { entryId(it) }
     private val macros = initial.registrations.macros.toMutableMap()
     private val slashCommands = initial.registrations.slashCommands.toMutableMap()
+    private var sendHookSource = initial.registrations.sendHookSource
     private val candidateScriptRegistry = TavernScriptRegistry()
+    private val _overlayFlow = MutableStateFlow(initial)
+    val overlayFlow: StateFlow<TavernGreetingOverlay> = _overlayFlow.asStateFlow()
 
     fun setVariable(scope: TavernGreetingVariableScope, key: String, value: JsonElement) = synchronized(lock) {
         variables(scope)[key] = value
+        publishLocked()
     }
 
     fun deleteVariable(scope: TavernGreetingVariableScope, key: String): Boolean = synchronized(lock) {
-        variables(scope).remove(key) != null
+        val removed = variables(scope).remove(key) != null
+        publishLocked()
+        removed
     }
 
     fun listVariables(scope: TavernGreetingVariableScope): JsonObject = synchronized(lock) {
@@ -79,16 +90,30 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
             entry.forEach { (key, value) -> put(key, value) }
             put("id", id)
         }
+        publishLocked()
         id
     }
 
-    fun deleteWorldEntry(id: String): Boolean = synchronized(lock) { worldEntries.remove(id) != null }
+    fun deleteWorldEntry(id: String): Boolean = synchronized(lock) {
+        val removed = worldEntries.remove(id) != null
+        publishLocked()
+        removed
+    }
 
-    fun updateOpening(message: UIMessage) = synchronized(lock) { messages = listOf(message) }
+    fun updateOpening(message: UIMessage) = synchronized(lock) {
+        messages = listOf(message)
+        publishLocked()
+    }
 
-    fun registerMacro(name: String, source: String) = synchronized(lock) { macros[name] = source }
+    fun registerMacro(name: String, source: String) = synchronized(lock) {
+        macros[name] = source
+        publishLocked()
+    }
 
-    fun removeMacro(name: String) = synchronized(lock) { macros.remove(name) }
+    fun removeMacro(name: String) = synchronized(lock) {
+        macros.remove(name)
+        publishLocked()
+    }
 
     fun registerSlashCommand(
         name: String,
@@ -97,18 +122,31 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
         helpString: String = "",
     ) = synchronized(lock) {
         slashCommands[name] = TavernGreetingSlashRegistration(source, aliases, helpString)
+        publishLocked()
     }
 
-    fun removeSlashCommand(name: String) = synchronized(lock) { slashCommands.remove(name) }
+    fun removeSlashCommand(name: String) = synchronized(lock) {
+        slashCommands.remove(name)
+        publishLocked()
+    }
 
-    fun snapshot(): TavernGreetingOverlay = synchronized(lock) {
-        TavernGreetingOverlay(
-            messages = messages.toList(),
-            chatVariables = JsonObject(chatVariables.toMap()),
-            globalVariables = JsonObject(globalVariables.toMap()),
-            worldEntries = worldEntries.values.toList(),
-            registrations = TavernGreetingRegistrations(macros.toMap(), slashCommands.toMap()),
-        )
+    fun registerSendHook(source: String) = synchronized(lock) {
+        sendHookSource = source
+        publishLocked()
+    }
+
+    fun snapshot(): TavernGreetingOverlay = _overlayFlow.value
+
+    private fun snapshotLocked(): TavernGreetingOverlay = TavernGreetingOverlay(
+        messages = messages.toList(),
+        chatVariables = JsonObject(chatVariables.toMap()),
+        globalVariables = JsonObject(globalVariables.toMap()),
+        worldEntries = worldEntries.values.toList(),
+        registrations = TavernGreetingRegistrations(macros.toMap(), slashCommands.toMap(), sendHookSource),
+    )
+
+    private fun publishLocked() {
+        _overlayFlow.value = snapshotLocked()
     }
 
     internal fun runtimeBindings(): TavernGreetingRuntimeBindings = TavernGreetingRuntimeBindings(
@@ -156,6 +194,8 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
         removeSlashCommand(name)
     }
 
+    override fun onSendHookRegistered(source: String) = registerSendHook(source)
+
     private fun writeCurrentMessage(patch: JsonElement) = synchronized(lock) {
         val replacementText = when (patch) {
             is JsonPrimitive -> patch.content
@@ -174,6 +214,7 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
                 },
             )
         )
+        publishLocked()
     }
 
     private fun variables(scope: TavernGreetingVariableScope) =
@@ -331,7 +372,17 @@ internal fun mergeCommittedGreeting(
         }
     }
     return conversation.copy(
-        messageNodes = retained + candidate.overlay.messages.map { it.toMessageNode() },
+        messageNodes = retained + candidate.overlay.messages.map { message ->
+            message.copy(
+                parts = message.parts.map { part ->
+                    if (part is me.rerere.ai.ui.UIMessagePart.Text && part.tavernOpeningRef() != null) {
+                        part.markTavernOpeningRuntimeExecuted()
+                    } else {
+                        part
+                    }
+                },
+            ).toMessageNode()
+        },
         statusVariables = candidate.overlay.chatVariables,
     )
 }

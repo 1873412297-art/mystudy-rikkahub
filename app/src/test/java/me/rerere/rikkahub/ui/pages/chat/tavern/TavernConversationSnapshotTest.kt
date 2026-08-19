@@ -8,7 +8,11 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
+import me.rerere.rikkahub.data.model.TavernOpeningRef
+import me.rerere.rikkahub.data.model.markTavernOpeningRuntimeExecuted
+import me.rerere.rikkahub.data.model.withTavernOpening
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.uuid.Uuid
@@ -77,6 +81,27 @@ class TavernConversationSnapshotTest {
 
         assertEquals(supported.id.toString(), snapshot.nodes.single().selectedMessage.id)
         assertEquals(2, snapshot.nodes.single().branchCount)
+    }
+
+    @Test
+    fun `committed opening snapshot disables a second script execution`() {
+        val openingPart = UIMessagePart.Text(
+            text = "<script>window.sideEffect()</script><p>hello</p>",
+            renderMode = UIMessagePart.RenderMode.HTML,
+        ).withTavernOpening(TavernOpeningRef(0, "content", "card"))
+            .markTavernOpeningRuntimeExecuted()
+        val opening = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(openingPart))
+
+        val snapshot = buildTavernConversationSnapshot(
+            conversation = conversation(MessageNode.of(opening)),
+            userName = "User",
+            characterName = "Alice",
+            themeCssVariables = emptyMap(),
+            cardCss = null,
+            streaming = false,
+        )
+
+        assertFalse(snapshot.nodes.single().selectedMessage.parts.single().executeScripts)
     }
 
     @Test

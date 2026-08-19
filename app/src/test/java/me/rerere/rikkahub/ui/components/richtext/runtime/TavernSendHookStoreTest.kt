@@ -4,6 +4,7 @@ import kotlinx.coroutines.runBlocking
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.model.TavernRuntimePermissions
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 class TavernSendHookStoreTest {
@@ -34,5 +35,38 @@ class TavernSendHookStoreTest {
         } finally {
             store.activeController = null
         }
+    }
+
+    @Test
+    fun `controllers are isolated by conversation and replay cannot replace the owner`() {
+        val store = TavernSendHookStore()
+        val firstId = kotlin.uuid.Uuid.random()
+        val secondId = kotlin.uuid.Uuid.random()
+        val first = TavernRuntimeController(conversationId = firstId)
+        val second = TavernRuntimeController(conversationId = secondId)
+        val replay = TavernRuntimeController(conversationId = firstId)
+
+        store.attach(firstId, first)
+        store.attach(secondId, second)
+
+        assertSame(first, store.controllerFor(firstId))
+        assertSame(second, store.controllerFor(secondId))
+        // A non-owner replay never calls attach and cannot displace the chat controller.
+        store.detach(firstId, replay)
+        assertSame(first, store.controllerFor(firstId))
+    }
+
+    @Test
+    fun `committed opening hook remains fallback until an active controller registers one`() {
+        val store = TavernSendHookStore()
+        val conversationId = kotlin.uuid.Uuid.random()
+        val committed = TavernRuntimeController(conversationId = conversationId)
+        val activeWithoutHook = TavernRuntimeController(conversationId = conversationId)
+        committed.installSendHook("() => 'chosen'")
+
+        store.installCommitted(conversationId, committed)
+        store.attach(conversationId, activeWithoutHook)
+
+        assertSame(committed, store.controllerFor(conversationId))
     }
 }
