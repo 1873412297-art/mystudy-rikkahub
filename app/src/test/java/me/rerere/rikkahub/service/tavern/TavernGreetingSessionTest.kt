@@ -199,6 +199,17 @@ class TavernGreetingSessionTest {
     }
 
     @Test
+    fun `commit request closes native send window before asynchronous persistence starts`() {
+        val session = greetingSession(card = card)
+        val candidate = session.candidates.first()
+        assertTrue(session.isSelectedCandidateReady())
+
+        session.markCommitRequested(candidate.id)
+
+        assertFalse(session.isSelectedCandidateReady())
+    }
+
+    @Test
     fun `failed commit keeps every candidate and leaves session unlocked`() = runBlocking {
         val session = greetingSession(card = card) { error("disk failed") }
         val ids = session.candidates.map { it.id }

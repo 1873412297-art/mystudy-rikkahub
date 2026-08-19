@@ -47,7 +47,7 @@ internal fun TavernOpeningStage(
     autoCommitFirst: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val candidates = session.candidates
+    val candidates = if (autoCommitFirst) session.candidates.take(1) else session.candidates
     if (candidates.isEmpty()) return
     var selectedIndex by rememberSaveable(session.conversationId) { mutableIntStateOf(0) }
     val readyCandidates = remember(session) { mutableStateMapOf<Uuid, Boolean>() }
@@ -87,6 +87,7 @@ internal fun TavernOpeningStage(
                     if (status == TavernConversationRenderStatus.READY) session.markCandidateReady(candidate.id)
                     if (autoCommitFirst && index == 0 && status == TavernConversationRenderStatus.READY && !autoCommitStarted) {
                         autoCommitStarted = true
+                        session.markCommitRequested(candidate.id)
                         onCommit(candidate.id)
                     }
                 },
@@ -97,7 +98,7 @@ internal fun TavernOpeningStage(
             )
         }
 
-        Surface(
+        if (!autoCommitFirst) Surface(
             color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.94f),
             shape = MaterialTheme.shapes.medium,
             modifier = Modifier
@@ -121,7 +122,7 @@ internal fun TavernOpeningStage(
             }
         }
 
-        Surface(
+        if (!autoCommitFirst) Surface(
             color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.96f),
             shape = MaterialTheme.shapes.large,
             modifier = Modifier
@@ -143,7 +144,10 @@ internal fun TavernOpeningStage(
                     enabled = candidates.size > 1,
                 ) { Text("上一个") }
                 Button(
-                    onClick = { onCommit(candidates[selectedIndex].id) },
+                    onClick = {
+                        session.markCommitRequested(candidates[selectedIndex].id)
+                        onCommit(candidates[selectedIndex].id)
+                    },
                     enabled = readyCandidates[candidates[selectedIndex].id] == true,
                 ) { Text("使用这个开场") }
                 TextButton(

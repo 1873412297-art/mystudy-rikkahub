@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.service
 
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
@@ -44,6 +45,22 @@ import kotlin.uuid.Uuid
 class ChatServiceTest {
     private val groupMemberA = Uuid.parse("00000000-0000-0000-0000-000000000001")
     private val groupMemberB = Uuid.parse("00000000-0000-0000-0000-000000000002")
+
+    @Test
+    fun `sparse world journal matches normalized persisted entry for rollback`() {
+        val applied = kotlinx.serialization.json.buildJsonObject {
+            put("id", "door")
+            put("content", "open")
+        }
+        val persisted = kotlinx.serialization.json.buildJsonObject {
+            put("id", "door")
+            put("content", "open")
+            put("enabled", true)
+            put("lorebookId", "book")
+        }
+
+        assertEquals(true, persistedWorldEntryMatches(applied, persisted))
+    }
 
     @Test
     fun `session director lock serializes state commits`() = runBlocking {

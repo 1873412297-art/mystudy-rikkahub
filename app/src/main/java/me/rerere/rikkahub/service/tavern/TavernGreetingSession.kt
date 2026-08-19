@@ -341,6 +341,8 @@ class TavernGreetingSession private constructor(
     private var activeCandidates = initialCandidates
     @Volatile
     private var selectedCandidateId: Uuid? = initialCandidates.firstOrNull()?.id
+    @Volatile
+    private var commitRequested = false
 
     val candidates: List<TavernGreetingCandidate> get() = activeCandidates
     var committedCandidateId: Uuid? = null
@@ -372,6 +374,7 @@ class TavernGreetingSession private constructor(
             commitTarget.commit(snapshot)
         } catch (error: Throwable) {
             candidate.runtime.unfreeze()
+            commitRequested = false
             throw error
         }
         committedCandidateId = candidate.id
@@ -391,10 +394,15 @@ class TavernGreetingSession private constructor(
         activeCandidates.firstOrNull { it.id == candidateId }?.runtime?.markReady()
     }
 
+    fun markCommitRequested(candidateId: Uuid) {
+        require(candidateId == selectedCandidateId) { "Only the selected greeting can be committed" }
+        commitRequested = true
+    }
+
     fun isSelectedCandidateReady(): Boolean = activeCandidates
         .firstOrNull { it.id == selectedCandidateId }
         ?.runtime
-        ?.isReady() == true
+        ?.isReady() == true && !commitRequested
 
     companion object {
         fun create(

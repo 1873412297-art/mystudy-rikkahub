@@ -111,3 +111,9 @@ first-candidate selection after ready), blocks native send without clearing inpu
 failure rollback compare-and-restore so concurrent same-key settings/world updates survive. The obsolete duplicate staging
 path was removed. Combined full JVM + compile + assemble verification completed with `BUILD SUCCESSFUL in 26s`
 (`100 classes / 734 tests / 0 failures / 0 errors`).
+
+The last blocking review findings were closed by comparing sparse world journals field-by-field against normalized
+persistence, synchronously closing the native-send window before asynchronous commit starts, and making picker-disabled
+mode compose/execute only `first_mes` with no picker chrome. Regression tests cover normalized world matching and the
+commit-request gate. Final combined JVM/compile/assemble command: `BUILD SUCCESSFUL in 17s`, `100 classes / 736 tests /
+0 failures / 0 errors`.

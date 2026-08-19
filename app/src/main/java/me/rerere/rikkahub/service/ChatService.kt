@@ -184,6 +184,9 @@ private fun applyGreetingSettingsJournal(settings: Settings, journal: TavernGree
     return staged
 }
 
+internal fun persistedWorldEntryMatches(applied: JsonObject, persisted: JsonObject): Boolean =
+    applied.all { (key, value) -> persisted[key] == value }
+
 private fun rollbackGreetingSettingsJournal(
     current: Settings,
     before: Settings,
@@ -207,7 +210,13 @@ private fun rollbackGreetingSettingsJournal(
         override fun updateSettings(transform: (Settings) -> Settings) = Unit
     }).listEntries().associateBy { (it["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty() }
     val safeWorldIds = touchedWorld.filter { id ->
-        if (id in journal.worldDeletes) id !in currentWorld else currentWorld[id] == journal.worldUpserts[id]
+        if (id in journal.worldDeletes) {
+            id !in currentWorld
+        } else {
+            val applied = journal.worldUpserts[id]
+            val persisted = currentWorld[id]
+            applied != null && persisted != null && persistedWorldEntryMatches(applied, persisted)
+        }
     }.toSet()
     val rollbackJournal = TavernGreetingMutationJournal(
         globalVariables = globalRollback,
