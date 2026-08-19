@@ -204,7 +204,8 @@ class TavernGreetingSessionTest {
         val candidate = session.candidates.first()
         assertTrue(session.isSelectedCandidateReady())
 
-        session.markCommitRequested(candidate.id)
+        assertTrue(session.requestCommit(candidate.id))
+        assertFalse(session.requestCommit(candidate.id))
 
         assertFalse(session.isSelectedCandidateReady())
     }

@@ -117,3 +117,8 @@ persistence, synchronously closing the native-send window before asynchronous co
 mode compose/execute only `first_mes` with no picker chrome. Regression tests cover normalized world matching and the
 commit-request gate. Final combined JVM/compile/assemble command: `BUILD SUCCESSFUL in 17s`, `100 classes / 736 tests /
 0 failures / 0 errors`.
+
+Normalized post-apply settings are now retained for compare-and-restore, so any concurrent change to either mentioned or
+default world-entry fields prevents destructive rollback. Commit requests use an idempotent synchronous gate shared by
+native send, auto-selection, and picker clicks. Final combined verification: `BUILD SUCCESSFUL in 30s`, `100 classes /
+735 tests / 0 failures / 0 errors`.

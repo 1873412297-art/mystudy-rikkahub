@@ -87,8 +87,7 @@ internal fun TavernOpeningStage(
                     if (status == TavernConversationRenderStatus.READY) session.markCandidateReady(candidate.id)
                     if (autoCommitFirst && index == 0 && status == TavernConversationRenderStatus.READY && !autoCommitStarted) {
                         autoCommitStarted = true
-                        session.markCommitRequested(candidate.id)
-                        onCommit(candidate.id)
+                        if (session.requestCommit(candidate.id)) onCommit(candidate.id)
                     }
                 },
                 modifier = Modifier
@@ -145,8 +144,8 @@ internal fun TavernOpeningStage(
                 ) { Text("上一个") }
                 Button(
                     onClick = {
-                        session.markCommitRequested(candidates[selectedIndex].id)
-                        onCommit(candidates[selectedIndex].id)
+                        val id = candidates[selectedIndex].id
+                        if (session.requestCommit(id)) onCommit(id)
                     },
                     enabled = readyCandidates[candidates[selectedIndex].id] == true,
                 ) { Text("使用这个开场") }

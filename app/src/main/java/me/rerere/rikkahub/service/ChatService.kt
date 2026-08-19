@@ -184,20 +184,16 @@ private fun applyGreetingSettingsJournal(settings: Settings, journal: TavernGree
     return staged
 }
 
-internal fun persistedWorldEntryMatches(applied: JsonObject, persisted: JsonObject): Boolean =
-    applied.all { (key, value) -> persisted[key] == value }
-
 private fun rollbackGreetingSettingsJournal(
     current: Settings,
     before: Settings,
+    appliedSettings: Settings,
     journal: TavernGreetingMutationJournal,
 ): Settings {
-    val globalRollback = journal.globalVariables.mapNotNull { (key, applied) ->
-        val stillApplied = if (applied == null) {
-            !current.tavernGlobalVariables.containsKey(key)
-        } else {
-            current.tavernGlobalVariables[key] == applied
-        }
+    val globalRollback = journal.globalVariables.mapNotNull { (key, _) ->
+        val applied = appliedSettings.tavernGlobalVariables[key]
+        val stillApplied = current.tavernGlobalVariables[key] == applied &&
+            current.tavernGlobalVariables.containsKey(key) == appliedSettings.tavernGlobalVariables.containsKey(key)
         if (stillApplied) key to before.tavernGlobalVariables[key] else null
     }.toMap()
     val touchedWorld = journal.worldDeletes + journal.worldUpserts.keys
@@ -209,14 +205,12 @@ private fun rollbackGreetingSettingsJournal(
         override fun currentSettings() = current
         override fun updateSettings(transform: (Settings) -> Settings) = Unit
     }).listEntries().associateBy { (it["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty() }
+    val appliedWorld = SettingsBackedTavernWorldRepository(object : TavernWorldSettingsGateway {
+        override fun currentSettings() = appliedSettings
+        override fun updateSettings(transform: (Settings) -> Settings) = Unit
+    }).listEntries().associateBy { (it["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty() }
     val safeWorldIds = touchedWorld.filter { id ->
-        if (id in journal.worldDeletes) {
-            id !in currentWorld
-        } else {
-            val applied = journal.worldUpserts[id]
-            val persisted = currentWorld[id]
-            applied != null && persisted != null && persistedWorldEntryMatches(applied, persisted)
-        }
+        currentWorld[id] == appliedWorld[id] && currentWorld.containsKey(id) == appliedWorld.containsKey(id)
     }.toSet()
     val rollbackJournal = TavernGreetingMutationJournal(
         globalVariables = globalRollback,
@@ -798,7 +792,9 @@ class ChatService(
     private suspend fun commitGreetingOverlay(
         conversationId: Uuid,
         candidate: TavernGreetingCandidateSnapshot,
-    ) = withTavernGreetingAtomicCommit(
+    ) {
+        var appliedSettings: Settings? = null
+        withTavernGreetingAtomicCommit(
         mutex = greetingCommitMutex,
         capture = {
             TavernGreetingCommitSnapshot(
@@ -836,7 +832,9 @@ class ChatService(
                 }
             }
             tavernSendHookStore.installCommitted(conversationId, committedHookController)
-            settingsStore.update { latest -> applyGreetingSettingsJournal(latest, candidate.journal) }
+            settingsStore.update { latest ->
+                applyGreetingSettingsJournal(latest, candidate.journal).also { appliedSettings = it }
+            }
             statusVariableStore.set(conversationId, candidate.overlay.chatVariables)
             saveConversation(conversationId, mergedConversation)
         },
@@ -847,11 +845,14 @@ class ChatService(
                 ownerId = conversationId.toString(),
             )
             tavernSendHookStore.installCommitted(conversationId, before.sendHookController)
-            settingsStore.update { latest -> rollbackGreetingSettingsJournal(latest, before.settings, candidate.journal) }
+            settingsStore.update { latest ->
+                rollbackGreetingSettingsJournal(latest, before.settings, appliedSettings ?: latest, candidate.journal)
+            }
             statusVariableStore.set(conversationId, before.variables)
             saveConversation(conversationId, before.conversation)
         },
-    )
+        )
+    }
 
     private suspend fun appendUserMessage(
         conversationId: Uuid,

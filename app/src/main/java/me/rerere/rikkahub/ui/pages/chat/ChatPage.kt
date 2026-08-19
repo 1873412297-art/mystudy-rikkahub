@@ -538,6 +538,7 @@ private fun ChatPageContent(
                             toaster.show("开场仍在加载，请稍候", type = ToastType.Warning)
                             return@ChatInput
                         }
+                        if (activeGreetingSession != null && !activeGreetingSession.requestSelectedCommit()) return@ChatInput
                         if (currentChatModel == null) {
                             toaster.show("请先选择模型", type = ToastType.Error)
                             return@ChatInput
@@ -569,6 +570,7 @@ private fun ChatPageContent(
                             toaster.show("开场仍在加载，请稍候", type = ToastType.Warning)
                             return@ChatInput
                         }
+                        if (activeGreetingSession != null && !activeGreetingSession.requestSelectedCommit()) return@ChatInput
                         if (inputState.isEditing()) {
                             vm.handleMessageEdit(
                                 parts = inputState.getContents(),

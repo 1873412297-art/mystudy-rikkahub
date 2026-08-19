@@ -394,10 +394,14 @@ class TavernGreetingSession private constructor(
         activeCandidates.firstOrNull { it.id == candidateId }?.runtime?.markReady()
     }
 
-    fun markCommitRequested(candidateId: Uuid) {
-        require(candidateId == selectedCandidateId) { "Only the selected greeting can be committed" }
+    @Synchronized
+    fun requestCommit(candidateId: Uuid): Boolean {
+        if (candidateId != selectedCandidateId || commitRequested) return false
         commitRequested = true
+        return true
     }
+
+    fun requestSelectedCommit(): Boolean = selectedCandidateId?.let(::requestCommit) == true
 
     fun isSelectedCandidateReady(): Boolean = activeCandidates
         .firstOrNull { it.id == selectedCandidateId }
