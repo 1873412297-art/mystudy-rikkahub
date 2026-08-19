@@ -72,11 +72,11 @@ fun diffTavernSnapshots(previous: TavernConversationSnapshot?, current: TavernCo
 fun buildTavernConversationDocument(context: Context, initial: TavernConversationSnapshot): String
 ```
 
-- [ ] Write RED tests for full replace, message upsert/remove, branch select, streaming flag changes, stable ordering, escaped fallback, ST selectors, local vendors, and no external CDN.
-- [ ] Implement serializable snapshot and deterministic patch diff; make focused tests green.
-- [ ] Implement cached document builder using `tavern-conversation.html` and existing bundled vendor assets; make contract tests green.
-- [ ] Add raw HTML iframe/fullscreen markers, `.mes/.mes_block/.name_text/.mes_text/.ch_name`, card CSS scope, and message action data attributes; rerun tests.
-- [ ] Commit Task 2.
+- [x] Write RED tests for full replace, message upsert/remove, branch select, streaming flag changes, stable ordering, escaped fallback, ST selectors, local vendors, and no external CDN.
+- [x] Implement serializable snapshot and deterministic patch diff; make focused tests green.
+- [x] Implement cached document builder using `tavern-conversation.html` and existing bundled vendor assets; make contract tests green.
+- [x] Add raw HTML iframe/fullscreen markers, `.mes/.mes_block/.name_text/.mes_text/.ch_name`, card CSS scope, and message action data attributes; rerun tests.
+- [x] Commit Task 2.
 
 ### Task 3: Single WebView host, native action bridge, and Compose fallback
 
