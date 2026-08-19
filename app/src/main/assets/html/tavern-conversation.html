@@ -266,8 +266,10 @@
           Array.from(node.attributes || []).forEach(function (attribute) {
             var name = String(attribute.name || '').toLowerCase();
             var value = String(attribute.value || '').trim().toLowerCase();
+            var urlAttribute = ['src', 'srcset', 'poster', 'data', 'action', 'formaction'].indexOf(name) >= 0;
+            var embeddedResource = value.indexOf('data:') === 0 || value.indexOf('blob:') === 0;
             if (name.indexOf('on') === 0 || value.indexOf('javascript:') === 0 ||
-                ['src', 'srcset', 'poster', 'data', 'action', 'formaction'].indexOf(name) >= 0) {
+                (urlAttribute && !embeddedResource)) {
               node.removeAttribute(attribute.name);
             }
           });

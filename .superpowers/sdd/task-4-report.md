@@ -97,3 +97,11 @@ BUILD SUCCESSFUL in 12s
 .\gradlew.bat :app:compileDebugKotlin :app:assembleDebug --no-daemon
 BUILD SUCCESSFUL in 17s
 ```
+
+The next re-review tightened the remaining boundaries: native send now shares the same runtime-readiness gate as the
+selection button; auto-picker-off commits intentionally remain unexecuted so the normal pane can initialize scripts;
+route consumption uses saveable state; settings/world apply and rollback rebase only touched journal keys onto the latest
+settings; failed deletes are not journaled; and static replay retains CSP-permitted embedded `data:`/`blob:` media.
+
+Final verification for this wave: full JVM `100 classes / 734 tests / 0 failures / 0 errors` (`BUILD SUCCESSFUL in 13s`),
+then `:app:compileDebugKotlin :app:assembleDebug` (`BUILD SUCCESSFUL in 17s`).

@@ -114,8 +114,10 @@ class TavernGreetingSessionTest {
     fun `global and world commit state is an operation journal not a stale snapshot`() {
         val candidate = greetingSession(card = card).candidates.first()
         candidate.runtime.setVariable(TavernGreetingVariableScope.GLOBAL, "route", JsonPrimitive("left"))
+        candidate.runtime.setVariable(TavernGreetingVariableScope.GLOBAL, "obsolete", JsonPrimitive("old"))
         candidate.runtime.deleteVariable(TavernGreetingVariableScope.GLOBAL, "obsolete")
         candidate.runtime.upsertWorldEntry(buildJsonObject { put("id", "door"); put("content", "open") })
+        candidate.runtime.upsertWorldEntry(buildJsonObject { put("id", "removed"); put("content", "old") })
         candidate.runtime.deleteWorldEntry("removed")
 
         val snapshot = candidate.snapshot()
@@ -135,6 +137,18 @@ class TavernGreetingSessionTest {
         assertEquals(JsonPrimitive("left"), rebased["route"])
         assertEquals(JsonPrimitive("preserved"), rebased["unrelated"])
         assertNull(rebased["obsolete"])
+    }
+
+    @Test
+    fun `failed deletes do not become future destructive mutations`() {
+        val candidate = greetingSession(card = card).candidates.first()
+
+        assertFalse(candidate.runtime.deleteVariable(TavernGreetingVariableScope.GLOBAL, "future"))
+        assertFalse(candidate.runtime.deleteWorldEntry("future-world"))
+        val journal = candidate.snapshot().journal
+
+        assertFalse(journal.globalVariables.containsKey("future"))
+        assertFalse("future-world" in journal.worldDeletes)
     }
 
     @Test
@@ -171,6 +185,17 @@ class TavernGreetingSessionTest {
             runBlocking { session.commit(chosen.id) }
         }
         Unit
+    }
+
+    @Test
+    fun `native send cannot commit a candidate before its runtime is ready`() = runBlocking {
+        val session = greetingSession(card = card, ready = false)
+        val candidate = session.candidates.first()
+
+        assertThrows(IllegalStateException::class.java) { runBlocking { session.commitSelected() } }
+        assertFalse(session.isLocked)
+        session.markCandidateReady(candidate.id)
+        assertEquals(candidate.id, session.commitSelected().id)
     }
 
     @Test
@@ -274,6 +299,7 @@ class TavernGreetingSessionTest {
     private fun greetingSession(
         card: TavernCharacterCard,
         conversation: Conversation = conversation(),
+        ready: Boolean = true,
         commit: suspend (TavernGreetingCandidateSnapshot) -> Unit = {},
     ): TavernGreetingSession = TavernGreetingSession.create(
         conversation = conversation,
@@ -282,7 +308,7 @@ class TavernGreetingSessionTest {
         initialGlobalVariables = JsonObject(emptyMap()),
         initialWorldEntries = emptyList(),
         commitTarget = TavernGreetingCommitTarget(commit),
-    )
+    ).also { session -> if (ready) session.candidates.forEach { it.runtime.markReady() } }
 
     private fun conversation(messages: List<UIMessage> = emptyList()): Conversation = Conversation.ofId(
         id = Uuid.random(),

@@ -249,6 +249,7 @@ class TavernConversationDocumentTest {
         assertTrue(template.contains("frame-src 'none'"))
         assertTrue(template.contains("script,iframe,frame,frameset,object,embed,form"))
         assertTrue(template.contains("['src', 'srcset', 'poster', 'data', 'action', 'formaction']"))
+        assertTrue(template.contains("embeddedResource"))
     }
 
     private fun assertNoExternalCdn(value: String) {

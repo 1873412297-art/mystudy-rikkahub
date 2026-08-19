@@ -186,7 +186,9 @@ fun ChatPage(
     val inputState = vm.inputState
 
     // 初始化输入状态（处理传入的 files 和 text 参数）
-    var greetingRouteHandled by remember(conversation.id, greetingIndex, greeting) { mutableStateOf(false) }
+    var greetingRouteHandled by rememberSaveable(conversation.id.toString(), greetingIndex, greeting) {
+        mutableStateOf(false)
+    }
     LaunchedEffect(greetingIndex, greeting, setting.assistants, conversation.assistantId) {
         if (greetingRouteHandled) return@LaunchedEffect
         if (requiresNewConversationForGreetingChange(conversation)) {

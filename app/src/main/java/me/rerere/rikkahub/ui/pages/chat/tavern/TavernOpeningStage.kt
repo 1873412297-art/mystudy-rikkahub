@@ -82,6 +82,7 @@ internal fun TavernOpeningStage(
                 candidateRuntime = candidate.runtime,
                 onRenderStatus = { status ->
                     readyCandidates[candidate.id] = status == TavernConversationRenderStatus.READY
+                    if (status == TavernConversationRenderStatus.READY) session.markCandidateReady(candidate.id)
                 },
                 modifier = Modifier
                     .fillMaxSize()

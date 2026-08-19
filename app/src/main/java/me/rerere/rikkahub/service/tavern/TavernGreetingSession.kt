@@ -86,6 +86,7 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
     private val worldUpserts = linkedMapOf<String, JsonObject>()
     private val worldDeletes = linkedSetOf<String>()
     private var frozen = false
+    @Volatile private var ready = false
     private val candidateScriptRegistry = TavernScriptRegistry()
     private val _overlayFlow = MutableStateFlow(initial)
     val overlayFlow: StateFlow<TavernGreetingOverlay> = _overlayFlow.asStateFlow()
@@ -100,7 +101,7 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
     fun deleteVariable(scope: TavernGreetingVariableScope, key: String): Boolean = synchronized(lock) {
         if (frozen) return@synchronized false
         val removed = variables(scope).remove(key) != null
-        if (scope == TavernGreetingVariableScope.GLOBAL) globalVariableMutations[key] = null
+        if (removed && scope == TavernGreetingVariableScope.GLOBAL) globalVariableMutations[key] = null
         publishLocked()
         removed
     }
@@ -127,8 +128,10 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
     fun deleteWorldEntry(id: String): Boolean = synchronized(lock) {
         if (frozen) return@synchronized false
         val removed = worldEntries.remove(id) != null
-        worldUpserts.remove(id)
-        worldDeletes += id
+        if (removed) {
+            worldUpserts.remove(id)
+            worldDeletes += id
+        }
         publishLocked()
         removed
     }
@@ -186,6 +189,9 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
     }
 
     fun unfreeze() = synchronized(lock) { frozen = false }
+
+    fun markReady() { ready = true }
+    fun isReady(): Boolean = ready
 
     private fun snapshotLocked(): TavernGreetingOverlay = TavernGreetingOverlay(
         messages = messages.toList(),
@@ -302,7 +308,9 @@ data class TavernGreetingCandidate(
 
     fun snapshot(): TavernGreetingCandidateSnapshot {
         val (overlay, journal) = runtime.freezeAndSnapshot()
-        return TavernGreetingCandidateSnapshot(id, greetingIndex, openingRef, renderedOpening, overlay, journal)
+        return TavernGreetingCandidateSnapshot(
+            id, greetingIndex, openingRef, renderedOpening, overlay, journal, runtime.isReady(),
+        )
     }
 }
 
@@ -313,6 +321,7 @@ data class TavernGreetingCandidateSnapshot(
     val renderedOpening: String,
     val overlay: TavernGreetingOverlay,
     val journal: TavernGreetingMutationJournal = TavernGreetingMutationJournal(),
+    val runtimeExecuted: Boolean = true,
 )
 
 fun interface TavernGreetingCommitTarget {
@@ -350,10 +359,14 @@ class TavernGreetingSession private constructor(
         return commit(candidateId)
     }
 
-    suspend fun commit(candidateId: Uuid): TavernGreetingCandidateSnapshot = commitMutex.withLock {
+    suspend fun commit(
+        candidateId: Uuid,
+        requireReady: Boolean = true,
+    ): TavernGreetingCandidateSnapshot = commitMutex.withLock {
         if (isLocked) throw TavernGreetingLockedException("Opening is locked after the first user message")
         val candidate = activeCandidates.firstOrNull { it.id == candidateId }
             ?: throw IllegalStateException("Greeting candidate is no longer active")
+        check(!requireReady || candidate.runtime.isReady()) { "Greeting runtime is not ready" }
         val snapshot = candidate.snapshot()
         try {
             commitTarget.commit(snapshot)
@@ -372,6 +385,10 @@ class TavernGreetingSession private constructor(
         isLocked = true
         selectedCandidateId = null
         activeCandidates = emptyList()
+    }
+
+    fun markCandidateReady(candidateId: Uuid) {
+        activeCandidates.firstOrNull { it.id == candidateId }?.runtime?.markReady()
     }
 
     companion object {
@@ -430,6 +447,7 @@ internal fun mergeCommittedGreeting(
             message.copy(
                 parts = message.parts.map { part ->
                     if (part is me.rerere.ai.ui.UIMessagePart.Text && part.tavernOpeningRef() != null) {
+                        if (!candidate.runtimeExecuted) return@map part
                         part.withTavernOpeningRuntimeState(
                             TavernOpeningRuntimeState(
                                 macros = candidate.overlay.registrations.macros,

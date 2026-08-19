@@ -142,6 +142,7 @@ import me.rerere.rikkahub.service.group.toStorableGroupGeneratedMessages
 import me.rerere.rikkahub.service.tavern.TavernGreetingCandidateSnapshot
 import me.rerere.rikkahub.service.tavern.TavernGreetingCommitTarget
 import me.rerere.rikkahub.service.tavern.TavernGreetingSession
+import me.rerere.rikkahub.service.tavern.TavernGreetingMutationJournal
 import me.rerere.rikkahub.service.tavern.mergeCommittedGreeting
 import me.rerere.rikkahub.service.tavern.requiresNewConversationForGreetingChange
 import me.rerere.rikkahub.service.tavern.rebaseGreetingGlobalVariables
@@ -170,6 +171,37 @@ private data class TavernGreetingCommitSnapshot(
     val registrations: TavernScriptRegistrationSnapshot,
     val sendHookController: TavernRuntimeController?,
 )
+
+private fun applyGreetingSettingsJournal(settings: Settings, journal: TavernGreetingMutationJournal): Settings {
+    var staged = settings.copy(tavernGlobalVariables = rebaseGreetingGlobalVariables(settings.tavernGlobalVariables, journal))
+    val gateway = object : TavernWorldSettingsGateway {
+        override fun currentSettings() = staged
+        override fun updateSettings(transform: (Settings) -> Settings) { staged = transform(staged) }
+    }
+    val world = SettingsBackedTavernWorldRepository(gateway)
+    journal.worldDeletes.forEach(world::deleteEntry)
+    journal.worldUpserts.values.forEach(world::upsertEntry)
+    return staged
+}
+
+private fun rollbackGreetingSettingsJournal(
+    current: Settings,
+    before: Settings,
+    journal: TavernGreetingMutationJournal,
+): Settings {
+    val globalRollback = journal.globalVariables.keys.associateWith { before.tavernGlobalVariables[it] }
+    val touchedWorld = journal.worldDeletes + journal.worldUpserts.keys
+    val beforeWorld = SettingsBackedTavernWorldRepository(object : TavernWorldSettingsGateway {
+        override fun currentSettings() = before
+        override fun updateSettings(transform: (Settings) -> Settings) = Unit
+    }).listEntries().associateBy { (it["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty() }
+    val rollbackJournal = TavernGreetingMutationJournal(
+        globalVariables = globalRollback,
+        worldUpserts = touchedWorld.mapNotNull { id -> beforeWorld[id]?.let { id to it } }.toMap(),
+        worldDeletes = touchedWorld.filterNot(beforeWorld::containsKey).toSet(),
+    )
+    return applyGreetingSettingsJournal(current, rollbackJournal)
+}
 
 private fun Conversation.withLegacyOpeningMetadata(card: TavernCharacterCard): Conversation {
     var marked = false
@@ -574,7 +606,7 @@ class ChatService(
             if (card != null && card.allGreetings().isNotEmpty()) {
                 val greetingSession = prepareGreetingSession(conversationId, newConversation, card)
                 if (!currentSettings.displaySetting.autoShowGreetingPicker) {
-                    greetingSession?.candidates?.firstOrNull()?.let { greetingSession.commit(it.id) }
+                    greetingSession?.candidates?.firstOrNull()?.let { greetingSession.commit(it.id, requireReady = false) }
                     greetingSessionFlows[conversationId]?.value = null
                 }
             }
@@ -803,7 +835,7 @@ class ChatService(
                 }
             }
             tavernSendHookStore.installCommitted(conversationId, committedHookController)
-            settingsStore.update(stagedSettings)
+            settingsStore.update { latest -> applyGreetingSettingsJournal(latest, candidate.journal) }
             statusVariableStore.set(conversationId, candidate.overlay.chatVariables)
             saveConversation(conversationId, mergedConversation)
         },
@@ -814,7 +846,7 @@ class ChatService(
                 ownerId = conversationId.toString(),
             )
             tavernSendHookStore.installCommitted(conversationId, before.sendHookController)
-            settingsStore.update(before.settings)
+            settingsStore.update { latest -> rollbackGreetingSettingsJournal(latest, before.settings, candidate.journal) }
             statusVariableStore.set(conversationId, before.variables)
             saveConversation(conversationId, before.conversation)
         },
