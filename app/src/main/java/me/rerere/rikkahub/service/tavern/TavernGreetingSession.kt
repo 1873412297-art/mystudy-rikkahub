@@ -330,6 +330,11 @@ fun interface TavernGreetingCommitTarget {
 
 class TavernGreetingLockedException(message: String) : IllegalStateException(message)
 
+internal fun TavernGreetingSession?.requestCommitForSend(willSendNewMessage: Boolean): Boolean {
+    if (!willSendNewMessage) return true
+    return this?.requestSelectedCommit() ?: true
+}
+
 /** Owns one pre-user-message selection transaction for a conversation. */
 class TavernGreetingSession private constructor(
     val conversationId: Uuid,

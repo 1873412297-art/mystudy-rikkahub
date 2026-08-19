@@ -28,6 +28,8 @@ import me.rerere.rikkahub.data.datastore.DisplaySetting
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.Lorebook
+import me.rerere.rikkahub.data.model.PromptInjection
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.service.group.GroupDirectorCommand
 import me.rerere.rikkahub.service.group.GroupDirectorCommandContext
@@ -35,6 +37,7 @@ import me.rerere.rikkahub.service.group.GroupDirectorEngine
 import me.rerere.rikkahub.service.group.GroupDirectorState
 import me.rerere.rikkahub.service.group.GroupPlaybackState
 import me.rerere.rikkahub.service.group.GroupRuntimeState
+import me.rerere.rikkahub.service.tavern.TavernGreetingMutationJournal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -44,6 +47,85 @@ import kotlin.uuid.Uuid
 class ChatServiceTest {
     private val groupMemberA = Uuid.parse("00000000-0000-0000-0000-000000000001")
     private val groupMemberB = Uuid.parse("00000000-0000-0000-0000-000000000002")
+
+    @Test
+    fun `greeting rollback preserves a concurrent change to an unmentioned normalized world field`() {
+        val entryId = Uuid.parse("00000000-0000-4000-8000-000000000201")
+        val lorebookId = Uuid.parse("00000000-0000-4000-8000-000000000202")
+        val before = Settings(
+            lorebooks = listOf(
+                Lorebook(
+                    id = lorebookId,
+                    name = "Main World",
+                    entries = listOf(
+                        PromptInjection.RegexInjection(
+                            id = entryId,
+                            name = "door",
+                            content = "closed",
+                            probability = 100,
+                        )
+                    ),
+                )
+            ),
+        )
+        val journal = TavernGreetingMutationJournal(
+            worldUpserts = mapOf(
+                entryId.toString() to kotlinx.serialization.json.buildJsonObject {
+                    put("id", JsonPrimitive(entryId.toString()))
+                    put("lorebookId", JsonPrimitive(lorebookId.toString()))
+                    put("name", JsonPrimitive("door"))
+                    put("content", JsonPrimitive("open"))
+                }
+            )
+        )
+        val applied = applyGreetingSettingsJournal(before, journal)
+        val concurrentlyChanged = applied.copy(
+            lorebooks = applied.lorebooks.map { book ->
+                book.copy(entries = book.entries.map { entry -> entry.copy(probability = 37) })
+            }
+        )
+
+        val rolledBack = rollbackGreetingSettingsJournal(
+            current = concurrentlyChanged,
+            before = before,
+            appliedSettings = applied,
+            journal = journal,
+        )
+
+        val entry = rolledBack.lorebooks.single().entries.single()
+        assertEquals("open", entry.content)
+        assertEquals(37, entry.probability)
+    }
+
+    @Test
+    fun `greeting rollback restores the exact prior world entry when applied state is unchanged`() {
+        val entryId = Uuid.parse("00000000-0000-4000-8000-000000000203")
+        val lorebookId = Uuid.parse("00000000-0000-4000-8000-000000000204")
+        val before = Settings(
+            lorebooks = listOf(
+                Lorebook(
+                    id = lorebookId,
+                    name = "Main World",
+                    entries = listOf(PromptInjection.RegexInjection(id = entryId, name = "door", content = "closed")),
+                )
+            ),
+        )
+        val journal = TavernGreetingMutationJournal(
+            worldUpserts = mapOf(
+                entryId.toString() to kotlinx.serialization.json.buildJsonObject {
+                    put("id", JsonPrimitive(entryId.toString()))
+                    put("lorebookId", JsonPrimitive(lorebookId.toString()))
+                    put("name", JsonPrimitive("door"))
+                    put("content", JsonPrimitive("open"))
+                }
+            )
+        )
+        val applied = applyGreetingSettingsJournal(before, journal)
+
+        val rolledBack = rollbackGreetingSettingsJournal(applied, before, applied, journal)
+
+        assertEquals("closed", rolledBack.lorebooks.single().entries.single().content)
+    }
 
 
     @Test

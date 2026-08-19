@@ -122,3 +122,11 @@ Normalized post-apply settings are now retained for compare-and-restore, so any 
 default world-entry fields prevents destructive rollback. Commit requests use an idempotent synchronous gate shared by
 native send, auto-selection, and picker clicks. Final combined verification: `BUILD SUCCESSFUL in 30s`, `100 classes /
 735 tests / 0 failures / 0 errors`.
+
+The mandatory final re-review found that native send acquired that gate before rejecting an unavailable model or handling
+an edit. The send paths now classify whether a real new message will be sent before checking readiness or acquiring the
+gate; rejected and edit-only actions leave the opening session available. Two direct rollback tests also exercise the
+normalized post-apply boundary: an unrelated concurrent world-entry field survives, while an unchanged applied entry is
+restored exactly. The focused tests were observed failing before the missing helper/test seams were implemented, then
+passed. Final combined `:app:testDebugUnitTest :app:compileDebugKotlin :app:assembleDebug` verification completed with
+`BUILD SUCCESSFUL in 14s` (`100 classes / 738 tests / 0 failures / 0 errors`).

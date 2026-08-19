@@ -172,7 +172,7 @@ private data class TavernGreetingCommitSnapshot(
     val sendHookController: TavernRuntimeController?,
 )
 
-private fun applyGreetingSettingsJournal(settings: Settings, journal: TavernGreetingMutationJournal): Settings {
+internal fun applyGreetingSettingsJournal(settings: Settings, journal: TavernGreetingMutationJournal): Settings {
     var staged = settings.copy(tavernGlobalVariables = rebaseGreetingGlobalVariables(settings.tavernGlobalVariables, journal))
     val gateway = object : TavernWorldSettingsGateway {
         override fun currentSettings() = staged
@@ -184,7 +184,7 @@ private fun applyGreetingSettingsJournal(settings: Settings, journal: TavernGree
     return staged
 }
 
-private fun rollbackGreetingSettingsJournal(
+internal fun rollbackGreetingSettingsJournal(
     current: Settings,
     before: Settings,
     appliedSettings: Settings,

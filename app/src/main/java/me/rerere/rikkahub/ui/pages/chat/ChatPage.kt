@@ -91,6 +91,7 @@ import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.group.GroupDirectorCommandStatus
 import me.rerere.rikkahub.service.tavern.resolveGreetingNavigation
+import me.rerere.rikkahub.service.tavern.requestCommitForSend
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
 import me.rerere.rikkahub.ui.components.ai.completion.GroupMentionCompletionProvider
@@ -534,11 +535,17 @@ private fun ChatPageContent(
                         )
                     },
                     onSendClick = {
-                        if (activeGreetingSession != null && !activeGreetingSession.isSelectedCandidateReady()) {
+                        val willSendNewMessage = currentChatModel != null &&
+                            !inputState.isEditing() &&
+                            (!isManualGroup || selectedIds.isNotEmpty())
+                        if (willSendNewMessage &&
+                            activeGreetingSession != null &&
+                            !activeGreetingSession.isSelectedCandidateReady()
+                        ) {
                             toaster.show("开场仍在加载，请稍候", type = ToastType.Warning)
                             return@ChatInput
                         }
-                        if (activeGreetingSession != null && !activeGreetingSession.requestSelectedCommit()) return@ChatInput
+                        if (!activeGreetingSession.requestCommitForSend(willSendNewMessage)) return@ChatInput
                         if (currentChatModel == null) {
                             toaster.show("请先选择模型", type = ToastType.Error)
                             return@ChatInput
@@ -566,11 +573,15 @@ private fun ChatPageContent(
                         inputState.clearInput()
                     },
                     onLongSendClick = {
-                        if (activeGreetingSession != null && !activeGreetingSession.isSelectedCandidateReady()) {
+                        val willSendNewMessage = !inputState.isEditing()
+                        if (willSendNewMessage &&
+                            activeGreetingSession != null &&
+                            !activeGreetingSession.isSelectedCandidateReady()
+                        ) {
                             toaster.show("开场仍在加载，请稍候", type = ToastType.Warning)
                             return@ChatInput
                         }
-                        if (activeGreetingSession != null && !activeGreetingSession.requestSelectedCommit()) return@ChatInput
+                        if (!activeGreetingSession.requestCommitForSend(willSendNewMessage)) return@ChatInput
                         if (inputState.isEditing()) {
                             vm.handleMessageEdit(
                                 parts = inputState.getContents(),

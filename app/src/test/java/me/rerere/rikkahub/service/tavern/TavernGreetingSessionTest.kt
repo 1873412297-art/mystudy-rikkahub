@@ -211,6 +211,17 @@ class TavernGreetingSessionTest {
     }
 
     @Test
+    fun `send validation failure does not acquire the greeting commit request`() {
+        val session = greetingSession(card = card)
+        val candidate = session.candidates.first()
+
+        assertTrue(session.requestCommitForSend(willSendNewMessage = false))
+
+        assertTrue(session.isSelectedCandidateReady())
+        assertTrue(session.requestCommit(candidate.id))
+    }
+
+    @Test
     fun `failed commit keeps every candidate and leaves session unlocked`() = runBlocking {
         val session = greetingSession(card = card) { error("disk failed") }
         val ids = session.candidates.map { it.id }
