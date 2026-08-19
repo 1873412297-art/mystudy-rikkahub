@@ -97,12 +97,12 @@ interface TavernConversationActions {
 }
 ```
 
-- [ ] Write RED bridge validation tests for UUID/index parsing, invalid payload rejection, protocol-whitelisted links, and action dispatch.
-- [ ] Implement the narrow bridge and make tests green.
-- [ ] Add one lifecycle-owned WebView, snapshot patch delivery, runtime context repush on every ready event, file/content access denial, navigation interception, and renderer crash/unresponsive callbacks.
-- [ ] Integrate the resolver into ChatPage: ST WebView for eligible conversations, existing ChatList otherwise, visible fallback reason, and manual retry/Compose switch.
-- [ ] Route long press and branch actions to existing ChatVM/ChatService operations; keep native top bar/input and verify compilation.
-- [ ] Commit Task 3.
+- [x] Write RED bridge validation tests for UUID/index parsing, invalid payload rejection, protocol-whitelisted links, and action dispatch.
+- [x] Implement the narrow bridge and make tests green.
+- [x] Add one lifecycle-owned WebView, snapshot patch delivery, runtime context repush on every ready event, file/content access denial, navigation interception, and renderer crash/unresponsive callbacks.
+- [x] Integrate the resolver into ChatPage: ST WebView for eligible conversations, existing ChatList otherwise, visible fallback reason, and manual retry/Compose switch.
+- [x] Route long press and branch actions to existing ChatVM/ChatService operations; keep native top bar/input and verify compilation.
+- [x] Commit Task 3.
 
 ### Task 4: Atomic greeting selection and immersive opening stage
 
