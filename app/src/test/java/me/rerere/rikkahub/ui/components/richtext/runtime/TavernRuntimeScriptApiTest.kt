@@ -147,7 +147,9 @@ class TavernRuntimeScriptApiTest {
 
     @Test
     fun `variables set denied without write permission`() {
-        val controller = TavernRuntimeController()
+        val controller = TavernRuntimeController(
+            permissionStore = TavernRuntimePermissionStore(TavernRuntimePermissions(allowVariablesWrite = false)),
+        )
         val response = dispatchSet(controller, "chat", "k", JsonPrimitive("v"))
 
         assertFalse(response.ok)
@@ -156,7 +158,9 @@ class TavernRuntimeScriptApiTest {
 
     @Test
     fun `variables delete denied without write permission`() {
-        val controller = TavernRuntimeController()
+        val controller = TavernRuntimeController(
+            permissionStore = TavernRuntimePermissionStore(TavernRuntimePermissions(allowVariablesWrite = false)),
+        )
         val response = controller.dispatch(
             TavernRuntimeRequest(
                 id = "p2",
@@ -173,7 +177,10 @@ class TavernRuntimeScriptApiTest {
     fun `variables read works without write permission`() {
         val gateway = InMemoryTavernRuntimeVariableGateway()
         gateway.set(null, "chat", "k", JsonPrimitive("v"))
-        val controller = TavernRuntimeController(variableGateway = gateway)
+        val controller = TavernRuntimeController(
+            permissionStore = TavernRuntimePermissionStore(TavernRuntimePermissions(allowVariablesWrite = false)),
+            variableGateway = gateway,
+        )
 
         val getResponse = dispatchGet(controller, "chat", "k")
         val listResponse = dispatchList(controller, "chat")
@@ -185,7 +192,9 @@ class TavernRuntimeScriptApiTest {
 
     @Test
     fun `events subscribe denied without subscribe permission`() {
-        val controller = TavernRuntimeController()
+        val controller = TavernRuntimeController(
+            permissionStore = TavernRuntimePermissionStore(TavernRuntimePermissions(allowEventSubscribe = false)),
+        )
         val response = dispatchSubscribe(controller, "subscribe", "MESSAGE_SENDING")
 
         assertFalse(response.ok)
@@ -194,7 +203,9 @@ class TavernRuntimeScriptApiTest {
 
     @Test
     fun `events unsubscribe denied without subscribe permission`() {
-        val controller = TavernRuntimeController()
+        val controller = TavernRuntimeController(
+            permissionStore = TavernRuntimePermissionStore(TavernRuntimePermissions(allowEventSubscribe = false)),
+        )
         val response = dispatchSubscribe(controller, "unsubscribe", "MESSAGE_SENDING")
 
         assertFalse(response.ok)
