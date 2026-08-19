@@ -61,6 +61,8 @@ fun MultiCharacterStatusView(
     tavernMessageRole: MessageRole? = null,
     /** 请求头数据源（透传 MarkdownWebView，requestHeaders.get RPC 按需拉取） */
     tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
+    /** HUD 等次级查看器不能接管主会话的 sendHook。 */
+    ownsSendHookController: Boolean = true,
 ) {
     val pages = part.characterPages
     if (pages.isEmpty()) return
@@ -135,6 +137,7 @@ fun MultiCharacterStatusView(
                     tavernContextSnapshot = tavernContextSnapshot,
                     tavernMessageRole = tavernMessageRole,
                     tavernHeaderSource = tavernHeaderSource,
+                    ownsSendHookController = ownsSendHookController,
                     modifier = Modifier
                         .fillMaxWidth()
                         .fillMaxHeight()

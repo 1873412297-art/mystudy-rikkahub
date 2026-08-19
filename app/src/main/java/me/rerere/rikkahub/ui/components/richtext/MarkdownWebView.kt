@@ -50,6 +50,7 @@ import me.rerere.rikkahub.ui.components.richtext.runtime.TavernSendHookStore
 import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScript
 import me.rerere.rikkahub.ui.components.richtext.st.StableDomSegment
 import me.rerere.rikkahub.ui.components.richtext.st.StableSegmentSnapshot
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernSendHookControllerBinding
 import org.json.JSONObject
 import org.koin.compose.koinInject
 
@@ -122,6 +123,8 @@ internal fun MarkdownWebView(
      * 注意：仅允许在 allowRequestHeaders 权限开启时经 RPC 拉取（含 API key，敏感）。
      */
     tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
+    /** Secondary viewers (HUD/fullscreen) must not replace the conversation's send-hook owner. */
+    ownsSendHookController: Boolean = true,
 ) {
     val context = LocalContext.current
     val settingsStore: SettingsStore = koinInject()
@@ -153,7 +156,8 @@ internal fun MarkdownWebView(
     val runtimeCoroutineScope = rememberCoroutineScope()
     // headerSource 每次 RPC 调用读最新透传 lambda（assistant/model 头变化即时生效，不重建 controller）
     val latestHeaderSource by rememberUpdatedState(tavernHeaderSource)
-    val runtimeController = remember(settingsStore, tavernConversationId) {
+    val isolatedScriptRegistry = remember { TavernScriptRegistry() }
+    val runtimeController = remember(settingsStore, tavernConversationId, ownsSendHookController) {
         TavernRuntimeController(
             conversationId = tavernConversationId,
             worldRepository = SettingsBackedTavernWorldRepository(
@@ -167,8 +171,16 @@ internal fun MarkdownWebView(
             hostEventFlow = tavernHostEventBus.events,
             hostEventScope = runtimeCoroutineScope,
             // 共享 Koin 单例注册表：WebView 侧注册的宏/命令对发送管线（ChatService）可见
-            scriptRegistry = tavernScriptRegistry,
+            scriptRegistry = if (ownsSendHookController) tavernScriptRegistry else isolatedScriptRegistry,
             headerSource = { latestHeaderSource?.invoke() ?: emptyList() },
+        )
+    }
+    val sendHookBinding = remember(tavernSendHookStore, runtimeController, ownsSendHookController) {
+        TavernSendHookControllerBinding(
+            store = tavernSendHookStore,
+            controller = runtimeController,
+            enabled = ownsSendHookController,
+            conversationId = tavernConversationId,
         )
     }
     // controller 重建（tavernConversationId 变化）或离开组合时，取消旧 controller 的
@@ -176,13 +188,13 @@ internal fun MarkdownWebView(
     DisposableEffect(runtimeController) {
         onDispose {
             runtimeController.cancelHostEventCollection()
-            tavernConversationId?.let { tavernSendHookStore.detach(it, runtimeController) }
+            sendHookBinding.detach()
         }
     }
     // 发送前钩子桥登记：最近组合的消息 WebView 的 controller 成为发送管线问询对象
     // （多 WebView 并发时最后组合者生效，best-effort 语义）
     SideEffect {
-        tavernConversationId?.let { tavernSendHookStore.attach(it, runtimeController) }
+        sendHookBinding.attach()
     }
     // 宿主注入当前消息（messages.getCurrent 的数据源）与上下文快照（getContext 数据源）。
     // setContext 内部按内容哈希去重，LaunchedEffect 每次 key 变化调用即可。

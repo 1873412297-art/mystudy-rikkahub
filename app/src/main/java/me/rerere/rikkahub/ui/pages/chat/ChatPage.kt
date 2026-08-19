@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,6 +46,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -634,28 +636,12 @@ private fun ChatPageContent(
             },
             containerColor = Color.Transparent,
         ) { innerPadding ->
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-            // 动态状态栏（HUD）：最近一条含状态块的 assistant 消息的状态
-            StatusHudBar(
-                conversation = conversation,
-                onOptionClick = { optionText ->
-                    if (loadingJob == null && currentChatModel != null && !isManualGroup) {
-                        // 点击选项 = 直接作为用户消息发送（复用聊天页发送链路）
-                        vm.handleMessageSend(listOf(UIMessagePart.Text(optionText)))
-                        scope.launch {
-                            chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
-                        }
-                    } else {
-                        // 生成中 / 未选模型 / 手动群聊需选人：退化为填入输入框
-                        inputState.setMessageText(optionText)
-                    }
-                },
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
+            Column(modifier = Modifier.fillMaxSize()) {
             val tavernDecision = remember(assistant, conversation) {
                 resolveTavernPresentation(assistant, conversation)
             }
@@ -787,6 +773,15 @@ private fun ChatPageContent(
                     onMentionRole = onMentionRole,
                 )
             }
+            }
+            // Overlay above the message host: the HUD no longer consumes conversation layout space.
+            StatusHudBar(
+                conversation = conversation,
+                onOptionClick = inputState::setMessageText,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+            )
         }
         }
 
