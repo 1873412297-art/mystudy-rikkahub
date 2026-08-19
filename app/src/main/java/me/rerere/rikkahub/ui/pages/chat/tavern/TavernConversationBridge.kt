@@ -2,6 +2,11 @@ package me.rerere.rikkahub.ui.pages.chat.tavern
 
 import android.webkit.JavascriptInterface
 import java.net.URI
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import me.rerere.ai.core.MessageRole
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeController
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernSendHookStore
 import kotlin.uuid.Uuid
 
 interface TavernConversationActions {
@@ -13,24 +18,37 @@ interface TavernConversationActions {
 
 /** Narrow, validating bridge exposed only to the app-owned conversation document. */
 class TavernConversationBridge(
+    actionToken: String,
     private val actions: TavernConversationActions,
     private val onOpenLink: (String) -> Unit = {},
     private val onDocumentReady: () -> Unit = {},
     private val dispatch: (() -> Unit) -> Unit = { it() },
 ) {
-    @JavascriptInterface
-    fun ready() {
-        dispatch(onDocumentReady)
+    private val trustedToken = actionToken.toByteArray(StandardCharsets.UTF_8)
+
+    init {
+        require(actionToken.isNotBlank()) { "A non-empty action token is required" }
     }
 
     @JavascriptInterface
-    fun longPress(messageId: String): Boolean = validUuid(messageId)?.let { id ->
-        dispatch { actions.onMessageLongPress(id) }
-        true
-    } ?: false
+    fun ready(actionToken: String): Boolean {
+        if (!isTrusted(actionToken)) return false
+        dispatch(onDocumentReady)
+        return true
+    }
 
     @JavascriptInterface
-    fun selectBranch(nodeId: String, index: Int): Boolean {
+    fun longPress(actionToken: String, messageId: String): Boolean {
+        if (!isTrusted(actionToken)) return false
+        return validUuid(messageId)?.let { id ->
+        dispatch { actions.onMessageLongPress(id) }
+        true
+        } ?: false
+    }
+
+    @JavascriptInterface
+    fun selectBranch(actionToken: String, nodeId: String, index: Int): Boolean {
+        if (!isTrusted(actionToken)) return false
         val id = validUuid(nodeId) ?: return false
         if (index !in 0..MAX_BRANCH_INDEX) return false
         dispatch { actions.onSelectBranch(id, index) }
@@ -38,24 +56,34 @@ class TavernConversationBridge(
     }
 
     @JavascriptInterface
-    fun openHtml(messageId: String): Boolean = validUuid(messageId)?.let { id ->
-        dispatch { actions.onOpenHtml(id) }
-        true
-    } ?: false
+    fun openHtml(actionToken: String, messageId: String): Boolean {
+        if (!isTrusted(actionToken)) return false
+        return validUuid(messageId)?.let { id ->
+            dispatch { actions.onOpenHtml(id) }
+            true
+        } ?: false
+    }
 
     @JavascriptInterface
-    fun requestFallback(): Boolean {
+    fun requestFallback(actionToken: String): Boolean {
+        if (!isTrusted(actionToken)) return false
         dispatch(actions::onFallbackRequested)
         return true
     }
 
     @JavascriptInterface
-    fun openLink(rawUrl: String): Boolean {
+    fun openLink(actionToken: String, rawUrl: String, userGesture: Boolean): Boolean {
+        if (!isTrusted(actionToken) || !userGesture) return false
         val url = rawUrl.trim()
         if (!isAllowedTavernConversationLink(url)) return false
         dispatch { onOpenLink(url) }
         return true
     }
+
+    private fun isTrusted(candidate: String): Boolean = MessageDigest.isEqual(
+        trustedToken,
+        candidate.toByteArray(StandardCharsets.UTF_8),
+    )
 
     private fun validUuid(value: String): Uuid? {
         if (value.length !in 1..MAX_IDENTIFIER_LENGTH) return null
@@ -74,6 +102,37 @@ internal fun isAllowedTavernConversationLink(rawUrl: String): Boolean {
     return scheme in setOf("http", "https", "mailto", "tel")
 }
 
+internal fun shouldOpenTavernNavigation(rawUrl: String, hasGesture: Boolean): Boolean =
+    hasGesture && isAllowedTavernConversationLink(rawUrl)
+
+internal const val TAVERN_CONVERSATION_BASE_URL = "about:blank"
+
+internal fun shouldAllowTavernSubresource(rawUrl: String, networkAllowed: Boolean): Boolean {
+    val scheme = runCatching { URI(rawUrl).scheme?.lowercase() }.getOrNull() ?: return false
+    return when (scheme) {
+        "file", "content" -> false
+        "http", "https" -> networkAllowed
+        "about", "data", "blob" -> true
+        else -> false
+    }
+}
+
+internal class TavernSendHookControllerBinding(
+    private val store: TavernSendHookStore,
+    private val controller: TavernRuntimeController,
+    private val enabled: Boolean,
+) {
+    fun attach() {
+        if (enabled) store.activeController = controller
+    }
+
+    fun detach() {
+        if (enabled && store.activeController === controller) store.activeController = null
+    }
+}
+
+internal fun requiresTavernRegenerateConfirmation(role: MessageRole): Boolean = role == MessageRole.USER
+
 enum class TavernConversationRenderStatus { LOADING, READY, FAILED }
 
 data class TavernConversationRenderState(
@@ -82,10 +141,18 @@ data class TavernConversationRenderState(
     val reason: String? = null,
 ) {
     fun onReady(generation: Int): TavernConversationRenderState =
-        if (generation == this.generation) copy(status = TavernConversationRenderStatus.READY, reason = null) else this
+        if (generation == this.generation && status == TavernConversationRenderStatus.LOADING) {
+            copy(status = TavernConversationRenderStatus.READY, reason = null)
+        } else {
+            this
+        }
 
-    fun onFailure(reason: String): TavernConversationRenderState =
-        copy(status = TavernConversationRenderStatus.FAILED, reason = reason)
+    fun onFailure(generation: Int, reason: String): TavernConversationRenderState =
+        if (generation == this.generation) {
+            copy(status = TavernConversationRenderStatus.FAILED, reason = reason)
+        } else {
+            this
+        }
 
     fun retry(): TavernConversationRenderState = TavernConversationRenderState(
         generation = generation + 1,

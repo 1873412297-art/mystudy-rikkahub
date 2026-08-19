@@ -6,6 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'unsafe-eval'; connect-src http: https:; img-src data: blob: http: https:; media-src data: blob: http: https:; font-src data:; frame-src data: blob:; child-src data: blob:;">
   {{VENDOR_STYLES}}
   {{VENDOR_LIBS}}
+  {{RUNTIME_LIB}}
   <style>
     :root {
       color-scheme: light dark;
@@ -36,7 +37,7 @@
     .html-part { position: relative; min-height: 120px; max-height: 100vh; overflow: hidden; border-radius: 8px; }
     .html-part iframe { display: block; width: 100%; min-height: 120px; max-height: 100vh; border: 0; background: transparent; }
     .html-fullscreen { position: absolute; top: 6px; right: 6px; z-index: 2; }
-    .message-actions { display: none; }
+    .message-actions { align-self: flex-end; border: 0; border-radius: 999px; padding: 2px 8px; color: var(--rikkahub-text-secondary); background: transparent; }
     .branch-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 6px; }
     .branch-actions:empty { display: none; }
     .branch-actions button { border: 0; border-radius: 999px; padding: 3px 9px; color: var(--rikkahub-text-secondary); background: transparent; }
@@ -54,6 +55,7 @@
     window.__RIKKAHUB_TAVERN_CONVERSATION__ = {{INITIAL_SNAPSHOT}};
     (function () {
       'use strict';
+      var actionToken = {{ACTION_TOKEN}};
       var root = document.getElementById('chat');
       var rawHtmlTemplate = document.getElementById('raw-html-part-template');
       var state = window.__RIKKAHUB_TAVERN_CONVERSATION__;
@@ -166,16 +168,10 @@
         var helper = runtime + "\n" +
           "window.addEventListener('message',function(e){var d=e.data||{};" +
           "if(d.__rikkahubEvent){document.dispatchEvent(new CustomEvent(d.__rikkahubEvent,{detail:d.detail,bubbles:true}));}});" +
-          "document.addEventListener('contextmenu',function(e){e.preventDefault();" +
-          "try{window.TavernConversationBridge.longPress(" + JSON.stringify(messageId) + ");}catch(_){}});" +
-          "document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;" +
-          "if(a){e.preventDefault();try{window.TavernConversationBridge.openLink(a.href||a.getAttribute('href')||'');}catch(_){}}},true);" +
-          "try{window.open=function(u){try{window.TavernConversationBridge.openLink(String(u||''));}catch(_){}return null;};}catch(_){}" +
           "function __rhSize(){try{var h=Math.max(document.documentElement.scrollHeight,document.body?document.body.scrollHeight:0);" +
           "parent.postMessage({__rikkahubFrameHeight:h,frameTarget:" + JSON.stringify(frameTarget) + "},'*');}catch(_){}}" +
           "if(typeof ResizeObserver!=='undefined'){try{new ResizeObserver(__rhSize).observe(document.documentElement);}catch(_){}}" +
-          "addEventListener('load',__rhSize);setTimeout(__rhSize,50);setTimeout(__rhSize,400);" +
-          "try{window.TavernConversationBridge.ready();}catch(_){};";
+          "addEventListener('load',__rhSize);setTimeout(__rhSize,50);setTimeout(__rhSize,400);";
         return rawHtml + '<script>' + helper.replace(/<\/script/gi, '<\\/script') + '<\/script>';
       }
 
@@ -190,7 +186,7 @@
         iframe.dataset.fullscreenTarget = target;
         iframe.srcdoc = injectIframeRuntime(part.text, message.id, target);
         iframe.addEventListener('load', function () {
-          try { window.TavernConversationBridge.ready(); } catch (_) {}
+          try { window.TavernConversationBridge.ready(actionToken); } catch (_) {}
         });
         fullscreen.dataset.nodeId = node.id;
         fullscreen.dataset.messageId = message.id;
@@ -233,6 +229,7 @@
         actions.setAttribute('data-message-action', 'long-press');
         actions.setAttribute('data-node-id', node.id);
         actions.setAttribute('data-message-id', message.id);
+        actions.textContent = '\u22ef';
         block.appendChild(actions);
 
         var branches = document.createElement('div');
@@ -329,33 +326,35 @@
       }
 
       root.addEventListener('click', function (event) {
+        if (!event.isTrusted) return;
         var action = event.target.closest('[data-message-action]');
         var bridge = nativeBridge();
         if (action && bridge) {
           event.preventDefault();
           var kind = action.getAttribute('data-message-action');
           if (kind === 'select-branch') {
-            window.TavernConversationBridge.selectBranch(action.dataset.nodeId || '', Number(action.dataset.branchIndex));
+            window.TavernConversationBridge.selectBranch(actionToken, action.dataset.nodeId || '', Number(action.dataset.branchIndex));
           } else if (kind === 'open-html') {
-            window.TavernConversationBridge.openHtml(action.dataset.messageId || '');
+            window.TavernConversationBridge.openHtml(actionToken, action.dataset.messageId || '');
           } else if (kind === 'long-press') {
-            window.TavernConversationBridge.longPress(action.dataset.messageId || '');
+            window.TavernConversationBridge.longPress(actionToken, action.dataset.messageId || '');
           }
           return;
         }
         var anchor = event.target.closest('a[href]');
         if (anchor) {
           event.preventDefault();
-          if (bridge) window.TavernConversationBridge.openLink(anchor.href || anchor.getAttribute('href') || '');
+          if (bridge) window.TavernConversationBridge.openLink(actionToken, anchor.href || anchor.getAttribute('href') || '', true);
         }
       });
 
       root.addEventListener('contextmenu', function (event) {
+        if (!event.isTrusted) return;
         var message = event.target.closest('.mes[data-message-id]');
         var bridge = nativeBridge();
         if (!message || !bridge) return;
         event.preventDefault();
-        window.TavernConversationBridge.longPress(message.dataset.messageId || '');
+        window.TavernConversationBridge.longPress(actionToken, message.dataset.messageId || '');
       });
 
       window.addEventListener('message', function (event) {
@@ -370,7 +369,7 @@
       markdown = configureMarkdown();
       initializeMermaid();
       renderAll();
-      if (window.TavernConversationBridge) window.TavernConversationBridge.ready();
+      if (window.TavernConversationBridge) window.TavernConversationBridge.ready(actionToken);
     })();
   </script>
 </body>

@@ -58,6 +58,7 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import me.rerere.ai.core.MessageRole
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.common.android.appTempFolder
@@ -92,6 +93,7 @@ import me.rerere.rikkahub.ui.components.message.ChatMessageCopySheet
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
 import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
+import me.rerere.rikkahub.ui.components.ui.RikkaConfirmDialog
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.context.Navigator
@@ -103,6 +105,7 @@ import me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationActions
 import me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationPane
 import me.rerere.rikkahub.ui.pages.chat.tavern.TavernPresentationMode
 import me.rerere.rikkahub.ui.pages.chat.tavern.resolveTavernPresentation
+import me.rerere.rikkahub.ui.pages.chat.tavern.requiresTavernRegenerateConfirmation
 import me.rerere.rikkahub.utils.ImageUtils
 import me.rerere.rikkahub.utils.base64Decode
 import me.rerere.rikkahub.utils.isAllowedFileType
@@ -311,6 +314,7 @@ private fun ChatPageContent(
     var tavernActionMessageId by remember { mutableStateOf<Uuid?>(null) }
     var tavernCopyMessageId by remember { mutableStateOf<Uuid?>(null) }
     var tavernFullscreenMessageId by remember { mutableStateOf<Uuid?>(null) }
+    var tavernRegenerateMessageId by remember { mutableStateOf<Uuid?>(null) }
     val hazeState = rememberHazeState()
     val assistant = remember(setting.assistants, conversation.assistantId) {
         setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
@@ -759,7 +763,11 @@ private fun ChatPageContent(
                 },
                 onRegenerate = {
                     tavernActionMessageId = null
-                    vm.regenerateAtMessage(actionMessage)
+                    if (requiresTavernRegenerateConfirmation(actionMessage.role)) {
+                        tavernRegenerateMessageId = actionMessage.id
+                    } else {
+                        vm.regenerateAtMessage(actionMessage)
+                    }
                 },
                 isFavorite = actionNode.isFavorite,
                 onToggleFavorite = {
@@ -780,6 +788,22 @@ private fun ChatPageContent(
                 onDismissRequest = { tavernCopyMessageId = null },
             )
         }
+
+        val tavernRegenerateMessage = conversation.currentMessages.firstOrNull {
+            it.id == tavernRegenerateMessageId && it.role == MessageRole.USER
+        }
+        RikkaConfirmDialog(
+            show = tavernRegenerateMessage != null,
+            title = stringResource(R.string.regenerate),
+            confirmText = stringResource(R.string.confirm),
+            dismissText = stringResource(R.string.cancel),
+            onConfirm = {
+                tavernRegenerateMessageId = null
+                tavernRegenerateMessage?.let(vm::regenerateAtMessage)
+            },
+            onDismiss = { tavernRegenerateMessageId = null },
+            text = { Text(stringResource(R.string.regenerate_confirm_message)) },
+        )
 
         val fullscreenNode = conversation.messageNodes.firstOrNull { node ->
             node.messages.any { it.id == tavernFullscreenMessageId }
@@ -804,6 +828,7 @@ private fun ChatPageContent(
                             loading = false,
                             actions = tavernActions,
                             visibleMessageId = tavernFullscreenMessageId,
+                            ownsSendHookController = false,
                             modifier = Modifier.weight(1f).fillMaxWidth(),
                         )
                     }

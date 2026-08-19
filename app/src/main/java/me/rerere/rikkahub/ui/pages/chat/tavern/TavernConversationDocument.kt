@@ -22,6 +22,8 @@ private var cachedDocumentAssets: TavernConversationDocumentAssets? = null
 fun buildTavernConversationDocument(
     context: Context,
     initial: TavernConversationSnapshot,
+    runtimeScript: String = "",
+    actionToken: String = "",
 ): String {
     val assets = cachedDocumentAssets ?: synchronized(TavernConversationDocumentAssets::class.java) {
         cachedDocumentAssets ?: context.loadTavernConversationDocumentAssets().also { cachedDocumentAssets = it }
@@ -31,6 +33,8 @@ fun buildTavernConversationDocument(
         template = assets.template,
         vendorScripts = assets.vendorScripts,
         vendorStyles = assets.vendorStyles,
+        runtimeScript = runtimeScript,
+        actionToken = actionToken,
     )
 }
 
@@ -39,12 +43,23 @@ internal fun buildTavernConversationDocument(
     template: String,
     vendorScripts: String,
     vendorStyles: String,
+    runtimeScript: String = "",
+    actionToken: String = "",
 ): String {
     val initialJson = conversationJson.encodeToString(initial).replace("<", "\\u003c")
+    val runtimeJson = conversationJson.encodeToString(runtimeScript).replace("<", "\\u003c")
+    val safeRuntime = RUNTIME_SCRIPT_END.replace(runtimeScript) { "<\\/script" }
+    val runtimeMarkup = if (runtimeScript.isBlank()) {
+        ""
+    } else {
+        "<script>window.__RIKKAHUB_RUNTIME_SOURCE__=$runtimeJson;\n$safeRuntime</script>"
+    }
     val replacements = mapOf(
         "INITIAL_SNAPSHOT" to initialJson,
         "VENDOR_LIBS" to vendorScripts,
         "VENDOR_STYLES" to vendorStyles,
+        "RUNTIME_LIB" to runtimeMarkup,
+        "ACTION_TOKEN" to conversationJson.encodeToString(actionToken).replace("<", "\\u003c"),
     )
     return DOCUMENT_PLACEHOLDER.replace(template) { match ->
         replacements[match.groupValues[1]] ?: match.value
@@ -66,3 +81,4 @@ private fun Context.loadTavernConversationDocumentAssets(): TavernConversationDo
 }
 
 private val DOCUMENT_PLACEHOLDER = Regex("\\{\\{([A-Z_0-9]+)\\}\\}")
+private val RUNTIME_SCRIPT_END = Regex("</script", RegexOption.IGNORE_CASE)

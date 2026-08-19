@@ -93,6 +93,7 @@ fun TavernConversationPane(
     loading: Boolean,
     actions: TavernConversationActions,
     visibleMessageId: Uuid? = null,
+    ownsSendHookController: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val statusVariableStore: StatusVariableStore = koinInject()
@@ -170,6 +171,7 @@ fun TavernConversationPane(
         currentMessage = currentMessage,
         headerSource = headerSource,
         actions = actions,
+        ownsSendHookController = ownsSendHookController,
         modifier = modifier,
     )
 }
@@ -182,6 +184,7 @@ fun TavernConversationWebView(
     currentMessage: JsonElement?,
     headerSource: () -> List<Pair<String, String>>,
     actions: TavernConversationActions,
+    ownsSendHookController: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -209,6 +212,13 @@ fun TavernConversationWebView(
             headerSource = { latestHeaderSource() },
         )
     }
+    val sendHookBinding = remember(sendHookStore, runtimeController, ownsSendHookController) {
+        TavernSendHookControllerBinding(
+            store = sendHookStore,
+            controller = runtimeController,
+            enabled = ownsSendHookController,
+        )
+    }
     val latestSnapshot by rememberUpdatedState(snapshot)
     val latestContext by rememberUpdatedState(contextSnapshot)
     val latestCurrentMessage by rememberUpdatedState(currentMessage)
@@ -219,12 +229,12 @@ fun TavernConversationWebView(
     SideEffect {
         permissionStore.update(appSettings.runtimePermissions)
         networkAllowed.set(appSettings.runtimePermissions.allowNetwork)
-        sendHookStore.activeController = runtimeController
+        sendHookBinding.attach()
     }
-    DisposableEffect(runtimeController) {
+    DisposableEffect(runtimeController, sendHookBinding) {
         onDispose {
             runtimeController.cancelHostEventCollection()
-            if (sendHookStore.activeController === runtimeController) sendHookStore.activeController = null
+            sendHookBinding.detach()
         }
     }
     DisposableEffect(Unit) {
@@ -243,7 +253,7 @@ fun TavernConversationWebView(
             val generation = renderState.generation
             delay(INITIAL_RENDER_TIMEOUT_MS)
             if (renderState.generation == generation && renderState.status == TavernConversationRenderStatus.LOADING) {
-                renderState = renderState.onFailure("酒馆消息区加载超时，已保留原始文本")
+                renderState = renderState.onFailure(generation, "酒馆消息区加载超时，已保留原始文本")
             }
         }
     }
@@ -262,8 +272,9 @@ fun TavernConversationWebView(
             key(renderState.generation) {
                 val generation = renderState.generation
                 var renderedSnapshot by remember(generation) { mutableStateOf(snapshot) }
-                val initialDocument = remember(generation, snapshot.conversationId) {
-                    buildRuntimeConversationDocument(context, snapshot)
+                val actionToken = remember(generation) { java.util.UUID.randomUUID().toString() }
+                val initialDocument = remember(generation, snapshot.conversationId, actionToken) {
+                    buildRuntimeConversationDocument(context, snapshot, actionToken)
                 }
                 AndroidView(
                     factory = { ctx ->
@@ -279,6 +290,7 @@ fun TavernConversationWebView(
                             isHorizontalScrollBarEnabled = false
                             settings.applySecureConversationSettings()
                             val actionBridge = TavernConversationBridge(
+                                actionToken = actionToken,
                                 actions = actions,
                                 onOpenLink = { openExternalLink(ctx, it) },
                                 onDocumentReady = {
@@ -305,7 +317,9 @@ fun TavernConversationWebView(
                             )
                             webViewClient = secureClient(
                                 networkAllowed = networkAllowed,
-                                onFailure = { reason -> renderState = renderState.onFailure(reason) },
+                                onFailure = { reason ->
+                                    renderState = renderState.onFailure(generation, reason)
+                                },
                                 onOpenExternal = { openExternalLink(ctx, it.toString()) },
                             )
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -321,13 +335,16 @@ fun TavernConversationWebView(
                                             view: WebView,
                                             renderer: WebViewRenderProcess?,
                                         ) {
-                                            renderState = renderState.onFailure("酒馆渲染进程无响应，已切换静态降级")
+                                            renderState = renderState.onFailure(
+                                                generation,
+                                                "酒馆渲染进程无响应，已切换静态降级",
+                                            )
                                         }
                                     },
                                 )
                             }
                             loadDataWithBaseURL(
-                                "https://rikkahub.local/",
+                                TAVERN_CONVERSATION_BASE_URL,
                                 initialDocument,
                                 "text/html",
                                 "UTF-8",
@@ -397,13 +414,14 @@ private fun StaticConversationFallback(
 private fun buildRuntimeConversationDocument(
     context: android.content.Context,
     snapshot: TavernConversationSnapshot,
+    actionToken: String,
 ): String {
-    val document = buildTavernConversationDocument(context, snapshot)
     val runtime = buildTavernRuntimeScript()
-    val runtimeLiteral = JSONObject.quote(runtime)
-    return document.replaceFirst(
-        "</head>",
-        "<script>window.__RIKKAHUB_RUNTIME_SOURCE__=$runtimeLiteral;\n$runtime</script></head>",
+    return buildTavernConversationDocument(
+        context = context,
+        initial = snapshot,
+        runtimeScript = runtime,
+        actionToken = actionToken,
     )
 }
 
@@ -429,15 +447,13 @@ private fun secureClient(
 ): WebViewClient = object : WebViewClient() {
     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
         val uri = request?.url ?: return true
-        if (isAllowedTavernConversationLink(uri.toString())) onOpenExternal(uri)
+        if (shouldOpenTavernNavigation(uri.toString(), request.hasGesture())) onOpenExternal(uri)
         return true
     }
 
     override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
         val uri = request?.url ?: return blockedResponse()
-        val scheme = uri.scheme?.lowercase()
-        if (scheme == "file" || scheme == "content") return blockedResponse()
-        if ((scheme == "http" || scheme == "https") && uri.host != "rikkahub.local" && !networkAllowed.get()) {
+        if (!shouldAllowTavernSubresource(uri.toString(), networkAllowed.get())) {
             return blockedResponse()
         }
         return null

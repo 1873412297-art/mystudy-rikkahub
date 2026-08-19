@@ -36,9 +36,17 @@ class TavernConversationDocumentTest {
         assertTrue(template.contains("data-fullscreen-target"))
         assertTrue(template.contains("iframe.srcdoc = injectIframeRuntime(part.text"))
         assertTrue(template.contains("window.__RIKKAHUB_RUNTIME_SOURCE__"))
-        assertTrue(template.contains("window.TavernConversationBridge.ready()"))
         assertTrue(template.contains("__rikkahubFrameHeight"))
         assertTrue(template.contains("sandbox"))
+    }
+
+    @Test
+    fun `raw html iframe receives permission gated runtime but no trusted action capability`() {
+        val iframeRuntime = template.substringAfter("function injectIframeRuntime").substringBefore("function renderHtmlPart")
+
+        assertTrue(iframeRuntime.contains("window.__RIKKAHUB_RUNTIME_SOURCE__"))
+        assertFalse(iframeRuntime.contains("TavernConversationBridge"))
+        assertFalse(iframeRuntime.contains("actionToken"))
     }
 
     @Test
@@ -91,11 +99,13 @@ class TavernConversationDocumentTest {
 
     @Test
     fun `conversation document reports ready and delegates native actions`() {
-        assertTrue(template.contains("TavernConversationBridge.ready()"))
-        assertTrue(template.contains("TavernConversationBridge.longPress"))
-        assertTrue(template.contains("TavernConversationBridge.selectBranch"))
-        assertTrue(template.contains("TavernConversationBridge.openHtml"))
-        assertTrue(template.contains("TavernConversationBridge.openLink"))
+        assertTrue(template.contains("{{ACTION_TOKEN}}"))
+        assertTrue(template.contains("TavernConversationBridge.ready(actionToken)"))
+        assertTrue(template.contains("TavernConversationBridge.longPress(actionToken"))
+        assertTrue(template.contains("TavernConversationBridge.selectBranch(actionToken"))
+        assertTrue(template.contains("TavernConversationBridge.openHtml(actionToken"))
+        assertTrue(template.contains("TavernConversationBridge.openLink(actionToken"))
+        assertTrue(template.contains("event.isTrusted"))
     }
 
     @Test
@@ -132,6 +142,8 @@ class TavernConversationDocumentTest {
             template = template,
             vendorScripts = "<script>window.MarkdownIt=function(){};</script>",
             vendorStyles = "<style>.hljs{display:block}</style>",
+            runtimeScript = "window.__trustedRuntimeLoaded=true;",
+            actionToken = "trusted-token",
         )
 
         assertTrue(html.contains("window.MarkdownIt=function(){}"))
@@ -141,7 +153,40 @@ class TavernConversationDocumentTest {
         assertFalse(html.contains("{{INITIAL_SNAPSHOT}}"))
         assertFalse(html.contains("{{VENDOR_LIBS}}"))
         assertFalse(html.contains("{{VENDOR_STYLES}}"))
+        assertFalse(html.contains("{{RUNTIME_LIB}}"))
+        assertFalse(html.contains("{{ACTION_TOKEN}}"))
+        assertTrue(html.contains("window.__trustedRuntimeLoaded=true"))
+        assertTrue(html.contains("var actionToken = \"trusted-token\""))
         assertNoExternalCdn(html)
+    }
+
+    @Test
+    fun `runtime injection uses trusted marker after real vendors containing closing head literals`() {
+        val vendorDir = listOf(
+            File("src/main/assets/html/vendor"),
+            File("app/src/main/assets/html/vendor"),
+        ).firstOrNull { it.isDirectory } ?: error("vendor directory not found")
+        val realVendorScripts = listOf("dompurify.min.js", "mermaid.min.js").joinToString("\n") { name ->
+            "<script>${File(vendorDir, name).readText()}</script>"
+        }
+        val literalIndex = realVendorScripts.indexOf("</head>")
+        assertTrue("real vendors must exercise the old replaceFirst bug", literalIndex >= 0)
+
+        val html = buildTavernConversationDocument(
+            initial = emptySnapshot(),
+            template = template,
+            vendorScripts = realVendorScripts,
+            vendorStyles = "",
+            runtimeScript = "window.__runtimeMarker='after-vendors';",
+            actionToken = "trusted-token",
+        )
+
+        val vendorLiteralInDocument = html.indexOf("</head>")
+        val runtimeIndex = html.indexOf("window.__runtimeMarker='after-vendors';")
+        val structuralHeadEnd = html.lastIndexOf("</head>")
+        assertTrue(vendorLiteralInDocument >= 0)
+        assertTrue(runtimeIndex > vendorLiteralInDocument)
+        assertTrue(runtimeIndex < structuralHeadEnd)
     }
 
     @Test
@@ -167,4 +212,14 @@ class TavernConversationDocumentTest {
         assertFalse(lower.contains("unpkg.com"))
         assertFalse(lower.contains("cdnjs"))
     }
+
+    private fun emptySnapshot() = TavernConversationSnapshot(
+        conversationId = "conversation",
+        nodes = emptyList(),
+        userName = "User",
+        characterName = "Alice",
+        themeCssVariables = emptyMap(),
+        cardCss = "",
+        streaming = false,
+    )
 }
