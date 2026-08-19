@@ -4,10 +4,13 @@
 
 将 Android 应用的更新检查源从 `https://updates.rikka-ai.com/` 切换为当前 fork 的 GitHub 正式 Release：
 `1873412297-art/mystudy-rikkahub`。应用只检查正式 Release，不把 `nightly` 等预发行版本当作可更新版本。
+同时将应用在桌面、系统设置和启动器中的显示名称改为 `RhStudy`。
 
 ## 现状
 
 `UpdateChecker` 当前请求自定义 JSON，并将响应映射为 `UpdateInfo`。`UpdateCard` 已负责版本比较、变更日志展示和下载动作，因此更新源替换不需要改变 UI 或下载器。
+
+应用显示名由各语言资源中的 `app_name` 提供，包名、命名空间、应用 ID 和深层链接协议保持不变。
 
 目标仓库的每日构建使用固定 `nightly` 预发行标签；GitHub `releases/latest` 接口会自动排除预发行和草稿，适合“仅正式版”需求。
 
@@ -42,8 +45,11 @@
 
 完成后运行更新器相关 JVM 测试、`app:testDebugUnitTest`、`app:compileDebugKotlin` 和 `app:assembleDebug`。
 
+显示名验证覆盖所有现有语言资源的 `app_name` 均为 `RhStudy`，并通过 Debug 构建确认资源编译成功。
+
 ## 不在本次范围
 
 - 不修改 GitHub Actions 的发布流程。
 - 不支持预发行、草稿或 `nightly` 更新。
 - 不新增设置项、更新 UI 或自动安装逻辑。
+- 不修改包名、命名空间、应用 ID 或深层链接协议。
