@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'unsafe-eval'; img-src data: blob: https:; font-src data:; frame-src data: blob:; child-src data: blob:;">
+  {{VENDOR_STYLES}}
+  {{VENDOR_LIBS}}
+  <style>
+    :root {
+      color-scheme: light dark;
+      --rikkahub-bg: transparent;
+      --rikkahub-surface: rgba(127, 127, 127, .08);
+      --rikkahub-surface-variant: rgba(80, 120, 255, .10);
+      --rikkahub-text: inherit;
+      --rikkahub-text-secondary: inherit;
+      --rikkahub-border: rgba(127, 127, 127, .25);
+      --rikkahub-accent: #4a90d9;
+    }
+    html, body { margin: 0; padding: 0; background: var(--rikkahub-bg); color: var(--rikkahub-text); }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    #chat[data-card-css-scope] { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+    .mes { position: relative; display: flex; flex-direction: column; border-radius: 12px; padding: 10px 12px; }
+    .mes.user { background: var(--rikkahub-surface-variant); }
+    .mes.assistant, .mes.system, .mes.tool { background: var(--rikkahub-surface); }
+    .mes_block { display: flex; flex-direction: column; min-width: 0; }
+    .name_text { display: flex; align-items: center; min-height: 20px; margin-bottom: 4px; }
+    .name_text .ch_name { color: var(--rikkahub-text-secondary); font-size: 13px; font-weight: 600; opacity: .82; }
+    .mes_text { display: flex; flex-direction: column; gap: 6px; min-width: 0; line-height: 1.55; overflow-wrap: anywhere; }
+    .mes_text > * { max-width: 100%; }
+    .mes_text p { margin: 0 0 8px; }
+    .mes_text p:last-child { margin-bottom: 0; }
+    .mes_text pre { overflow: auto; border-radius: 8px; padding: 10px 12px; background: rgba(20, 20, 20, .75); }
+    .mes_text img { max-width: 100%; height: auto; }
+    .mes_text a { color: var(--rikkahub-accent); }
+    .html-part { position: relative; min-height: 120px; max-height: 100vh; overflow: hidden; border-radius: 8px; }
+    .html-part iframe { display: block; width: 100%; min-height: 120px; max-height: 100vh; border: 0; background: transparent; }
+    .html-fullscreen { position: absolute; top: 6px; right: 6px; z-index: 2; }
+    .message-actions, .branch-actions { display: none; }
+  </style>
+</head>
+<body>
+  <main id="chat" data-card-css-scope="tavern-conversation"></main>
+  <template id="raw-html-part-template">
+    <section class="html-part" data-render-mode="html">
+      <iframe data-html-frame sandbox="allow-scripts"></iframe>
+      <button type="button" class="html-fullscreen" data-message-action="open-html" data-fullscreen-target="">&#x26F6;</button>
+    </section>
+  </template>
+  <script>
+    window.__RIKKAHUB_TAVERN_CONVERSATION__ = {{INITIAL_SNAPSHOT}};
+    (function () {
+      'use strict';
+      var root = document.getElementById('chat');
+      var rawHtmlTemplate = document.getElementById('raw-html-part-template');
+      var state = window.__RIKKAHUB_TAVERN_CONVERSATION__;
+      var markdown = null;
+
+      function configureMarkdown() {
+        if (!window.MarkdownIt || !window.DOMPurify) return null;
+        return new window.MarkdownIt({
+          html: true,
+          breaks: true,
+          linkify: true,
+          highlight: function (source, language) {
+            if (window.hljs && language && window.hljs.getLanguage(language)) {
+              try {
+                return '<pre class="hljs"><code>' +
+                  window.hljs.highlight(source, { language: language, ignoreIllegals: true }).value +
+                  '</code></pre>';
+              } catch (_) {}
+            }
+            var fallback = document.createElement('div');
+            fallback.textContent = source;
+            return '<pre class="hljs"><code>' + fallback.innerHTML + '</code></pre>';
+          }
+        });
+      }
+
+      function applyDocumentStyle(snapshot) {
+        Object.keys(snapshot.themeCssVariables || {}).sort().forEach(function (name) {
+          if (name.indexOf('--') === 0) document.documentElement.style.setProperty(name, snapshot.themeCssVariables[name]);
+        });
+        var cardStyle = document.getElementById('rikkahub-card-css');
+        if (!cardStyle) {
+          cardStyle = document.createElement('style');
+          cardStyle.id = 'rikkahub-card-css';
+          document.head.appendChild(cardStyle);
+        }
+        cardStyle.textContent = snapshot.cardCss || '';
+        document.documentElement.dataset.streaming = String(!!snapshot.streaming);
+      }
+
+      function renderMarkdownPart(part) {
+        var fallback = document.createElement('div');
+        fallback.dataset.renderMode = 'markdown';
+        fallback.textContent = part.text;
+        if (!markdown || !window.DOMPurify) return fallback;
+        var rendered = markdown.render(part.text);
+        fallback.innerHTML = window.DOMPurify.sanitize(rendered, {
+          USE_PROFILES: { html: true, svg: false, mathMl: false },
+          ADD_TAGS: ['details', 'summary', 'font', 'mark', 'kbd'],
+          ADD_ATTR: ['open', 'color', 'face', 'size', 'target', 'class'],
+          FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'frame', 'frameset', 'meta', 'base', 'link', 'form'],
+          FORBID_ATTR: ['srcdoc', 'formaction', 'onerror', 'onload', 'onclick', 'onfocus', 'onblur'],
+          ALLOW_DATA_ATTR: false,
+          ALLOW_UNKNOWN_PROTOCOLS: false
+        });
+        return fallback;
+      }
+
+      function renderHtmlPart(part, node, message, partIndex) {
+        var fragment = rawHtmlTemplate.content.cloneNode(true);
+        var section = fragment.querySelector('[data-render-mode="html"]');
+        var iframe = fragment.querySelector('[data-html-frame]');
+        var fullscreen = fragment.querySelector('[data-fullscreen-target]');
+        var target = message.id + ':' + partIndex;
+        section.dataset.messageId = message.id;
+        iframe.dataset.messageId = message.id;
+        iframe.srcdoc = part.text;
+        fullscreen.dataset.nodeId = node.id;
+        fullscreen.dataset.messageId = message.id;
+        fullscreen.dataset.fullscreenTarget = target;
+        return fragment;
+      }
+
+      function renderNode(node, nodeIndex) {
+        var message = node.selectedMessage;
+        if (!message) return null;
+        var mes = document.createElement('article');
+        mes.className = 'mes ' + String(message.role || 'assistant').toLowerCase();
+        mes.dataset.nodeId = node.id;
+        mes.dataset.messageId = message.id;
+        mes.dataset.branchIndex = String(node.selectedIndex);
+        mes.dataset.streaming = String(!!state.streaming && nodeIndex === state.nodes.length - 1);
+
+        var block = document.createElement('div');
+        block.className = 'mes_block';
+        var nameText = document.createElement('div');
+        nameText.className = 'name_text';
+        var name = document.createElement('span');
+        name.className = 'name ch_name';
+        name.textContent = message.name || '';
+        nameText.appendChild(name);
+        block.appendChild(nameText);
+
+        var text = document.createElement('div');
+        text.className = 'mes_text';
+        message.parts.forEach(function (part, partIndex) {
+          text.appendChild(part.renderMode === 'html'
+            ? renderHtmlPart(part, node, message, partIndex)
+            : renderMarkdownPart(part));
+        });
+        block.appendChild(text);
+
+        var actions = document.createElement('button');
+        actions.type = 'button';
+        actions.className = 'message-actions';
+        actions.setAttribute('data-message-action', 'long-press');
+        actions.setAttribute('data-node-id', node.id);
+        actions.setAttribute('data-message-id', message.id);
+        block.appendChild(actions);
+
+        var branches = document.createElement('div');
+        branches.className = 'branch-actions';
+        for (var branchIndex = 0; branchIndex < node.branchCount; branchIndex += 1) {
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.setAttribute('data-message-action', 'select-branch');
+          button.setAttribute('data-node-id', node.id);
+          button.setAttribute('data-message-id', message.id);
+          button.setAttribute('data-branch-index', String(branchIndex));
+          branches.appendChild(button);
+        }
+        block.appendChild(branches);
+        mes.appendChild(block);
+        return mes;
+      }
+
+      function renderAll() {
+        applyDocumentStyle(state);
+        root.replaceChildren();
+        state.nodes.forEach(function (node, index) {
+          var element = renderNode(node, index);
+          if (element) root.appendChild(element);
+        });
+      }
+
+      function rerenderNode(nodeId) {
+        var index = state.nodes.findIndex(function (node) { return node.id === nodeId; });
+        var existing = root.querySelector('[data-node-id="' + CSS.escape(nodeId) + '"]');
+        if (index < 0) {
+          if (existing) existing.remove();
+          return;
+        }
+        var replacement = renderNode(state.nodes[index], index);
+        if (!replacement) {
+          if (existing) existing.remove();
+        } else if (existing) {
+          existing.replaceWith(replacement);
+        } else {
+          root.insertBefore(replacement, root.children[index] || null);
+        }
+      }
+
+      function applyPatch(patch) {
+        if (patch.type === 'replace_all') {
+          state = patch.snapshot;
+          renderAll();
+          return;
+        }
+        if (patch.type === 'remove_message') {
+          state.nodes = state.nodes.filter(function (node) { return node.id !== patch.nodeId; });
+          rerenderNode(patch.nodeId);
+          return;
+        }
+        if (patch.type === 'upsert_message') {
+          var upsertNode = state.nodes.find(function (node) { return node.id === patch.nodeId; });
+          if (!upsertNode) {
+            upsertNode = { id: patch.nodeId, selectedIndex: 0, branchCount: 1, selectedMessage: patch.message };
+            state.nodes.splice(patch.nodeIndex, 0, upsertNode);
+          }
+          upsertNode.selectedMessage = patch.message;
+          rerenderNode(patch.nodeId);
+          return;
+        }
+        if (patch.type === 'select_branch') {
+          var selectNode = state.nodes.find(function (node) { return node.id === patch.nodeId; });
+          if (!selectNode || selectNode.selectedMessage.id !== patch.messageId) return;
+          selectNode.selectedIndex = patch.selectedIndex;
+          selectNode.branchCount = patch.branchCount;
+          rerenderNode(patch.nodeId);
+          return;
+        }
+        if (patch.type === 'set_streaming') {
+          state.streaming = !!patch.streaming;
+          renderAll();
+        }
+      }
+
+      window.RikkahubConversationDocument = {
+        applyPatches: function (patchJson) {
+          var patches = typeof patchJson === 'string' ? JSON.parse(patchJson) : patchJson;
+          (patches || []).forEach(applyPatch);
+        },
+        snapshot: function () { return state; }
+      };
+
+      markdown = configureMarkdown();
+      renderAll();
+    })();
+  </script>
+</body>
+</html>
