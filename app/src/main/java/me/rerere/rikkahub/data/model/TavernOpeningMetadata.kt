@@ -3,7 +3,6 @@ package me.rerere.rikkahub.data.model
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
@@ -17,31 +16,36 @@ data class TavernOpeningRef(
     val cardFingerprint: String,
 )
 
-fun UIMessagePart.Text.withTavernOpening(ref: TavernOpeningRef): UIMessagePart.Text = copy(
-    metadata = buildJsonObject {
-        metadata.orEmpty().forEach { (key, value) -> put(key, value) }
-        put(OPENING_KIND_KEY, OPENING_KIND)
-        put(OPENING_INDEX_KEY, ref.greetingIndex)
-        put(OPENING_CONTENT_FINGERPRINT_KEY, ref.contentFingerprint)
-        put(OPENING_CARD_FINGERPRINT_KEY, ref.cardFingerprint)
-    },
-)
+fun UIMessagePart.Text.withTavernOpening(ref: TavernOpeningRef): UIMessagePart.Text {
+    val existingMetadata = metadata.orEmpty()
+    return copy(
+        metadata = buildJsonObject {
+            existingMetadata.forEach { (key, value) -> put(key, value) }
+            put(OPENING_METADATA_KEY, buildJsonObject {
+                put(OPENING_KIND_KEY, OPENING_KIND)
+                put(OPENING_INDEX_KEY, ref.greetingIndex)
+                put(OPENING_CONTENT_FINGERPRINT_KEY, ref.contentFingerprint)
+                put(OPENING_CARD_FINGERPRINT_KEY, ref.cardFingerprint)
+            })
+        },
+    )
+}
 
 fun UIMessagePart.Text.tavernOpeningRef(): TavernOpeningRef? {
-    val metadata = metadata ?: return null
-    if (metadata.stringAt(OPENING_KIND_KEY) != OPENING_KIND) return null
-    val greetingIndex = (metadata[OPENING_INDEX_KEY] as? JsonPrimitive)?.intOrNull ?: return null
+    val openingMetadata = metadata?.get(OPENING_METADATA_KEY) as? JsonObject ?: return null
+    if (openingMetadata.stringAt(OPENING_KIND_KEY) != OPENING_KIND) return null
+    val greetingIndex = openingMetadata.integerAt(OPENING_INDEX_KEY) ?: return null
     if (greetingIndex < 0) return null
-    val contentFingerprint = metadata.stringAt(OPENING_CONTENT_FINGERPRINT_KEY) ?: return null
-    val cardFingerprint = metadata.stringAt(OPENING_CARD_FINGERPRINT_KEY) ?: return null
+    val contentFingerprint = openingMetadata.stringAt(OPENING_CONTENT_FINGERPRINT_KEY) ?: return null
+    val cardFingerprint = openingMetadata.stringAt(OPENING_CARD_FINGERPRINT_KEY) ?: return null
     if (contentFingerprint.isBlank() || cardFingerprint.isBlank()) return null
     return TavernOpeningRef(greetingIndex, contentFingerprint, cardFingerprint)
 }
 
 fun inferLegacyOpening(message: UIMessage, card: TavernCharacterCard): TavernOpeningRef? {
-    if (message.role != MessageRole.ASSISTANT || message.parts.size != 1) return null
+    if (message.role != MessageRole.ASSISTANT || message.parts.size != 1 || card.firstMes.isBlank()) return null
     val text = message.parts.singleOrNull() as? UIMessagePart.Text ?: return null
-    if (text.renderMode != UIMessagePart.RenderMode.HTML || text.text != card.firstMes) return null
+    if (text.renderMode != UIMessagePart.RenderMode.HTML || text.text.isBlank() || text.text != card.firstMes) return null
     return TavernOpeningRef(
         greetingIndex = 0,
         contentFingerprint = text.text.sha256(),
@@ -50,7 +54,12 @@ fun inferLegacyOpening(message: UIMessage, card: TavernCharacterCard): TavernOpe
 }
 
 private fun JsonObject.stringAt(key: String): String? =
-    (this[key] as? JsonPrimitive)?.contentOrNull
+    (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+private fun JsonObject.integerAt(key: String): Int? {
+    val value = this[key] as? JsonPrimitive ?: return null
+    return value.takeIf { !it.isString }?.intOrNull
+}
 
 private fun TavernCharacterCard.greetingFingerprint(): String =
     allGreetings().joinToString(separator = "\\u0000") { greeting -> "${greeting.length}:$greeting" }.sha256()
@@ -59,6 +68,7 @@ private fun String.sha256(): String = MessageDigest.getInstance("SHA-256")
     .digest(toByteArray(Charsets.UTF_8))
     .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
 
+private const val OPENING_METADATA_KEY = "rikkahub_tavern_opening"
 private const val OPENING_KIND_KEY = "kind"
 private const val OPENING_KIND = "tavern_opening"
 private const val OPENING_INDEX_KEY = "greetingIndex"

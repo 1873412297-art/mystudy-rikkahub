@@ -1,12 +1,16 @@
 package me.rerere.rikkahub.data.model
 
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.ui.pages.tavern.empty
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -60,6 +64,34 @@ class TavernOpeningMetadataTest {
     }
 
     @Test
+    fun `opening metadata is namespaced without overwriting colliding generic metadata`() {
+        val ref = TavernOpeningRef(
+            greetingIndex = 2,
+            contentFingerprint = "opening-content",
+            cardFingerprint = "opening-card",
+        )
+        val text = UIMessagePart.Text(
+            text = "Opening",
+            metadata = buildJsonObject {
+                put("kind", "unrelated-kind")
+                put("greetingIndex", 99)
+                put("contentFingerprint", "unrelated-content")
+                put("cardFingerprint", "unrelated-card")
+            },
+        )
+
+        val marked = text.withTavernOpening(ref)
+        val openingMetadata = marked.metadata?.get("rikkahub_tavern_opening")?.jsonObject
+
+        assertEquals("unrelated-kind", marked.metadata?.get("kind")?.jsonPrimitive?.content)
+        assertEquals(99, marked.metadata?.get("greetingIndex")?.jsonPrimitive?.int)
+        assertEquals("unrelated-content", marked.metadata?.get("contentFingerprint")?.jsonPrimitive?.content)
+        assertEquals("unrelated-card", marked.metadata?.get("cardFingerprint")?.jsonPrimitive?.content)
+        assertEquals("tavern_opening", openingMetadata?.get("kind")?.jsonPrimitive?.content)
+        assertEquals(ref, marked.tavernOpeningRef())
+    }
+
+    @Test
     fun `malformed opening metadata is ignored`() {
         val malformed = listOf(
             buildJsonObject { put("kind", "tavern_opening") },
@@ -78,6 +110,42 @@ class TavernOpeningMetadataTest {
         )
 
         malformed.forEach { metadata ->
+            assertNull(UIMessagePart.Text("Opening", metadata = metadata).tavernOpeningRef())
+        }
+    }
+
+    @Test
+    fun `opening metadata reader rejects noncanonical top level and malformed JSON types`() {
+        val malformedMarkers = listOf(
+            buildJsonObject {
+                put("kind", "tavern_opening")
+                put("greetingIndex", "2")
+                put("contentFingerprint", "content")
+                put("cardFingerprint", "card")
+            },
+            buildJsonObject {
+                put("kind", 7)
+                put("greetingIndex", 2)
+                put("contentFingerprint", "content")
+                put("cardFingerprint", "card")
+            },
+            buildJsonObject {
+                put("kind", "tavern_opening")
+                put("greetingIndex", 2)
+                put("contentFingerprint", 7)
+                put("cardFingerprint", "card")
+            },
+            buildJsonObject {
+                put("kind", "tavern_opening")
+                put("greetingIndex", 2)
+                put("contentFingerprint", "content")
+                put("cardFingerprint", true)
+            },
+        )
+
+        assertNull(UIMessagePart.Text("Opening", metadata = malformedMarkers.first()).tavernOpeningRef())
+        malformedMarkers.forEach { marker ->
+            val metadata = buildJsonObject { put("rikkahub_tavern_opening", marker) }
             assertNull(UIMessagePart.Text("Opening", metadata = metadata).tavernOpeningRef())
         }
     }
@@ -124,5 +192,51 @@ class TavernOpeningMetadataTest {
                 card,
             ),
         )
+    }
+
+    @Test
+    fun `legacy opening recognition rejects blank card first mes and blank HTML`() {
+        val blankCard = TavernCharacterCard.empty().copy(firstMes = "")
+
+        assertNull(
+            inferLegacyOpening(
+                UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    parts = listOf(UIMessagePart.Text("", UIMessagePart.RenderMode.HTML)),
+                ),
+                blankCard,
+            ),
+        )
+        assertNull(
+            inferLegacyOpening(
+                UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    parts = listOf(UIMessagePart.Text("", UIMessagePart.RenderMode.HTML)),
+                ),
+                TavernCharacterCard.empty().copy(firstMes = "Welcome"),
+            ),
+        )
+    }
+
+    @Test
+    fun `card fingerprint includes alternate greeting order and boundaries`() {
+        val message = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(UIMessagePart.Text("Opening", UIMessagePart.RenderMode.HTML)),
+        )
+        val ordered = TavernCharacterCard.empty().copy(
+            firstMes = "Opening",
+            alternateGreetings = listOf("a", "bc"),
+        )
+        val reordered = ordered.copy(alternateGreetings = listOf("bc", "a"))
+        val differentBoundaries = ordered.copy(alternateGreetings = listOf("ab", "c"))
+
+        val orderedRef = inferLegacyOpening(message, ordered)!!
+        val reorderedRef = inferLegacyOpening(message, reordered)!!
+        val differentBoundariesRef = inferLegacyOpening(message, differentBoundaries)!!
+
+        assertEquals(orderedRef.contentFingerprint, reorderedRef.contentFingerprint)
+        assertNotEquals(orderedRef.cardFingerprint, reorderedRef.cardFingerprint)
+        assertNotEquals(orderedRef.cardFingerprint, differentBoundariesRef.cardFingerprint)
     }
 }
