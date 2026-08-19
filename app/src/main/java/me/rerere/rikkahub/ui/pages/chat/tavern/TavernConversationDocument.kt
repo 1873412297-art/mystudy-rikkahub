@@ -65,4 +65,4 @@ private fun Context.loadTavernConversationDocumentAssets(): TavernConversationDo
     return TavernConversationDocumentAssets(template, scripts, styles)
 }
 
-private val DOCUMENT_PLACEHOLDER = Regex("\\{\\{([A-Z_0-9]+)}}")
+private val DOCUMENT_PLACEHOLDER = Regex("\\{\\{([A-Z_0-9]+)\\}\\}")

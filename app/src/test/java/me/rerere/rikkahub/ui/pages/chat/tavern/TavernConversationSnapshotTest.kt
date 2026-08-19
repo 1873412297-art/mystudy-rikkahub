@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.pages.chat.tavern
 
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.rerere.ai.core.MessageRole
@@ -155,8 +156,12 @@ class TavernConversationSnapshotTest {
     @Test
     fun `snapshot and every patch are serializable with stable protocol names`() {
         val current = snapshot(node("n1", 0, message("m1", MessageRole.ASSISTANT, "hello")))
+        val message = current.nodes.single().selectedMessage
         val patches: List<TavernConversationPatch> = listOf(
             TavernConversationPatch.ReplaceAll(current),
+            TavernConversationPatch.UpsertMessage("n1", 0, message),
+            TavernConversationPatch.RemoveMessage("n1", "m1"),
+            TavernConversationPatch.SelectBranch("n1", 0, "m1", 1),
             TavernConversationPatch.SetStreaming(true),
         )
         val json = Json { encodeDefaults = true; classDiscriminator = "type" }
@@ -165,8 +170,10 @@ class TavernConversationSnapshotTest {
         val encodedPatches = json.encodeToString(patches)
 
         assertEquals(encodedSnapshot, json.encodeToString(current))
-        assertTrue(encodedPatches.contains("\"type\":\"replace_all\""))
-        assertTrue(encodedPatches.contains("\"type\":\"set_streaming\""))
+        listOf("replace_all", "upsert_message", "remove_message", "select_branch", "set_streaming").forEach {
+            assertTrue("missing serialized patch $it", encodedPatches.contains("\"type\":\"$it\""))
+        }
+        assertEquals(patches, json.decodeFromString<List<TavernConversationPatch>>(encodedPatches))
         assertTrue(encodedSnapshot.contains("\"renderMode\":\"markdown\""))
     }
 

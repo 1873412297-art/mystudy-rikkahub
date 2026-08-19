@@ -49,6 +49,44 @@ class TavernConversationDocumentTest {
     }
 
     @Test
+    fun `markdown sanitizer forbids style channel and event handlers`() {
+        assertTrue(template.contains("FORBID_TAGS: ['style'"))
+        assertTrue(template.contains("FORBID_ATTR: ['style', 'srcdoc', 'formaction'"))
+        listOf(
+            "onerror",
+            "onload",
+            "onclick",
+            "onmouseover",
+            "onmouseout",
+            "onfocus",
+            "onblur",
+            "onchange",
+            "onsubmit",
+        ).forEach { attribute ->
+            assertTrue("missing forbidden Markdown attribute $attribute", template.contains("'$attribute'"))
+        }
+    }
+
+    @Test
+    fun `template wires task lists katex and mermaid through markdown lifecycle`() {
+        assertTrue(template.contains("markdown.use(window.MarkdownItTaskLists"))
+        assertTrue(template.contains("markdown.use(window.vscodeKatex, { katex: window.katex })"))
+        assertTrue(template.contains("markdown.renderer.rules.fence = function"))
+        assertTrue(template.contains("info === 'mermaid'"))
+        assertTrue(template.contains("window.mermaid.initialize({"))
+        assertTrue(template.contains("window.mermaid.run({ nodes: mermaidNodes })"))
+        assertTrue(template.contains("runMarkdownEnhancements(root)"))
+        assertTrue(template.contains("runMarkdownEnhancements(replacement)"))
+    }
+
+    @Test
+    fun `replace all removes stale theme custom properties`() {
+        assertTrue(template.contains("var appliedThemeVariables = []"))
+        assertTrue(template.contains("document.documentElement.style.removeProperty(name)"))
+        assertTrue(template.contains("appliedThemeVariables = nextThemeVariables"))
+    }
+
+    @Test
     fun `document builder injects deterministic snapshot and vendors without script escape`() {
         val snapshot = TavernConversationSnapshot(
             conversationId = "conversation",

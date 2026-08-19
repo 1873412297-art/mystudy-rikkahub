@@ -55,10 +55,11 @@
       var rawHtmlTemplate = document.getElementById('raw-html-part-template');
       var state = window.__RIKKAHUB_TAVERN_CONVERSATION__;
       var markdown = null;
+      var appliedThemeVariables = [];
 
       function configureMarkdown() {
         if (!window.MarkdownIt || !window.DOMPurify) return null;
-        return new window.MarkdownIt({
+        markdown = new window.MarkdownIt({
           html: true,
           breaks: true,
           linkify: true,
@@ -75,12 +76,59 @@
             return '<pre class="hljs"><code>' + fallback.innerHTML + '</code></pre>';
           }
         });
+        if (window.MarkdownItTaskLists) {
+          markdown.use(window.MarkdownItTaskLists, { enabled: true, label: true, labelAfter: true });
+        }
+        if (window.katex && window.vscodeKatex) {
+          try { markdown.use(window.vscodeKatex, { katex: window.katex }); } catch (_) {}
+        }
+        var defaultFenceRenderer = markdown.renderer.rules.fence || function (tokens, index, options, env, self) {
+          return self.renderToken(tokens, index, options);
+        };
+        markdown.renderer.rules.fence = function (tokens, index, options, env, self) {
+          var token = tokens[index];
+          var info = token.info ? markdown.utils.unescapeAll(token.info).trim() : '';
+          if (info === 'mermaid') {
+            return '<div class="mermaid">' + token.content.trim() + '</div>';
+          }
+          return defaultFenceRenderer(tokens, index, options, env, self);
+        };
+        return markdown;
+      }
+
+      function initializeMermaid() {
+        if (!window.mermaid) return;
+        try {
+          window.mermaid.initialize({
+            startOnLoad: false,
+            theme: (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'default',
+            securityLevel: 'strict',
+            fontFamily: 'inherit'
+          });
+        } catch (_) {}
+      }
+
+      function runMarkdownEnhancements(scope) {
+        if (!window.mermaid || !scope) return;
+        var mermaidNodes = scope.querySelectorAll('.mermaid:not([data-processed])');
+        if (mermaidNodes.length === 0) return;
+        try {
+          var pending = window.mermaid.run({ nodes: mermaidNodes });
+          if (pending && typeof pending.catch === 'function') pending.catch(function () {});
+        } catch (_) {}
       }
 
       function applyDocumentStyle(snapshot) {
-        Object.keys(snapshot.themeCssVariables || {}).sort().forEach(function (name) {
-          if (name.indexOf('--') === 0) document.documentElement.style.setProperty(name, snapshot.themeCssVariables[name]);
+        var nextThemeVariables = Object.keys(snapshot.themeCssVariables || {}).filter(function (name) {
+          return name.indexOf('--') === 0;
+        }).sort();
+        appliedThemeVariables.forEach(function (name) {
+          if (nextThemeVariables.indexOf(name) < 0) document.documentElement.style.removeProperty(name);
         });
+        nextThemeVariables.forEach(function (name) {
+          document.documentElement.style.setProperty(name, snapshot.themeCssVariables[name]);
+        });
+        appliedThemeVariables = nextThemeVariables;
         var cardStyle = document.getElementById('rikkahub-card-css');
         if (!cardStyle) {
           cardStyle = document.createElement('style');
@@ -101,8 +149,8 @@
           USE_PROFILES: { html: true, svg: false, mathMl: false },
           ADD_TAGS: ['details', 'summary', 'font', 'mark', 'kbd'],
           ADD_ATTR: ['open', 'color', 'face', 'size', 'target', 'class'],
-          FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'frame', 'frameset', 'meta', 'base', 'link', 'form'],
-          FORBID_ATTR: ['srcdoc', 'formaction', 'onerror', 'onload', 'onclick', 'onfocus', 'onblur'],
+          FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed', 'frame', 'frameset', 'meta', 'base', 'link', 'form'],
+          FORBID_ATTR: ['style', 'srcdoc', 'formaction', 'onerror', 'onload', 'onclick', 'onmouseover', 'onmouseout', 'onfocus', 'onblur', 'onchange', 'onsubmit'],
           ALLOW_DATA_ATTR: false,
           ALLOW_UNKNOWN_PROTOCOLS: false
         });
@@ -184,6 +232,7 @@
           var element = renderNode(node, index);
           if (element) root.appendChild(element);
         });
+        runMarkdownEnhancements(root);
       }
 
       function rerenderNode(nodeId) {
@@ -201,6 +250,7 @@
         } else {
           root.insertBefore(replacement, root.children[index] || null);
         }
+        runMarkdownEnhancements(replacement);
       }
 
       function applyPatch(patch) {
@@ -247,6 +297,7 @@
       };
 
       markdown = configureMarkdown();
+      initializeMermaid();
       renderAll();
     })();
   </script>
