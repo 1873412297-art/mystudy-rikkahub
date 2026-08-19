@@ -5,6 +5,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.Locale
 
 /** 宏展开上下文（注入 QuickJS 的数据面） */
 data class MacroExpandContext(
@@ -47,6 +48,7 @@ private const val MAX_REGISTRATIONS = 64
 
 /** 宏展开单次执行超时 */
 private const val MACRO_EXECUTION_TIMEOUT_MS = 2_000L
+private const val SEND_HOOK_KEY = "__send_hook__"
 
 /**
  * 宿主侧酒馆脚本注册表（应用级，WebView 重载不丢）。
@@ -76,6 +78,9 @@ class TavernScriptRegistry : MacroExpander {
     /** 已求值进共享 JS 上下文的宏/命令名集合（重注册时移除以重新求值） */
     private val loadedMacros = ConcurrentHashMap<String, Boolean>()
     private val loadedSlashCommands = ConcurrentHashMap<String, Boolean>()
+    private val sendHook = AtomicReference<MacroEntry?>()
+
+    private fun macroKey(name: String): String = name.lowercase(Locale.ROOT)
 
     private fun getOrCreateContext(): QuickJSContext? {
         contextRef.get()?.let { return it }
@@ -139,18 +144,27 @@ class TavernScriptRegistry : MacroExpander {
 
     fun registerMacro(name: String, source: String): Boolean {
         if (source.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES) return false
-        if (macros.size >= MAX_REGISTRATIONS && !macros.containsKey(name)) return false
-        macros[name] = MacroEntry(name, source)
-        loadedMacros.remove(name) // 重新求值
+        val key = macroKey(name)
+        if (macros.size >= MAX_REGISTRATIONS && !macros.containsKey(key)) return false
+        macros[key] = MacroEntry(name, source)
+        loadedMacros.remove(key) // 重新求值
         return true
     }
 
     fun removeMacro(name: String) {
-        macros.remove(name)
-        loadedMacros.remove(name)
+        val key = macroKey(name)
+        macros.remove(key)
+        loadedMacros.remove(key)
     }
 
-    fun listMacros(): List<String> = macros.keys.toList()
+    fun listMacros(): List<String> = macros.values.map { it.name }
+
+    fun registerSendHook(source: String): Boolean {
+        if (source.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES) return false
+        sendHook.set(MacroEntry("sendHook", source))
+        loadedMacros.remove(SEND_HOOK_KEY)
+        return true
+    }
 
     fun registerSlashCommand(name: String, callbackSource: String, aliases: List<String>, helpString: String): Boolean {
         if (callbackSource.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES) return false
@@ -189,9 +203,16 @@ class TavernScriptRegistry : MacroExpander {
      * 未注册/无可用引擎/执行失败 → null（调用方兜底原样）。
      */
     fun expandMacro(name: String, args: String, context: MacroExpandContext): String? {
-        val entry = macros[name] ?: return null
-        if (!ensureMacroLoaded(name, entry.source)) return null
-        return callGlobal(macroGlobalName(name), args)
+        val key = macroKey(name)
+        val entry = macros[key] ?: return null
+        if (!ensureMacroLoaded(key, entry.source)) return null
+        return callGlobal(macroGlobalName(key), args)
+    }
+
+    fun expandSendHook(args: String): String? {
+        val entry = sendHook.get() ?: return null
+        if (!ensureMacroLoaded(SEND_HOOK_KEY, entry.source)) return null
+        return callGlobal(macroGlobalName(SEND_HOOK_KEY), args)
     }
 
     fun executeSlashCommand(name: String, args: String, context: MacroExpandContext): SlashCommandResult? {
@@ -231,6 +252,7 @@ class TavernScriptRegistry : MacroExpander {
         slashCommands.clear()
         loadedMacros.clear()
         loadedSlashCommands.clear()
+        sendHook.set(null)
     }
 
     private fun escapeJson(s: String): String {

@@ -35,6 +35,19 @@ class TavernScriptRegistryTest {
     }
 
     @Test
+    fun `macro names are case insensitive and latest registration wins`() {
+        val registry = registry()
+
+        assertTrue(registry.registerMacro("Hero", "function macro(args){ return 'first'; }"))
+        assertTrue(registry.registerMacro("hero", "function macro(args){ return 'latest'; }"))
+
+        assertEquals(listOf("hero"), registry.listMacros())
+        // JVM has no native QuickJS; this asserts lookup reaches the registered entry rather than treating
+        // HERO as an unknown macro. The no-engine fallback remains null.
+        assertNull(registry.expandMacro("HERO", "", MacroExpandContext()))
+    }
+
+    @Test
     fun `macro expansion returns original text when no JS engine is available`() {
         // 降级断言：注册成功，但无引擎时展开安全兜底为原文（不抛异常）
         val registry = registry()

@@ -34,8 +34,6 @@ private const val MAX_VARIABLE_VALUE_BYTES = 64 * 1024
 private const val MAX_VARIABLE_TOTAL_BYTES = 512 * 1024
 
 /** sendHook 注册在宿主注册表中的特殊宏名 */
-private const val SEND_HOOK_MACRO_NAME = "__rikkahub_send_hook"
-
 /** sendHook 单次执行超时（best-effort：超时原样返回） */
 private const val SEND_HOOK_TIMEOUT_MS = 500L
 
@@ -433,7 +431,7 @@ internal class TavernRuntimeController(
     }
 
     private fun registerSendHookInternal(request: TavernRuntimeRequest, source: String): TavernRuntimeResponse {
-        if (!scriptRegistry.registerMacro(SEND_HOOK_MACRO_NAME, source)) {
+        if (!scriptRegistry.registerSendHook(source)) {
             return badRequest(request, "sendHook.register source exceeds the 64KB limit")
         }
         sendHookSource.set(source)
@@ -452,11 +450,7 @@ internal class TavernRuntimeController(
         if (!permissionStore.current().allowMacroRegister) return text
         val expanded = withTimeoutOrNull(timeoutMs) {
             withContext(Dispatchers.IO) {
-                scriptRegistry.expandMacro(
-                    SEND_HOOK_MACRO_NAME,
-                    text,
-                    MacroExpandContext(conversationId = conversationId?.toString()),
-                )
+                scriptRegistry.expandSendHook(text)
             }
         }
         // 展开失败（引擎不可用/超时/异常）→ best-effort 原样

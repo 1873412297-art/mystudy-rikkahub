@@ -504,6 +504,7 @@ class TavernRuntimeControllerTest {
             )
         )
         assertTrue(response.ok)
+        assertTrue(registry.listMacros().isEmpty())
         // JVM 环境无 QuickJS 原生库 → registry 降级无引擎模式，展开失败原样返回（best-effort）
         assertEquals("hello", controller.mutateOutgoing("hello"))
     }
