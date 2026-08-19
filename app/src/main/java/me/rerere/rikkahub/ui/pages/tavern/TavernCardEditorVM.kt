@@ -1,17 +1,18 @@
 package me.rerere.rikkahub.ui.pages.tavern
 
 import androidx.lifecycle.ViewModel
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -19,19 +20,41 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.TavernCardV2
 import me.rerere.rikkahub.data.model.TavernCharacterCard
+import me.rerere.rikkahub.data.repository.ConversationRepository
+import me.rerere.rikkahub.service.ChatService
+import kotlin.uuid.Uuid
 
 class TavernCardEditorVM(
     private val assistantId: String,
     private val settingsStore: SettingsStore,
+    private val conversationRepository: ConversationRepository,
+    private val chatService: ChatService,
 ) : ViewModel() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val parsedAssistantId = Uuid.parse(assistantId)
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
 
     val assistant: StateFlow<Assistant?> = settingsStore.settingsFlowRaw
         .map { settings -> settings.assistants.find { it.id.toString() == assistantId } }
-        .stateIn(scope, SharingStarted.Eagerly, null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val settings = settingsStore.settingsFlow
+
+    val previewTargets: StateFlow<List<Conversation>> = conversationRepository
+        .getConversationsOfAssistant(parsedAssistantId)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val previewTargetSelection = TavernGreetingPreviewTargetSelection(parsedAssistantId)
+    internal val selectedPreviewTarget = previewTargetSelection.selected
+    internal val selectedPreviewTargetReady = previewTargetSelection.ready
+    val selectedPreviewConversation: StateFlow<Conversation?> = selectedPreviewTarget
+        .flatMapLatest { target ->
+            target?.let { chatService.getConversationFlow(it.conversationId).map { conversation -> conversation } }
+                ?: flowOf(null)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _card = MutableStateFlow(TavernCharacterCard.empty())
     val card: StateFlow<TavernCharacterCard> = _card.asStateFlow()
@@ -39,7 +62,7 @@ class TavernCardEditorVM(
     private var loaded = false
 
     init {
-        scope.launch {
+        viewModelScope.launch {
             val current = assistant.value ?: return@launch
             loadCard(current)
         }
@@ -173,7 +196,7 @@ class TavernCardEditorVM(
             })
         }.toString()
 
-        scope.launch {
+        viewModelScope.launch {
             settingsStore.update { settings ->
                 settings.copy(
                     assistants = settings.assistants.map {
@@ -184,6 +207,48 @@ class TavernCardEditorVM(
                 )
             }
         }
+    }
+
+    fun selectPreviewTarget(conversation: Conversation) {
+        val current = selectedPreviewTarget.value
+        if (current?.conversationId == conversation.id) return
+        current?.let { chatService.removeConversationReference(it.conversationId) }
+        previewTargetSelection.select(
+            TavernGreetingPreviewTarget(
+                conversationId = conversation.id,
+                assistantId = conversation.assistantId,
+                title = conversation.title.ifBlank { "未命名对话" },
+            ),
+        )
+        chatService.addConversationReference(conversation.id)
+        viewModelScope.launch {
+            runCatching { chatService.initializeConversation(conversation.id) }
+                .onSuccess {
+                    if (selectedPreviewTarget.value?.conversationId == conversation.id) {
+                        previewTargetSelection.markReady(conversation.id)
+                    }
+                }
+                .onFailure {
+                    if (selectedPreviewTarget.value?.conversationId == conversation.id) {
+                        chatService.removeConversationReference(conversation.id)
+                        previewTargetSelection.clear()
+                    }
+                }
+        }
+    }
+
+    fun writePreviewCurrentMessage(patch: JsonElement) {
+        previewTargetSelection.routeMessageWrite(patch) { conversationId, routedPatch ->
+            viewModelScope.launch {
+                chatService.applyTavernPreviewCurrentMessagePatch(conversationId, routedPatch)
+            }
+        }
+    }
+
+    override fun onCleared() {
+        selectedPreviewTarget.value?.let { chatService.removeConversationReference(it.conversationId) }
+        previewTargetSelection.clear()
+        super.onCleared()
     }
 
     companion object {

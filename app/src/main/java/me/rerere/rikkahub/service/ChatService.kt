@@ -32,6 +32,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
@@ -86,6 +87,7 @@ import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.applyTavernPreviewMessagePatch
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.ai.slash.MacroExpandContext
 import me.rerere.rikkahub.data.ai.slash.ScriptManager
@@ -2058,6 +2060,13 @@ class ChatService(
             conversation = conversation,
             promptTraceCleanup = PromptTraceCleanup.None,
         )
+    }
+
+    /** Persists a full-function editor preview's message side effect to its explicitly selected real conversation. */
+    suspend fun applyTavernPreviewCurrentMessagePatch(conversationId: Uuid, patch: JsonElement) {
+        val current = getConversationFlow(conversationId).value
+        val updated = applyTavernPreviewMessagePatch(current, patch)
+        if (updated != current) saveConversation(conversationId, updated)
     }
 
     private suspend fun saveConversationAfterRemovingMessages(

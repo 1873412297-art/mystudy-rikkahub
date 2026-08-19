@@ -5,14 +5,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -20,26 +26,78 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonObject
+import me.rerere.ai.ui.UIMessage
+import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.toMessageNode
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationActions
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationPane
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.FormItem
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
+import kotlin.uuid.Uuid
 
 @Composable
 fun TavernCardEditorPage(assistantId: String) {
     val vm: TavernCardEditorVM = koinViewModel(parameters = { parametersOf(assistantId) })
     val card by vm.card.collectAsStateWithLifecycle()
     val assistant by vm.assistant.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val previewTargets by vm.previewTargets.collectAsStateWithLifecycle()
+    val selectedPreviewTarget by vm.selectedPreviewTarget.collectAsStateWithLifecycle()
+    val selectedPreviewTargetReady by vm.selectedPreviewTargetReady.collectAsStateWithLifecycle()
+    val selectedPreviewConversation by vm.selectedPreviewConversation.collectAsStateWithLifecycle()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val scrollState = rememberScrollState()
+    var showPreviewTargetPicker by remember { mutableStateOf(false) }
+
+    if (showPreviewTargetPicker) {
+        AlertDialog(
+            onDismissRequest = { showPreviewTargetPicker = false },
+            title = { Text("选择全功能预览会话") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        "脚本、网络、变量、世界书、消息和注册副作用会直接写入你选择的真实会话。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    if (previewTargets.isEmpty()) {
+                        Text("此角色还没有可用的真实会话，请先创建一段对话。")
+                    }
+                    previewTargets.forEach { conversation ->
+                        TextButton(
+                            onClick = {
+                                vm.selectPreviewTarget(conversation)
+                                showPreviewTargetPicker = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(conversation.title.ifBlank { "未命名对话" })
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPreviewTargetPicker = false }) { Text("取消") }
+            },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -52,6 +110,13 @@ fun TavernCardEditorPage(assistantId: String) {
                                 text = it.name,
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        selectedPreviewTarget?.let { target ->
+                            Text(
+                                text = "预览 → ${target.title}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error,
                             )
                         }
                     }
@@ -158,33 +223,68 @@ fun TavernCardEditorPage(assistantId: String) {
             // ── Messages ──
             SectionHeader("消息/对话")
 
-            FormItem(label = { Text("开场白") }) {
-                OutlinedTextField(
-                    value = card.firstMes,
-                    onValueChange = { v -> vm.update { c -> c.copy(firstMes = v) } },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 3,
-                    maxLines = 8,
-                )
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("全功能预览目标", style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            selectedPreviewTarget?.title ?: "尚未选择（不会自动选择）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (selectedPreviewTarget == null) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                    TextButton(onClick = { showPreviewTargetPicker = true }) {
+                        Text(if (selectedPreviewTarget == null) "选择会话" else "重新选择")
+                    }
+                }
             }
+
+            GreetingSourcePreviewEditor(
+                fieldKey = "first_mes",
+                label = "开场白",
+                value = card.firstMes,
+                onValueChange = { value -> vm.update { it.copy(firstMes = value) } },
+                assistant = assistant,
+                settings = settings,
+                target = selectedPreviewTarget,
+                targetReady = selectedPreviewTargetReady,
+                targetConversation = selectedPreviewConversation,
+                onSelectTarget = { showPreviewTargetPicker = true },
+                onMessageWrite = vm::writePreviewCurrentMessage,
+            )
 
             // Alternate greetings
             var newGreeting by remember { mutableStateOf("") }
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text("备选开场白", style = MaterialTheme.typography.labelLarge)
                 card.alternateGreetings.forEachIndexed { index, greeting ->
-                    FormItem(label = { Text("#${index + 1}") }) {
-                        OutlinedTextField(
-                            value = greeting,
-                            onValueChange = { newVal ->
-                                val updated = card.alternateGreetings.toMutableList().also { it[index] = newVal }
-                                vm.update { c -> c.copy(alternateGreetings = updated) }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            minLines = 2,
-                            maxLines = 4,
-                        )
-                    }
+                    GreetingSourcePreviewEditor(
+                        fieldKey = "alternate_$index",
+                        label = "#${index + 1}",
+                        value = greeting,
+                        onValueChange = { newVal ->
+                            val updated = card.alternateGreetings.toMutableList().also { it[index] = newVal }
+                            vm.update { c -> c.copy(alternateGreetings = updated) }
+                        },
+                        assistant = assistant,
+                        settings = settings,
+                        target = selectedPreviewTarget,
+                        targetReady = selectedPreviewTargetReady,
+                        targetConversation = selectedPreviewConversation,
+                        onSelectTarget = { showPreviewTargetPicker = true },
+                        onMessageWrite = vm::writePreviewCurrentMessage,
+                    )
                 }
                 FormItem(label = { Text("新增") }) {
                     OutlinedTextField(
@@ -359,6 +459,94 @@ fun TavernCardEditorPage(assistantId: String) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 32.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun GreetingSourcePreviewEditor(
+    fieldKey: String,
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    assistant: Assistant?,
+    settings: Settings,
+    target: TavernGreetingPreviewTarget?,
+    targetReady: Boolean,
+    targetConversation: Conversation?,
+    onSelectTarget: () -> Unit,
+    onMessageWrite: (JsonElement) -> Unit,
+) {
+    var showPreview by rememberSaveable(fieldKey) { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(label, style = MaterialTheme.typography.labelLarge)
+            Row {
+                TextButton(onClick = { showPreview = false }) { Text("源码") }
+                TextButton(onClick = { showPreview = true }) { Text("实时预览") }
+            }
+        }
+        if (!showPreview) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 3,
+                maxLines = 8,
+            )
+        } else if (target == null) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("实时预览会运行完整脚本，必须先手动选择一段真实会话。")
+                    Button(onClick = onSelectTarget) { Text("选择真实会话") }
+                }
+            }
+        } else if (
+            assistant == null || targetConversation == null ||
+            !targetReady || targetConversation.id != target.conversationId ||
+            targetConversation.assistantId != target.assistantId
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CircularProgressIndicator()
+                Text("正在连接预览目标：${target.title}")
+            }
+        } else {
+            val previewConversation = remember(targetConversation.id, value) {
+                targetConversation.copy(messageNodes = listOf(UIMessage.assistantHtml(value).toMessageNode()))
+            }
+            val actions = remember {
+                object : TavernConversationActions {
+                    override fun onMessageLongPress(messageId: Uuid) = Unit
+                    override fun onSelectBranch(nodeId: Uuid, index: Int) = Unit
+                    override fun onOpenHtml(messageId: Uuid) = Unit
+                    override fun onFallbackRequested() = Unit
+                }
+            }
+            Text(
+                "脚本副作用将直接写入：${target.title}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            TavernConversationPane(
+                conversation = previewConversation,
+                assistant = assistant,
+                settings = settings,
+                loading = false,
+                actions = actions,
+                ownsSendHookController = true,
+                currentMessageWriter = onMessageWrite,
+                modifier = Modifier.fillMaxWidth().height(360.dp),
             )
         }
     }

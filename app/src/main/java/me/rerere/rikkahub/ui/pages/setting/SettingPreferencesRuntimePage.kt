@@ -69,6 +69,25 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                     modifier = Modifier.padding(horizontal = 8.dp),
                     title = { Text("Tavern Helper") },
                 ) {
+                    item(
+                        onClick = {
+                            updateRuntimePermissions(TavernRuntimePermissions.maximumCompatible())
+                        },
+                        headlineContent = { Text("最大兼容") },
+                        supportingContent = {
+                            Text("开启脚本、网络、消息/变量/世界书写入、事件和宏注册；请求头读取仍关闭。")
+                        },
+                        trailingContent = { Text("应用") },
+                    )
+                    item(
+                        onClick = {
+                            updateRuntimePermissions(TavernRuntimePermissions.conservative())
+                        },
+                        headlineContent = { Text("保守模式") },
+                        supportingContent = { Text("关闭全部脚本能力与敏感读取，仍可继续逐项调整。") },
+                        trailingContent = { Text("应用") },
+                    )
+
                     fun permissionSwitch(
                         title: String,
                         description: String,
@@ -93,7 +112,7 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                     if (runtimePermissions.allowScripts) {
                         permissionSwitch(
                             title = "允许写入世界书",
-                            description = "允许脚本增删改世界书条目。默认关闭。",
+                            description = "允许脚本增删改世界书条目。最大兼容模式默认开启。",
                             checked = runtimePermissions.allowWorldWrite,
                             onCheckedChange = {
                                 updateRuntimePermissions(runtimePermissions.copy(allowWorldWrite = it))
@@ -101,7 +120,7 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                         )
                         permissionSwitch(
                             title = "允许写入消息",
-                            description = "允许脚本修改当前消息内容。默认关闭。",
+                            description = "允许脚本修改当前消息内容。最大兼容模式默认开启。",
                             checked = runtimePermissions.allowMessageWrite,
                             onCheckedChange = {
                                 updateRuntimePermissions(runtimePermissions.copy(allowMessageWrite = it))
@@ -109,7 +128,7 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                         )
                         permissionSwitch(
                             title = "允许写入变量",
-                            description = "允许脚本修改聊天/全局变量并持久化。默认关闭。",
+                            description = "允许脚本修改聊天/全局变量并持久化。最大兼容模式默认开启。",
                             checked = runtimePermissions.allowVariablesWrite,
                             onCheckedChange = {
                                 updateRuntimePermissions(runtimePermissions.copy(allowVariablesWrite = it))
@@ -117,7 +136,7 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                         )
                         permissionSwitch(
                             title = "允许订阅宿主事件",
-                            description = "允许脚本接收消息发送、生成完成、渲染完成等宿主事件推送。默认关闭。",
+                            description = "允许脚本接收消息发送、生成完成、渲染完成等宿主事件推送。",
                             checked = runtimePermissions.allowEventSubscribe,
                             onCheckedChange = {
                                 updateRuntimePermissions(runtimePermissions.copy(allowEventSubscribe = it))
@@ -125,7 +144,7 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                         )
                         permissionSwitch(
                             title = "允许网络访问",
-                            description = "为后续网络类脚本接口预留。默认关闭。",
+                            description = "允许角色卡脚本发起网络请求。最大兼容模式默认开启。",
                             checked = runtimePermissions.allowNetwork,
                             onCheckedChange = {
                                 updateRuntimePermissions(runtimePermissions.copy(allowNetwork = it))
@@ -133,7 +152,7 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                         )
                         permissionSwitch(
                             title = "允许注册宏与斜杠命令",
-                            description = "允许脚本注册宿主宏（发送前文本展开）与斜杠命令。默认关闭。",
+                            description = "允许脚本注册宿主宏（发送前文本展开）与斜杠命令。",
                             checked = runtimePermissions.allowMacroRegister,
                             onCheckedChange = {
                                 updateRuntimePermissions(runtimePermissions.copy(allowMacroRegister = it))

@@ -14,4 +14,28 @@ data class TavernRuntimePermissions(
     val allowMacroRegister: Boolean = true,
     /** 允许脚本读取当前模型请求头（含 API key 等敏感信息，默认 false） */
     val allowRequestHeaders: Boolean = false,
-)
+) {
+    companion object {
+        fun maximumCompatible() = TavernRuntimePermissions(
+            allowScripts = true,
+            allowWorldWrite = true,
+            allowMessageWrite = true,
+            allowNetwork = true,
+            allowVariablesWrite = true,
+            allowEventSubscribe = true,
+            allowMacroRegister = true,
+            allowRequestHeaders = false,
+        )
+
+        fun conservative() = TavernRuntimePermissions(
+            allowScripts = false,
+            allowWorldWrite = false,
+            allowMessageWrite = false,
+            allowNetwork = false,
+            allowVariablesWrite = false,
+            allowEventSubscribe = false,
+            allowMacroRegister = false,
+            allowRequestHeaders = false,
+        )
+    }
+}

@@ -96,6 +96,7 @@ internal fun TavernConversationPane(
     visibleMessageId: Uuid? = null,
     ownsSendHookController: Boolean = true,
     candidateRuntime: TavernGreetingCandidateRuntime? = null,
+    currentMessageWriter: ((JsonElement) -> Unit)? = null,
     onRenderStatus: (TavernConversationRenderStatus) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -181,6 +182,7 @@ internal fun TavernConversationPane(
         actions = actions,
         ownsSendHookController = ownsSendHookController,
         runtimeBindings = candidateRuntime?.runtimeBindings(),
+        currentMessageWriter = currentMessageWriter,
         onRenderStatus = onRenderStatus,
         modifier = modifier,
     )
@@ -196,6 +198,7 @@ internal fun TavernConversationWebView(
     actions: TavernConversationActions,
     ownsSendHookController: Boolean = true,
     runtimeBindings: TavernGreetingRuntimeBindings? = null,
+    currentMessageWriter: ((JsonElement) -> Unit)? = null,
     onRenderStatus: (TavernConversationRenderStatus) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -213,6 +216,7 @@ internal fun TavernConversationWebView(
     val isolatedScriptRegistry = remember { TavernScriptRegistry() }
     val permissionStore = remember { TavernRuntimePermissionStore(appSettings.runtimePermissions) }
     val latestHeaderSource by rememberUpdatedState(headerSource)
+    val latestCurrentMessageWriter by rememberUpdatedState(currentMessageWriter)
     val runtimeController = remember(snapshot.conversationId, runtimeBindings, ownsSendHookController) {
         TavernRuntimeController(
             conversationId = conversationUuid,
@@ -231,7 +235,11 @@ internal fun TavernConversationWebView(
             headerSource = { latestHeaderSource() },
             registrationObserver = runtimeBindings?.registrationObserver
                 ?: me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeRegistrationObserver.NONE,
-            currentMessageWriter = runtimeBindings?.currentMessageWriter,
+            currentMessageWriter = runtimeBindings?.currentMessageWriter
+                ?: { patch ->
+                    latestCurrentMessageWriter?.invoke(patch)
+                    Unit
+                },
         )
     }
     val sendHookBinding = remember(sendHookStore, runtimeController, ownsSendHookController) {

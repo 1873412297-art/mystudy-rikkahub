@@ -81,6 +81,8 @@ val viewModelModule = module {
         TavernCardEditorVM(
             assistantId = it.get(),
             settingsStore = get(),
+            conversationRepository = get(),
+            chatService = get(),
         )
     }
     viewModel<TavernPromptConsoleVM> { params ->
