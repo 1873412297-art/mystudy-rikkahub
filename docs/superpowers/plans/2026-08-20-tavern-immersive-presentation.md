@@ -144,11 +144,11 @@ data class StatusHudPresentation(/* header, sections, pages, options, source mes
 fun buildStatusHudPresentation(conversation: Conversation): StatusHudPresentation?
 ```
 
-- [ ] Write RED tests for latest header selection, update identity, multi-character pages, and option prefill text.
-- [ ] Extract the pure presentation builder and make tests green.
-- [ ] Replace the in-layout expanded card with a floating one-line summary and a 90%-height modal bottom sheet using the shared runtime host.
-- [ ] Make option taps fill ChatInputState and close the sheet without sending; verify Compose compilation and focused tests.
-- [ ] Commit Task 5.
+- [x] Write RED tests for latest header selection, update identity, multi-character pages, and option prefill text.
+- [x] Extract the pure presentation builder and make tests green.
+- [x] Replace the in-layout expanded card with a floating one-line summary and a 90%-height modal bottom sheet using the shared runtime host.
+- [x] Make option taps fill ChatInputState and close the sheet without sending; verify Compose compilation and focused tests.
+- [x] Commit Task 5.
 
 ### Task 6: Editor preview and runtime permission migration UI
 
