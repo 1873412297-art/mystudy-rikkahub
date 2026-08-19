@@ -123,12 +123,12 @@ suspend fun ChatService.commitGreetingCandidate(conversationId: Uuid, candidateI
 suspend fun ChatService.createConversationFromGreeting(assistantId: Uuid, greetingIndex: Int): Uuid
 ```
 
-- [ ] Write RED service tests for independent candidate state, atomic selected-state commit, discarded candidates, locked-after-user behavior, legacy greeting navigation, and new-conversation switching.
-- [ ] Implement overlay/journal interfaces around conversation variables/messages/world mutations and make service tests green.
-- [ ] Add typed opening metadata during import/initialization and greeting-index navigation while retaining legacy Base64 reading.
-- [ ] Implement the opening stage with all candidates retained, full runtime, index/page controls, auto-picker setting, warning for irreversible network effects, and bottom input preserved.
-- [ ] After first user message, replace the stage with a top-right opening icon; implement full-screen current-opening replay and force later greeting changes into a new conversation.
-- [ ] Commit Task 4.
+- [x] Write RED service tests for independent candidate state, atomic selected-state commit, discarded candidates, locked-after-user behavior, legacy greeting navigation, and new-conversation switching.
+- [x] Implement overlay/journal interfaces around conversation variables/messages/world mutations and make service tests green.
+- [x] Add typed opening metadata during import/initialization and greeting-index navigation while retaining legacy Base64 reading.
+- [x] Implement the opening stage with all candidates retained, full runtime, index/page controls, auto-picker setting, warning for irreversible network effects, and bottom input preserved.
+- [x] After first user message, replace the stage with a top-right opening icon; implement full-screen current-opening replay and force later greeting changes into a new conversation.
+- [x] Commit Task 4.
 
 ### Task 5: Floating HUD and bottom panel
 
