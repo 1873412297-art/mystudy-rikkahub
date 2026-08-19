@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Process
 import android.util.Log
 import androidx.compose.foundation.ComposeFoundationFlags
 import androidx.compose.runtime.Composer
@@ -50,6 +51,12 @@ const val WEB_SERVER_NOTIFICATION_CHANNEL_ID = "web_server"
 class RikkaHubApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // The Tavern script worker is declared isolatedProcess so a poisoned QuickJS VM can be killed
+        // without affecting chat. Isolated UIDs cannot access application services such as JobScheduler.
+        if (Process.myUid() != applicationInfo.uid) {
+            QuickJSLoader.init()
+            return
+        }
         startKoin {
             androidLogger()
             androidContext(this@RikkaHubApp)

@@ -139,8 +139,7 @@
     <service
       android:name=".service.TavernScriptRunnerService"
       android:exported="false"
-      android:process=":tavern-script" />
-
+      android:isolatedProcess="true" />
     <provider
       android:name="androidx.core.content.FileProvider"
       android:authorities="${applicationId}.fileprovider"
