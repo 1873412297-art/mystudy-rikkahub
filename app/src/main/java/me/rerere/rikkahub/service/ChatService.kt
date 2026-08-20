@@ -421,6 +421,7 @@ class ChatService(
     private val greetingSessionFlows = ConcurrentHashMap<Uuid, MutableStateFlow<TavernGreetingSession?>>()
     private val greetingCommitMutex = Mutex()
     private val conversationPersistenceGate = ConversationPersistenceGate()
+    private val tavernPreviewMutationRebaser = TavernPreviewMutationRebaser()
 
     // 错误状态
     private val _errors = MutableStateFlow<List<ChatError>>(emptyList())
@@ -461,6 +462,7 @@ class ChatService(
         sessions.values.forEach { it.cleanup() }
         sessions.clear()
         conversationPersistenceGate.clear()
+        tavernPreviewMutationRebaser.clear()
     }
 
     // ---- Session 管理 ----
@@ -2066,20 +2068,47 @@ class ChatService(
 
     /** Persists a full-function editor preview's message side effect to its explicitly selected real conversation. */
     suspend fun applyTavernPreviewCurrentMessagePatch(conversationId: Uuid, patch: JsonElement) {
-        persistTavernPreviewMutation(conversationId) { current ->
-            applyTavernPreviewMessagePatch(current, patch)
-        }
+        persistTavernPreviewMutation(
+            conversationId = conversationId,
+            transform = { current -> applyTavernPreviewMessagePatch(current, patch) },
+            onPersisted = { before, after ->
+                val beforeMessage = before.currentMessages.lastOrNull() ?: return@persistTavernPreviewMutation
+                val afterMessage = after.getMessageNodeByMessageId(beforeMessage.id)
+                    ?.messages
+                    ?.firstOrNull { it.id == beforeMessage.id }
+                    ?: return@persistTavernPreviewMutation
+                val beforeText = beforeMessage.parts.filterIsInstance<UIMessagePart.Text>().firstOrNull()?.text
+                    ?: return@persistTavernPreviewMutation
+                val afterText = afterMessage.parts.filterIsInstance<UIMessagePart.Text>().firstOrNull()?.text
+                    ?: return@persistTavernPreviewMutation
+                tavernPreviewMutationRebaser.recordMessage(
+                    conversationId = conversationId,
+                    messageId = beforeMessage.id,
+                    before = beforeText,
+                    after = afterText,
+                )
+            },
+        )
     }
 
     suspend fun persistTavernPreviewChatVariables(conversationId: Uuid, variables: JsonObject) {
-        persistTavernPreviewMutation(conversationId) { current ->
-            current.copy(statusVariables = variables)
-        }
+        persistTavernPreviewMutation(
+            conversationId = conversationId,
+            transform = { current -> current.copy(statusVariables = variables) },
+            onPersisted = { before, after ->
+                tavernPreviewMutationRebaser.recordVariables(
+                    conversationId = conversationId,
+                    before = before.statusVariables,
+                    after = after.statusVariables,
+                )
+            },
+        )
     }
 
     private suspend fun persistTavernPreviewMutation(
         conversationId: Uuid,
         transform: (Conversation) -> Conversation,
+        onPersisted: (before: Conversation, after: Conversation) -> Unit,
     ) = conversationPersistenceGate.withConversation(conversationId) {
         val current = getConversationFlow(conversationId).value
         val updated = transform(current)
@@ -2089,6 +2118,7 @@ class ChatService(
         updateConversation(conversationId, updated)
         try {
             conversationRepo.updateConversation(updated)
+            onPersisted(current, updated)
         } catch (error: Throwable) {
             if (getConversationFlow(conversationId).value == updated) {
                 updateConversation(conversationId, current)
@@ -2119,7 +2149,7 @@ class ChatService(
             return@withConversation // 新会话且为空时不保存
         }
 
-        val updatedConversation = conversation.copy()
+        val updatedConversation = tavernPreviewMutationRebaser.rebase(conversationId, conversation).copy()
         persistConversationAndCleanupPromptTraces(
             conversationId = conversationId,
             conversation = updatedConversation,

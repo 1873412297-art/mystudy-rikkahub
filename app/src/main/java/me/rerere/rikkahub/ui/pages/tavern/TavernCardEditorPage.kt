@@ -273,6 +273,7 @@ fun TavernCardEditorPage(assistantId: String) {
                 onShowSource = { previewOwner.showSource("first_mes") },
                 onShowPreview = { previewOwner.show("first_mes") },
                 onSelectTarget = { showPreviewTargetPicker = true },
+                onValidateTarget = vm::validatePreviewTarget,
                 onMessageWrite = vm::writePreviewCurrentMessage,
                 onChatVariablesWrite = vm::writePreviewChatVariables,
             )
@@ -298,6 +299,7 @@ fun TavernCardEditorPage(assistantId: String) {
                         onShowSource = { previewOwner.showSource("alternate_$index") },
                         onShowPreview = { previewOwner.show("alternate_$index") },
                         onSelectTarget = { showPreviewTargetPicker = true },
+                        onValidateTarget = vm::validatePreviewTarget,
                         onMessageWrite = vm::writePreviewCurrentMessage,
                         onChatVariablesWrite = vm::writePreviewChatVariables,
                     )
@@ -494,6 +496,7 @@ private fun GreetingSourcePreviewEditor(
     onShowSource: () -> Unit,
     onShowPreview: () -> Unit,
     onSelectTarget: () -> Unit,
+    onValidateTarget: (Uuid) -> Unit,
     onMessageWrite: (Uuid, JsonElement) -> Unit,
     onChatVariablesWrite: (Uuid, JsonObject) -> Unit,
 ) {
@@ -563,6 +566,7 @@ private fun GreetingSourcePreviewEditor(
                 loading = false,
                 actions = actions,
                 ownsSendHookController = true,
+                runtimeTargetValidator = onValidateTarget,
                 currentMessageWriter = onMessageWrite,
                 chatVariablesWriter = onChatVariablesWrite,
                 modifier = Modifier.fillMaxWidth().height(360.dp),

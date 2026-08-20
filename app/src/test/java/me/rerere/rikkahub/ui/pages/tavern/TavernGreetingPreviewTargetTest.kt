@@ -1,10 +1,7 @@
 package me.rerere.rikkahub.ui.pages.tavern
 
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -18,6 +15,7 @@ import me.rerere.rikkahub.data.model.toMessageNode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.uuid.Uuid
 
@@ -121,32 +119,65 @@ class TavernGreetingPreviewTargetTest {
 
     @Test
     fun `preview side effects execute in callback order even when persistence suspends`() = runBlocking {
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val queue = TavernPreviewSideEffectQueue(scope)
+        val leases = mutableListOf<String>()
+        val failures = mutableListOf<Throwable>()
+        val queue = TavernPreviewSideEffectQueue(
+            dispatcher = Dispatchers.Default,
+            acquire = { leases += "acquire:$it" },
+            release = { leases += "release:$it" },
+            onFailure = failures::add,
+        )
         val firstStarted = CompletableDeferred<Unit>()
         val firstMayFinish = CompletableDeferred<Unit>()
         val finished = CompletableDeferred<Unit>()
         val order = mutableListOf<String>()
 
-        try {
-            queue.submit {
+        queue.submit(firstConversation) {
                 order += "first-start"
                 firstStarted.complete(Unit)
                 firstMayFinish.await()
                 order += "first-end"
-            }
-            queue.submit {
+        }
+        queue.submit(firstConversation) {
                 order += "second"
                 finished.complete(Unit)
-            }
-            firstStarted.await()
-            assertEquals(listOf("first-start"), order)
-            firstMayFinish.complete(Unit)
-            finished.await()
-            assertEquals(listOf("first-start", "first-end", "second"), order)
-        } finally {
-            scope.cancel()
         }
+        firstStarted.await()
+        queue.close()
+        assertEquals(listOf("acquire:$firstConversation", "acquire:$firstConversation"), leases)
+        firstMayFinish.complete(Unit)
+        finished.await()
+        queue.awaitDrained()
+
+        assertEquals(listOf("first-start", "first-end", "second"), order)
+        assertEquals(
+            listOf(
+                "acquire:$firstConversation",
+                "acquire:$firstConversation",
+                "release:$firstConversation",
+                "release:$firstConversation",
+            ),
+            leases,
+        )
+        assertTrue(failures.isEmpty())
+    }
+
+    @Test
+    fun `preview queue surfaces persistence failure and still releases operation lease`() = runBlocking {
+        val leases = mutableListOf<String>()
+        val failure = CompletableDeferred<Throwable>()
+        val queue = TavernPreviewSideEffectQueue(
+            dispatcher = Dispatchers.Default,
+            acquire = { leases += "acquire:$it" },
+            release = { leases += "release:$it" },
+            onFailure = { failure.complete(it) },
+        )
+
+        queue.submit(firstConversation) { error("disk failed") }
+        queue.close()
+        assertEquals("disk failed", failure.await().message)
+        queue.awaitDrained()
+        assertEquals(listOf("acquire:$firstConversation", "release:$firstConversation"), leases)
     }
 
     @Test

@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.pages.tavern
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,7 +53,12 @@ class TavernCardEditorVM(
         acquire = chatService::addConversationReference,
         release = chatService::removeConversationReference,
     )
-    private val previewSideEffectQueue = TavernPreviewSideEffectQueue(viewModelScope)
+    private val previewSideEffectQueue = TavernPreviewSideEffectQueue(
+        dispatcher = Dispatchers.IO,
+        acquire = chatService::addConversationReference,
+        release = chatService::removeConversationReference,
+        onFailure = { error -> chatService.addError(error) },
+    )
     internal val selectedPreviewTarget = previewTargetSelection.selected
     internal val selectedPreviewTargetReady = previewTargetSelection.ready
     val selectedPreviewConversation: StateFlow<Conversation?> = selectedPreviewTarget
@@ -247,7 +253,7 @@ class TavernCardEditorVM(
 
     fun writePreviewCurrentMessage(expectedConversationId: Uuid, patch: JsonElement) {
         previewTargetSelection.routeMessageWrite(expectedConversationId, patch) { conversationId, routedPatch ->
-            previewSideEffectQueue.submit {
+            previewSideEffectQueue.submit(conversationId) {
                 chatService.applyTavernPreviewCurrentMessagePatch(conversationId, routedPatch)
             }
         }
@@ -255,10 +261,14 @@ class TavernCardEditorVM(
 
     fun writePreviewChatVariables(expectedConversationId: Uuid, variables: JsonObject) {
         previewTargetSelection.routeChatVariables(expectedConversationId, variables) { conversationId, routedVariables ->
-            previewSideEffectQueue.submit {
+            previewSideEffectQueue.submit(conversationId) {
                 chatService.persistTavernPreviewChatVariables(conversationId, routedVariables)
             }
         }
+    }
+
+    fun validatePreviewTarget(expectedConversationId: Uuid) {
+        previewTargetSelection.validateTarget(expectedConversationId)
     }
 
     override fun onCleared() {

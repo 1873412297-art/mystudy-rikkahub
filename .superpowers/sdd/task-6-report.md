@@ -122,3 +122,59 @@ Result: `BUILD SUCCESSFUL`.
 - Confirmed preset actions preserve per-permission controls and never enable request-header reads.
 - Confirmed target switching/destroy paths detach active sendHook controllers and release conversation references.
 - No plan or ledger files were modified.
+
+## Final review hardening: drain-safe effects and stale-save rebasing
+
+The last review identified three remaining concurrency gaps and each was reproduced by a test before production code
+changed:
+
+- closing the editor could cancel queued persistence and release the target's last conversation reference before the
+  write completed;
+- an old WebView could mutate chat or global variables before its later persistence callback noticed that the preview
+  target had changed;
+- the persistence mutex serialized writes but did not repair a whole `Conversation` object captured before a preview
+  mutation.
+
+RED command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "*TavernGreetingPreviewTargetTest" --tests "*TavernPersistingVariableGatewayTest" --tests "*TavernPreviewMutationRebaserTest" --no-daemon
+```
+
+The expected failures were missing queue lease/drain parameters, missing `validateTarget`, and missing
+`TavernPreviewMutationRebaser`.
+
+The queue now owns a drainable supervisor scope and acquires a separate conversation reference synchronously for each
+accepted callback. `close()` rejects new work but lets accepted work finish; every operation releases its reference in
+`finally`, and persistence failures are surfaced through `ChatService.addError`. The selected-target lease may therefore
+be cleared when the editor closes without invalidating an already accepted write.
+
+The persistent variable gateway validates the controller's captured conversation ID before both `set` and `delete`,
+including global scope, so stale controllers cannot mutate a delegate first. The validator is carried through the
+shared conversation WebView and resolves against the editor's current explicit target/readiness gate.
+
+`TavernPreviewMutationRebaser` records successfully persisted message-text and per-key chat-variable effects. Every
+later whole-conversation save under `ConversationPersistenceGate` rebases a stale matching value to the preview value;
+an explicit later change to the same message/key retires that journal entry. This preserves unrelated concurrent
+message additions and variable changes without adding a Room column or schema migration.
+
+Fresh verification after these fixes:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "*TavernPermissionMigrationTest" --tests "*TavernGreetingPreviewTargetTest" --tests "*TavernPersistingVariableGatewayTest" --tests "*ConversationPersistenceGateTest" --tests "*TavernPreviewMutationRebaserTest" --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL`.
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL` — 106 test classes / 759 tests / 0 failures / 0 errors / 0 skipped.
+
+```powershell
+.\gradlew.bat :app:compileDebugKotlin :app:assembleDebug --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL` (227 actionable tasks, 11 executed / 216 up-to-date). `git diff --check` reported no
+whitespace errors.

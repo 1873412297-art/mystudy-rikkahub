@@ -1,6 +1,9 @@
 package me.rerere.rikkahub.ui.pages.tavern
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -62,6 +65,10 @@ internal class TavernGreetingPreviewTargetSelection(
         writer(target.conversationId, variables)
     }
 
+    fun validateTarget(expectedConversationId: Uuid) {
+        requireReadyTarget(expectedConversationId)
+    }
+
     private fun requireReadyTarget(expectedConversationId: Uuid): TavernGreetingPreviewTarget {
         val target = checkNotNull(_selected.value) {
             "Select a real conversation before starting the full Tavern preview"
@@ -107,22 +114,55 @@ internal class TavernPreviewConversationLease(
 }
 
 /** Serializes bridge callbacks so a later preview write cannot overtake an earlier suspended persistence call. */
-internal class TavernPreviewSideEffectQueue(scope: CoroutineScope) {
-    private val effects = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+internal class TavernPreviewSideEffectQueue(
+    dispatcher: CoroutineDispatcher,
+    private val acquire: (Uuid) -> Unit,
+    private val release: (Uuid) -> Unit,
+    private val onFailure: (Throwable) -> Unit,
+) {
+    private data class Effect(
+        val conversationId: Uuid,
+        val run: suspend () -> Unit,
+    )
+
+    private val effects = Channel<Effect>(Channel.UNLIMITED)
+    private val drained = CompletableDeferred<Unit>()
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
     init {
         scope.launch {
-            for (effect in effects) {
-                runCatching { effect() }
+            try {
+                for (effect in effects) {
+                    try {
+                        effect.run()
+                    } catch (error: Throwable) {
+                        runCatching { onFailure(error) }
+                    } finally {
+                        runCatching { release(effect.conversationId) }
+                            .onFailure { releaseError -> runCatching { onFailure(releaseError) } }
+                    }
+                }
+            } finally {
+                drained.complete(Unit)
             }
         }
     }
 
-    fun submit(effect: suspend () -> Unit) {
-        effects.trySend(effect).getOrThrow()
+    fun submit(conversationId: Uuid, effect: suspend () -> Unit) {
+        acquire(conversationId)
+        val result = effects.trySend(Effect(conversationId, effect))
+        if (result.isFailure) {
+            runCatching { release(conversationId) }
+                .onFailure { releaseError -> runCatching { onFailure(releaseError) } }
+            result.getOrThrow()
+        }
     }
 
     fun close() {
         effects.close()
+    }
+
+    suspend fun awaitDrained() {
+        drained.await()
     }
 }

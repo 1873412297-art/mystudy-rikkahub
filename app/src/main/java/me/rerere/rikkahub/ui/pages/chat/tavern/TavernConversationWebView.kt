@@ -97,6 +97,7 @@ internal fun TavernConversationPane(
     visibleMessageId: Uuid? = null,
     ownsSendHookController: Boolean = true,
     candidateRuntime: TavernGreetingCandidateRuntime? = null,
+    runtimeTargetValidator: ((Uuid) -> Unit)? = null,
     currentMessageWriter: ((Uuid, JsonElement) -> Unit)? = null,
     chatVariablesWriter: ((Uuid, JsonObject) -> Unit)? = null,
     onRenderStatus: (TavernConversationRenderStatus) -> Unit = {},
@@ -184,6 +185,7 @@ internal fun TavernConversationPane(
         actions = actions,
         ownsSendHookController = ownsSendHookController,
         runtimeBindings = candidateRuntime?.runtimeBindings(),
+        runtimeTargetValidator = runtimeTargetValidator,
         currentMessageWriter = currentMessageWriter,
         chatVariablesWriter = chatVariablesWriter,
         onRenderStatus = onRenderStatus,
@@ -201,6 +203,7 @@ internal fun TavernConversationWebView(
     actions: TavernConversationActions,
     ownsSendHookController: Boolean = true,
     runtimeBindings: TavernGreetingRuntimeBindings? = null,
+    runtimeTargetValidator: ((Uuid) -> Unit)? = null,
     currentMessageWriter: ((Uuid, JsonElement) -> Unit)? = null,
     chatVariablesWriter: ((Uuid, JsonObject) -> Unit)? = null,
     onRenderStatus: (TavernConversationRenderStatus) -> Unit = {},
@@ -220,12 +223,14 @@ internal fun TavernConversationWebView(
     val isolatedScriptRegistry = remember { TavernScriptRegistry() }
     val permissionStore = remember { TavernRuntimePermissionStore(appSettings.runtimePermissions) }
     val latestHeaderSource by rememberUpdatedState(headerSource)
+    val latestRuntimeTargetValidator by rememberUpdatedState(runtimeTargetValidator)
     val latestCurrentMessageWriter by rememberUpdatedState(currentMessageWriter)
     val latestChatVariablesWriter by rememberUpdatedState(chatVariablesWriter)
     val runtimeController = remember(
         snapshot.conversationId,
         runtimeBindings,
         ownsSendHookController,
+        runtimeTargetValidator != null,
         chatVariablesWriter != null,
     ) {
         val baseVariableGateway = runtimeBindings?.variableGateway
@@ -235,9 +240,14 @@ internal fun TavernConversationWebView(
             )
         val variableGateway = if (runtimeBindings == null && chatVariablesWriter != null && conversationUuid != null) {
             val targetId = conversationUuid
-            PersistingTavernRuntimeVariableGateway(baseVariableGateway, targetId) { id, variables ->
-                latestChatVariablesWriter?.invoke(id, variables)
-            }
+            PersistingTavernRuntimeVariableGateway(
+                delegate = baseVariableGateway,
+                targetConversationId = targetId,
+                validateTarget = { id -> latestRuntimeTargetValidator?.invoke(id) },
+                persistChatVariables = { id, variables ->
+                    latestChatVariablesWriter?.invoke(id, variables)
+                },
+            )
         } else {
             baseVariableGateway
         }

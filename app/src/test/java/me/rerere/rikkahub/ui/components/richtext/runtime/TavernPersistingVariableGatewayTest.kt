@@ -28,4 +28,25 @@ class TavernPersistingVariableGatewayTest {
         assertEquals(JsonPrimitive(7), persisted.first().second["hp"])
         assertTrue(persisted.last().second.isEmpty())
     }
+
+    @Test
+    fun `stale target is rejected before chat or global variable mutation`() {
+        val delegate = InMemoryTavernRuntimeVariableGateway()
+        val gateway = PersistingTavernRuntimeVariableGateway(
+            delegate = delegate,
+            targetConversationId = conversationId,
+            validateTarget = { error("stale target") },
+            persistChatVariables = { _, _ -> error("must not persist") },
+        )
+
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            gateway.set(conversationId, TAVERN_VARIABLE_SCOPE_CHAT, "hp", JsonPrimitive(7))
+        }
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            gateway.set(conversationId, TAVERN_VARIABLE_SCOPE_GLOBAL, "theme", JsonPrimitive("dark"))
+        }
+
+        assertTrue(delegate.list(conversationId, TAVERN_VARIABLE_SCOPE_CHAT).isEmpty())
+        assertTrue(delegate.list(conversationId, TAVERN_VARIABLE_SCOPE_GLOBAL).isEmpty())
+    }
 }

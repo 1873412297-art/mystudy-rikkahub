@@ -8,6 +8,7 @@ import kotlin.uuid.Uuid
 internal class PersistingTavernRuntimeVariableGateway(
     private val delegate: TavernRuntimeVariableGateway,
     private val targetConversationId: Uuid,
+    private val validateTarget: (Uuid) -> Unit = {},
     private val persistChatVariables: (Uuid, JsonObject) -> Unit,
 ) : TavernRuntimeVariableGateway {
     override fun get(conversationId: Uuid?, scope: String, key: String): JsonElement? =
@@ -17,11 +18,13 @@ internal class PersistingTavernRuntimeVariableGateway(
         delegate.list(targetConversationId, scope)
 
     override fun set(conversationId: Uuid?, scope: String, key: String, value: JsonElement) {
+        validateTarget(targetConversationId)
         delegate.set(targetConversationId, scope, key, value)
         if (scope == TAVERN_VARIABLE_SCOPE_CHAT) publishChatSnapshot()
     }
 
     override fun delete(conversationId: Uuid?, scope: String, key: String): Boolean {
+        validateTarget(targetConversationId)
         val deleted = delegate.delete(targetConversationId, scope, key)
         if (deleted && scope == TAVERN_VARIABLE_SCOPE_CHAT) publishChatSnapshot()
         return deleted
