@@ -14,6 +14,7 @@ internal class TavernPreviewMutationRebaser {
     private data class MessageMutation(
         val before: String,
         val after: String,
+        val previewRevision: Long,
     )
 
     private data class JsonValueState(
@@ -24,6 +25,7 @@ internal class TavernPreviewMutationRebaser {
     private data class VariableMutation(
         val before: JsonValueState,
         val after: JsonValueState,
+        val previewRevision: Long,
     )
 
     private data class Journal(
@@ -34,20 +36,37 @@ internal class TavernPreviewMutationRebaser {
     private val lock = Any()
     private val journals = mutableMapOf<Uuid, Journal>()
 
-    fun recordMessage(conversationId: Uuid, messageId: Uuid, before: String, after: String) {
+    fun recordMessage(
+        conversationId: Uuid,
+        messageId: Uuid,
+        before: String,
+        after: String,
+        previewRevision: Long,
+    ) {
         if (before == after) return
         synchronized(lock) {
             val journal = journals.getOrPut(conversationId) { Journal() }
             val existing = journal.messages[messageId]
-            journal.messages[messageId] = if (existing?.after == before) {
-                existing.copy(after = after)
+            val composed = if (existing?.after == before) {
+                existing.copy(after = after, previewRevision = previewRevision)
             } else {
-                MessageMutation(before = before, after = after)
+                MessageMutation(before = before, after = after, previewRevision = previewRevision)
             }
+            if (composed.before == composed.after) {
+                journal.messages.remove(messageId)
+            } else {
+                journal.messages[messageId] = composed
+            }
+            removeEmptyJournal(conversationId, journal)
         }
     }
 
-    fun recordVariables(conversationId: Uuid, before: JsonObject, after: JsonObject) {
+    fun recordVariables(
+        conversationId: Uuid,
+        before: JsonObject,
+        after: JsonObject,
+        previewRevision: Long,
+    ) {
         synchronized(lock) {
             val journal = journals.getOrPut(conversationId) { Journal() }
             (before.keys + after.keys).forEach { key ->
@@ -55,10 +74,19 @@ internal class TavernPreviewMutationRebaser {
                 val afterState = after.stateOf(key)
                 if (beforeState == afterState) return@forEach
                 val existing = journal.variables[key]
-                journal.variables[key] = if (existing?.after == beforeState) {
-                    existing.copy(after = afterState)
+                val composed = if (existing?.after == beforeState) {
+                    existing.copy(after = afterState, previewRevision = previewRevision)
                 } else {
-                    VariableMutation(before = beforeState, after = afterState)
+                    VariableMutation(
+                        before = beforeState,
+                        after = afterState,
+                        previewRevision = previewRevision,
+                    )
+                }
+                if (composed.before == composed.after) {
+                    journal.variables.remove(key)
+                } else {
+                    journal.variables[key] = composed
                 }
             }
             removeEmptyJournal(conversationId, journal)
@@ -72,10 +100,15 @@ internal class TavernPreviewMutationRebaser {
         val messageIterator = journal.messages.iterator()
         while (messageIterator.hasNext()) {
             val (messageId, mutation) = messageIterator.next()
-            when (rebased.firstTextOf(messageId)) {
-                mutation.before -> rebased = rebased.replaceFirstText(messageId, mutation.after)
-                mutation.after -> Unit
-                else -> messageIterator.remove()
+            val current = rebased.firstTextOf(messageId)
+            if (rebased.stateRevision >= mutation.previewRevision) {
+                if (current != mutation.after) messageIterator.remove()
+            } else {
+                when (current) {
+                    mutation.before -> rebased = rebased.replaceFirstText(messageId, mutation.after)
+                    mutation.after -> Unit
+                    else -> messageIterator.remove()
+                }
             }
         }
 
@@ -84,10 +117,15 @@ internal class TavernPreviewMutationRebaser {
             val variableIterator = journal.variables.iterator()
             while (variableIterator.hasNext()) {
                 val (key, mutation) = variableIterator.next()
-                when (JsonObject(variables).stateOf(key)) {
-                    mutation.before -> mutation.after.applyTo(variables, key)
-                    mutation.after -> Unit
-                    else -> variableIterator.remove()
+                val current = JsonObject(variables).stateOf(key)
+                if (rebased.stateRevision >= mutation.previewRevision) {
+                    if (current != mutation.after) variableIterator.remove()
+                } else {
+                    when (current) {
+                        mutation.before -> mutation.after.applyTo(variables, key)
+                        mutation.after -> Unit
+                        else -> variableIterator.remove()
+                    }
                 }
             }
             rebased = rebased.copy(statusVariables = JsonObject(variables))
@@ -149,3 +187,6 @@ internal class TavernPreviewMutationRebaser {
         return if (changed) copy(messageNodes = nodes) else this
     }
 }
+
+internal fun advanceConversationRevision(current: Conversation, incoming: Conversation): Conversation =
+    incoming.copy(stateRevision = maxOf(current.stateRevision, incoming.stateRevision) + 1L)

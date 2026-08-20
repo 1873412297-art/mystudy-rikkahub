@@ -41,7 +41,10 @@ data class Conversation(
     // 会话级作者注释，仅在助手开启 allowConversationAuthorNote 且自身 enabled 时优先生效
     val authorNote: AuthorNote? = null,
     @Transient
-    val newConversation: Boolean = false
+    val newConversation: Boolean = false,
+    /** In-memory save generation used to reject stale whole-object writes; never persisted or serialized. */
+    @Transient
+    val stateRevision: Long = 0L,
 ) {
     val files: List<Uri>
         get() = messageNodes

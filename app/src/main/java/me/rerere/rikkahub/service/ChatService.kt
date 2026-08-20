@@ -2000,8 +2000,10 @@ class ChatService(
     private fun updateConversation(conversationId: Uuid, conversation: Conversation) {
         if (conversation.id != conversationId) return
         val session = getOrCreateSession(conversationId)
-        checkFilesDelete(conversation, session.state.value)
-        session.state.value = conversation
+        val current = session.state.value
+        val published = advanceConversationRevision(current, conversation)
+        checkFilesDelete(published, current)
+        session.state.value = published
     }
 
     fun updateConversationState(conversationId: Uuid, update: (Conversation) -> Conversation) {
@@ -2086,6 +2088,7 @@ class ChatService(
                     messageId = beforeMessage.id,
                     before = beforeText,
                     after = afterText,
+                    previewRevision = after.stateRevision,
                 )
             },
         )
@@ -2100,6 +2103,7 @@ class ChatService(
                     conversationId = conversationId,
                     before = before.statusVariables,
                     after = after.statusVariables,
+                    previewRevision = after.stateRevision,
                 )
             },
         )
@@ -2116,11 +2120,12 @@ class ChatService(
 
         // Publish first so concurrent chat operations derive from the preview mutation. Their saves wait on this gate.
         updateConversation(conversationId, updated)
+        val published = getConversationFlow(conversationId).value
         try {
-            conversationRepo.updateConversation(updated)
-            onPersisted(current, updated)
+            conversationRepo.updateConversation(published)
+            onPersisted(current, published)
         } catch (error: Throwable) {
-            if (getConversationFlow(conversationId).value == updated) {
+            if (getConversationFlow(conversationId).value == published) {
                 updateConversation(conversationId, current)
             }
             throw error

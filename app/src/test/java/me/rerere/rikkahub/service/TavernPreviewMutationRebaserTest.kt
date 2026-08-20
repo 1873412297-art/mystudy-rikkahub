@@ -23,6 +23,7 @@ class TavernPreviewMutationRebaserTest {
             assistantId = assistantId,
             messageNodes = listOf(originalMessage.toMessageNode()),
             statusVariables = buildJsonObject { put("hp", 1) },
+            stateRevision = 1,
         )
         val previewMessage = originalMessage.copy(parts = listOf(UIMessagePart.Text("preview")))
         val preview = before.copy(
@@ -31,8 +32,13 @@ class TavernPreviewMutationRebaserTest {
         )
         val staleSave = before.copy(messageNodes = before.messageNodes + UIMessage.user("new").toMessageNode())
         val rebaser = TavernPreviewMutationRebaser()
-        rebaser.recordMessage(conversationId, originalMessage.id, "before", "preview")
-        rebaser.recordVariables(conversationId, before.statusVariables, preview.statusVariables)
+        rebaser.recordMessage(conversationId, originalMessage.id, "before", "preview", previewRevision = 2)
+        rebaser.recordVariables(
+            conversationId,
+            before.statusVariables,
+            preview.statusVariables,
+            previewRevision = 2,
+        )
 
         val rebased = rebaser.rebase(conversationId, staleSave)
 
@@ -42,16 +48,17 @@ class TavernPreviewMutationRebaserTest {
     }
 
     @Test
-    fun `later explicit edit supersedes recorded preview message`() {
+    fun `later explicit edit back to original text supersedes recorded preview message`() {
         val originalMessage = UIMessage.assistant("before")
         val rebaser = TavernPreviewMutationRebaser()
-        rebaser.recordMessage(conversationId, originalMessage.id, "before", "preview")
+        rebaser.recordMessage(conversationId, originalMessage.id, "before", "preview", previewRevision = 2)
         val edited = Conversation(
             id = conversationId,
             assistantId = assistantId,
             messageNodes = listOf(
-                originalMessage.copy(parts = listOf(UIMessagePart.Text("later edit"))).toMessageNode(),
+                originalMessage.copy(parts = listOf(UIMessagePart.Text("before"))).toMessageNode(),
             ),
+            stateRevision = 2,
         )
 
         val accepted = rebaser.rebase(conversationId, edited)
@@ -62,7 +69,44 @@ class TavernPreviewMutationRebaserTest {
             ),
         )
 
-        assertEquals("later edit", (accepted.currentMessages.single().parts.first() as UIMessagePart.Text).text)
+        assertEquals("before", (accepted.currentMessages.single().parts.first() as UIMessagePart.Text).text)
         assertEquals("before", (laterStale.currentMessages.single().parts.first() as UIMessagePart.Text).text)
+    }
+
+    @Test
+    fun `later explicit variable deletion supersedes preview addition`() {
+        val before = Conversation(
+            id = conversationId,
+            assistantId = assistantId,
+            messageNodes = emptyList(),
+            stateRevision = 1,
+        )
+        val previewVariables = buildJsonObject { put("temporary", true) }
+        val rebaser = TavernPreviewMutationRebaser()
+        rebaser.recordVariables(
+            conversationId,
+            before.statusVariables,
+            previewVariables,
+            previewRevision = 2,
+        )
+
+        val explicitDeletion = before.copy(stateRevision = 2)
+        val accepted = rebaser.rebase(conversationId, explicitDeletion)
+
+        assertEquals(null, accepted.statusVariables["temporary"])
+    }
+
+    @Test
+    fun `session publication advances revision beyond current and incoming snapshots`() {
+        val current = Conversation(
+            id = conversationId,
+            assistantId = assistantId,
+            messageNodes = emptyList(),
+            stateRevision = 7,
+        )
+
+        val advanced = advanceConversationRevision(current, current.copy(stateRevision = 3))
+
+        assertEquals(8, advanced.stateRevision)
     }
 }

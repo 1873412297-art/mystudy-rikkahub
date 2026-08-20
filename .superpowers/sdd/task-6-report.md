@@ -178,3 +178,41 @@ Result: `BUILD SUCCESSFUL` — 106 test classes / 759 tests / 0 failures / 0 err
 
 Result: `BUILD SUCCESSFUL` (227 actionable tasks, 11 executed / 216 up-to-date). `git diff --check` reported no
 whitespace errors.
+
+## Independent review and revision-aware rebase fix
+
+The independent read-only review rejected the value-only rebaser because an intentional later edit back to a field's
+original value was indistinguishable from an old snapshot. It also noted that composed preview mutations returning to
+their original value left a no-op journal entry.
+
+Two regressions were written first: a same-text message reversion and deletion of a variable that did not exist before
+preview. A third test requires session publication to advance beyond both the current and incoming revisions. RED failed
+on missing `Conversation.stateRevision`, `previewRevision`, and `advanceConversationRevision` symbols.
+
+The fix adds an in-memory-only `@Transient stateRevision` to `Conversation`; it is excluded from serialization and does
+not add a Room field or migration. Every ChatService session publication advances the revision. Preview journals record
+the revision at which their effect was published. Saves from an older revision reapply matching preview effects, while a
+save at or beyond the preview revision retires a journal entry whenever its field differs from the preview value — even
+when that value equals the original state. Coalesced message/variable mutations that return to their starting value are
+removed immediately.
+
+Fresh post-review verification:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "*TavernPermissionMigrationTest" --tests "*TavernGreetingPreviewTargetTest" --tests "*TavernPersistingVariableGatewayTest" --tests "*ConversationPersistenceGateTest" --tests "*TavernPreviewMutationRebaserTest" --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL`.
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL` — 106 test classes / 761 tests / 0 failures / 0 errors / 0 skipped.
+
+```powershell
+.\gradlew.bat :app:compileDebugKotlin :app:assembleDebug --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL` (227 actionable tasks, 12 executed / 215 up-to-date). The only compiler warnings were
+pre-existing unresolved/deprecation warnings outside the Task 6 diff. `git diff --check` remained clean.
