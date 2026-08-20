@@ -172,10 +172,10 @@ fun buildStatusHudPresentation(conversation: Conversation): StatusHudPresentatio
 - Test: `app/src/test/java/me/rerere/rikkahub/ui/components/richtext/MarkdownWebViewSecurityTest.kt`
 - Test: `app/src/test/java/me/rerere/rikkahub/ui/components/richtext/MarkTemplateContractTest.kt`
 
-- [ ] Write RED contract tests that forbid CDN script/style dependencies and require local vendor placeholders, context-ready handshake, static fallback, retry, and protocol/file restrictions.
-- [ ] Localize mark.html using existing vendor bundles and make template tests green.
-- [ ] Ensure every document-ready event resets delivery hashes and republishes runtime context/current message; implement timeout/crash fallback and retry without losing raw content.
-- [ ] Run focused security/runtime tests and compile; commit Task 7.
+- [x] Write RED contract tests that forbid CDN script/style dependencies and require local vendor placeholders, context-ready handshake, static fallback, retry, and protocol/file restrictions.
+- [x] Localize mark.html using existing vendor bundles and make template tests green.
+- [x] Ensure every document-ready event resets delivery hashes and republishes runtime context/current message; implement timeout/crash fallback and retry without losing raw content.
+- [x] Run focused security/runtime tests and compile; commit Task 7.
 
 ### Task 8: Integration, instrumentation, and real-device acceptance
 
