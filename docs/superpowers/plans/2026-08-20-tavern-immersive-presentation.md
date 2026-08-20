@@ -180,12 +180,53 @@ fun buildStatusHudPresentation(conversation: Conversation): StatusHudPresentatio
 ### Task 8: Integration, instrumentation, and real-device acceptance
 
 **Files:**
-- Create/Modify: focused tests under `app/src/androidTest/java/me/rerere/rikkahub/ui/components/richtext/runtime/`
+- Create/Modify: focused tests under `app/src/androidTest/java/me/rerere/rikkahub/ui/pages/chat/tavern/`
+- Create: visible recovery fixture under `app/src/debug/java/me/rerere/rikkahub/ui/pages/chat/tavern/`
 - Modify: `docs/superpowers/plans/2026-08-20-tavern-immersive-presentation.md` with a final verification record
 
-- [ ] Add a visible-Activity instrumentation fixture covering full HTML/JS, macros, variables, context after reload, message actions, fallback, and renderer recovery; verify it fails before completing missing behavior.
-- [ ] Make instrumentation tests green without test-only production hooks.
-- [ ] Run `:app:testDebugUnitTest`, `:app:compileDebugKotlin`, `:app:assembleDebug`, web-ui tests/typecheck/build, and filtered connected instrumentation tests.
-- [ ] Install the enumerated arm64 Debug APK on Huawei MNA-AL00 and verify with the real cards in `/sdcard/Download/角色卡/` and `/sdcard/Pictures/角色卡/`.
-- [ ] Exercise at least 12 simultaneous greeting candidates, first-message collapse/icon replay, ST/Compose fallback, HUD option prefill, light/dark, rotation/back, and inspect logcat for FATAL/ANR.
-- [ ] Record exact commands/results and commit the verification record.
+- [x] Add a visible-Activity instrumentation fixture covering full HTML/JS, macros, variables, context after reload, message actions, fallback, and renderer recovery; capture RED while constructing the previously absent device coverage.
+- [x] Make instrumentation tests green without test-only production hooks.
+- [x] Run `:app:testDebugUnitTest`, `:app:compileDebugKotlin`, `:app:assembleDebug`, web-ui tests/typecheck/lint/build, and filtered connected instrumentation tests.
+- [x] Install the enumerated arm64 Debug APK on Huawei MNA-AL00 and verify with the real cards in `/sdcard/Download/角色卡/` and `/sdcard/Pictures/角色卡/`.
+- [x] Exercise at least 12 simultaneous greeting candidates, first-message collapse/icon replay, ST/Compose fallback, HUD option prefill, light/dark, rotation/back, and inspect logcat for FATAL/ANR/OOM/renderer failure.
+- [x] Record exact commands/results and commit the verification record.
+
+#### Task 8 final verification record — 2026-08-21
+
+**Instrumentation and TDD.** `TavernImmersiveRuntimeInstrumentedTest` runs against visible Activities and real WebViews. The full-document case loads a raw-HTML iframe with JavaScript, writes a runtime variable twice across a whole-document reload, registers a macro only in the first document and executes that host macro after reload without re-registering it, receives fresh context/current-message values after reload, and invokes the native long-press, branch, HTML-viewer, and Compose-fallback actions. The recovery case drives the actual `TavernConversationWebView`, forwards a genuine main-frame `WebResourceError` produced by a blocked missing-file probe, verifies preserved static source, retries into a new WebView generation, fails the replacement, and selects Compose fallback. File and content access are asserted disabled. No `main` source-set test hook was added.
+
+The first RED could not compile because the initial coverage attempted to construct the platform-owned `WebResourceError`; the test was corrected to obtain a real main-frame error from a probe WebView. The first recovery UI run then failed with no Compose roots. A hierarchy dump proved the Huawei notification-permission dialog, not the fixture, owned the foreground; the test now denies that dialog by its permission-controller resource ID and asserts the debug fixture regains focus. No missing production behavior was discovered in Task 8, so the changes are instrumentation/debug-fixture coverage rather than a production workaround.
+
+**Automated verification.** The following commands were run from this worktree:
+
+```text
+.\gradlew.bat :app:testDebugUnitTest :app:compileDebugKotlin :app:assembleDebug --no-daemon
+BUILD SUCCESSFUL in 25s
+108 JVM test classes / 776 tests / 0 failures / 0 errors / 0 skipped
+
+.\gradlew.bat :app:connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationDocumentInstrumentedTest,me.rerere.rikkahub.ui.components.richtext.MarkdownWebViewReloadInstrumentedTest,me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeSmokeTest,me.rerere.rikkahub.ui.pages.chat.tavern.TavernImmersiveRuntimeInstrumentedTest" --no-daemon
+7 tests on MNA-AL00 / 0 skipped / 0 failed / BUILD SUCCESSFUL in 1m 21s
+
+.\gradlew.bat :app:connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.pages.chat.tavern.TavernImmersiveRuntimeInstrumentedTest" --no-daemon
+2 tests on MNA-AL00 / 0 skipped / 0 failed / BUILD SUCCESSFUL in 1m 18s after review fix
+
+cd web-ui
+pnpm test       # 3 files / 41 tests passed
+pnpm typecheck  # passed
+pnpm lint       # 0 errors; 7 existing warnings
+pnpm build      # passed; only source-map and chunk-size warnings
+```
+
+One attempted rerun omitted quotes around the PowerShell Gradle property and Gradle rejected the split text as an unknown task before any test ran. The quoted command above is the corrected and passing command.
+
+**Device, APK, and cards.** Before building/installing, `opencode.exe` was absent, Git remained at Task 8 base `8ba9231ebbf9`, and only the intended Task 8 files were dirty. The attached target was serial `XHD0223523008702`, Huawei `MNA-AL00`, Android 12, `arm64-v8a`. `output-metadata.json` enumerated universal, x86_64, and arm64 outputs at version code 172 / version name 2.4.5. The selected artifact was `app/build/outputs/apk/debug/app-arm64-v8a-debug.apk` (85,788,781 bytes). `adb -s XHD0223523008702 install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk` returned `Success`; the final installed package reports `primaryCpuAbi=arm64-v8a`, version code 172, version name 2.4.5, and `RouteActivity` launched. The instrumentation task uninstalled its target package after its last rerun, so the same verified arm64 artifact was installed once more after testing to restore this final device state.
+
+The four user card files found under the two requested directories were inspected read-only. Their V3 greeting counts were 9, 9 (the same card in both locations), 5, and 4; none contained HTML or scripts. The 9-greeting real card displayed all nine candidates as simultaneously live WebView targets, committed an opening, supplied the live HUD, and was used for the HUD option test. User originals were never modified.
+
+Because no real device card met the required 12-candidate/HTML condition, a controlled safe V3 PNG fixture with 12 local HTML/JS greetings was generated outside the repository, hashed as `b30bc5d93a549f55ca7613a2ee52b79c1bcc6f04e9e54c9d855b7d3468d837c0`, and temporarily pushed to `/sdcard/Download/task8-acceptance-12.png`. Import showed 12 simultaneous DevTools WebView targets; 11 consecutive next-opening selections kept all 12 alive. A point-in-time RSS sample was approximately 699,132 KiB for the app plus 236,104 KiB for its WebView sandbox; this is a baseline sample, not a leak proof. Committing the selected opening reduced the live candidate set from 12 to one. After the first user message, the stage collapsed, the top opening action appeared, and it opened the full-screen replay plus the new-conversation-from-opening chooser. The chooser was cancelled without changing that conversation. The temporary fixture's device hash was rechecked and the exact temporary file was removed; the local temporary copy remains outside the repository.
+
+**Manual behavior.** On the production chat path, the authenticated in-document fallback action changed ST view to the Compose compatibility view, showing the compatibility notice and retry control; retry restored the ST document. On the real-card HUD, the floating summary showed its header and update state, the bottom sheet opened with sections and four story options, and selecting one only prefilled the composer. The draft remained present after three seconds and no message was sent. The visible ST document changed from light (`prefers-color-scheme: dark=false`, `--rikkahub-surface=#F6FAFF`) to dark (`true`, `#0D1419`) and back while the DOM and HUD remained available. Locking the device to landscape preserved the WebView/HUD; Back closed the HUD sheet without leaving `RouteActivity`; portrait and the original auto-rotation settings were restored.
+
+The focused manual log window and crash buffer had zero matches for app FATAL exceptions, ANR, `OutOfMemoryError`, `RenderProcessGone`, process-death crash records, or crash-buffer entries. Limitations are explicit: no supplied real card had 12 greetings or HTML/scripts, so real-card behavior and the controlled 12-HTML case are separate evidence; external-network script side effects and a live model response were not exercised.
+
+**Independent review.** The first read-only review found two Important issues: the reloaded document re-registered the macro instead of proving host persistence, and the required report lived under the shared `.superpowers` exclude. It also noted cleanup was not failure-safe. The test now registers only in the first document, reports no registration in the second, executes the retained owner-scoped host macro after reload and asserts its output, and releases the controller/WebView/interfaces/Activity in `finally`. The report was force-added to the Git index. The same reviewer re-read the changes and returned `Approved` with no remaining Blocker or Important finding.

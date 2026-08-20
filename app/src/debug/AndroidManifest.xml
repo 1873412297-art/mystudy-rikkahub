@@ -5,5 +5,9 @@
             android:name="me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeSmokeActivity"
             android:exported="true"
             android:label="Tavern Render Smoke" />
+        <activity
+            android:name="me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationRecoveryActivity"
+            android:exported="true"
+            android:label="Tavern Conversation Recovery" />
     </application>
 </manifest>
