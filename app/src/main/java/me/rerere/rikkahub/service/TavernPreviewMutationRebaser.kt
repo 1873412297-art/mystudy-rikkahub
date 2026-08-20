@@ -11,6 +11,26 @@ import kotlin.uuid.Uuid
  * A later explicit change to the same field retires the corresponding replay entry.
  */
 internal class TavernPreviewMutationRebaser {
+    internal class PreparedRebase internal constructor(
+        val conversation: Conversation,
+        private val commitAction: () -> Unit,
+    ) {
+        private val commitLock = Any()
+        private var committed = false
+
+        fun commit() {
+            val shouldCommit = synchronized(commitLock) {
+                if (committed) {
+                    false
+                } else {
+                    committed = true
+                    true
+                }
+            }
+            if (shouldCommit) commitAction()
+        }
+    }
+
     private data class MessageMutation(
         val before: String,
         val after: String,
@@ -93,16 +113,17 @@ internal class TavernPreviewMutationRebaser {
         }
     }
 
-    fun rebase(conversationId: Uuid, conversation: Conversation): Conversation = synchronized(lock) {
-        val journal = journals[conversationId] ?: return@synchronized conversation
+    fun prepareRebase(conversationId: Uuid, conversation: Conversation): PreparedRebase = synchronized(lock) {
+        val journal = journals[conversationId]
+            ?: return@synchronized PreparedRebase(conversation = conversation, commitAction = {})
         var rebased = conversation
+        val retiringMessages = linkedMapOf<Uuid, MessageMutation>()
+        val retiringVariables = linkedMapOf<String, VariableMutation>()
 
-        val messageIterator = journal.messages.iterator()
-        while (messageIterator.hasNext()) {
-            val (messageId, mutation) = messageIterator.next()
+        journal.messages.forEach { (messageId, mutation) ->
             val current = rebased.firstTextOf(messageId)
             if (rebased.stateRevision >= mutation.previewRevision) {
-                if (current != mutation.after) messageIterator.remove()
+                if (current != mutation.after) retiringMessages[messageId] = mutation
             } else {
                 if (current == null) {
                     throw StaleTavernPreviewSnapshotException(
@@ -117,12 +138,10 @@ internal class TavernPreviewMutationRebaser {
 
         if (journal.variables.isNotEmpty()) {
             val variables = rebased.statusVariables.toMutableMap()
-            val variableIterator = journal.variables.iterator()
-            while (variableIterator.hasNext()) {
-                val (key, mutation) = variableIterator.next()
+            journal.variables.forEach { (key, mutation) ->
                 val current = JsonObject(variables).stateOf(key)
                 if (rebased.stateRevision >= mutation.previewRevision) {
-                    if (current != mutation.after) variableIterator.remove()
+                    if (current != mutation.after) retiringVariables[key] = mutation
                 } else {
                     mutation.after.applyTo(variables, key)
                 }
@@ -130,8 +149,9 @@ internal class TavernPreviewMutationRebaser {
             rebased = rebased.copy(statusVariables = JsonObject(variables))
         }
 
-        removeEmptyJournal(conversationId, journal)
-        rebased
+        PreparedRebase(conversation = rebased) {
+            commitRetirements(conversationId, journal, retiringMessages, retiringVariables)
+        }
     }
 
     fun clear() = synchronized(lock) {
@@ -142,6 +162,27 @@ internal class TavernPreviewMutationRebaser {
         if (journal.messages.isEmpty() && journal.variables.isEmpty()) {
             journals.remove(conversationId)
         }
+    }
+
+    private fun commitRetirements(
+        conversationId: Uuid,
+        expectedJournal: Journal,
+        messages: Map<Uuid, MessageMutation>,
+        variables: Map<String, VariableMutation>,
+    ) = synchronized(lock) {
+        val journal = journals[conversationId] ?: return@synchronized
+        if (journal !== expectedJournal) return@synchronized
+        messages.forEach { (messageId, mutation) ->
+            if (journal.messages[messageId] == mutation) {
+                journal.messages.remove(messageId)
+            }
+        }
+        variables.forEach { (key, mutation) ->
+            if (journal.variables[key] == mutation) {
+                journal.variables.remove(key)
+            }
+        }
+        removeEmptyJournal(conversationId, journal)
     }
 
     private fun JsonObject.stateOf(key: String): JsonValueState =

@@ -40,7 +40,7 @@ class TavernPreviewMutationRebaserTest {
             previewRevision = 2,
         )
 
-        val rebased = rebaser.rebase(conversationId, staleSave)
+        val rebased = rebaser.rebaseAndCommit(conversationId, staleSave)
 
         assertEquals("preview", (rebased.messageNodes.first().messages.first().parts.first() as UIMessagePart.Text).text)
         assertEquals(JsonPrimitive(2), rebased.statusVariables["hp"])
@@ -61,8 +61,8 @@ class TavernPreviewMutationRebaserTest {
             stateRevision = 2,
         )
 
-        val accepted = rebaser.rebase(conversationId, edited)
-        val laterStale = rebaser.rebase(
+        val accepted = rebaser.rebaseAndCommit(conversationId, edited)
+        val laterStale = rebaser.rebaseAndCommit(
             conversationId,
             edited.copy(
                 messageNodes = listOf(originalMessage.copy(parts = listOf(UIMessagePart.Text("before"))).toMessageNode()),
@@ -91,7 +91,7 @@ class TavernPreviewMutationRebaserTest {
         )
 
         val explicitDeletion = before.copy(stateRevision = 2)
-        val accepted = rebaser.rebase(conversationId, explicitDeletion)
+        val accepted = rebaser.rebaseAndCommit(conversationId, explicitDeletion)
 
         assertEquals(null, accepted.statusVariables["temporary"])
     }
@@ -114,7 +114,7 @@ class TavernPreviewMutationRebaserTest {
             previewRevision = 3,
         )
 
-        val rebased = rebaser.rebase(conversationId, stale)
+        val rebased = rebaser.rebaseAndCommit(conversationId, stale)
 
         assertEquals("P", (rebased.currentMessages.single().parts.first() as UIMessagePart.Text).text)
     }
@@ -136,7 +136,7 @@ class TavernPreviewMutationRebaserTest {
             previewRevision = 3,
         )
 
-        val rebased = rebaser.rebase(conversationId, stale)
+        val rebased = rebaser.rebaseAndCommit(conversationId, stale)
 
         assertEquals(JsonPrimitive("P"), rebased.statusVariables["route"])
     }
@@ -160,8 +160,96 @@ class TavernPreviewMutationRebaserTest {
         )
 
         org.junit.Assert.assertThrows(StaleTavernPreviewSnapshotException::class.java) {
-            rebaser.rebase(conversationId, stale)
+            rebaser.prepareRebase(conversationId, stale)
         }
+    }
+
+    @Test
+    fun `rejected rebase does not retire an earlier message mutation`() {
+        val first = UIMessage.assistant("first-old")
+        val second = UIMessage.assistant("second-old")
+        val rebaser = TavernPreviewMutationRebaser()
+        rebaser.recordMessage(
+            conversationId,
+            first.id,
+            before = "first-old",
+            after = "first-preview",
+            previewRevision = 2,
+        )
+        rebaser.recordMessage(
+            conversationId,
+            second.id,
+            before = "second-old",
+            after = "second-preview",
+            previewRevision = 4,
+        )
+        val rejected = Conversation(
+            id = conversationId,
+            assistantId = assistantId,
+            messageNodes = listOf(
+                first.copy(parts = listOf(UIMessagePart.Text("first-explicit"))).toMessageNode(),
+            ),
+            stateRevision = 3,
+        )
+
+        org.junit.Assert.assertThrows(StaleTavernPreviewSnapshotException::class.java) {
+            rebaser.prepareRebase(conversationId, rejected)
+        }
+
+        val replayed = rebaser.rebaseAndCommit(
+            conversationId,
+            Conversation(
+                id = conversationId,
+                assistantId = assistantId,
+                messageNodes = listOf(first.toMessageNode(), second.toMessageNode()),
+                stateRevision = 1,
+            ),
+        )
+        assertEquals(
+            listOf("first-preview", "second-preview"),
+            replayed.currentMessages.map { (it.parts.first() as UIMessagePart.Text).text },
+        )
+    }
+
+    @Test
+    fun `prepared rebase does not retire a mutation until persistence commits`() {
+        val message = UIMessage.assistant("old")
+        val rebaser = TavernPreviewMutationRebaser()
+        rebaser.recordMessage(
+            conversationId,
+            message.id,
+            before = "old",
+            after = "preview",
+            previewRevision = 2,
+        )
+        val explicitEdit = Conversation(
+            id = conversationId,
+            assistantId = assistantId,
+            messageNodes = listOf(
+                message.copy(parts = listOf(UIMessagePart.Text("explicit"))).toMessageNode(),
+            ),
+            stateRevision = 2,
+        )
+
+        val pending = rebaser.prepareRebase(conversationId, explicitEdit)
+        val beforeCommit = rebaser.rebaseAndCommit(
+            conversationId,
+            explicitEdit.copy(
+                messageNodes = listOf(message.toMessageNode()),
+                stateRevision = 1,
+            ),
+        )
+        pending.commit()
+        val afterCommit = rebaser.rebaseAndCommit(
+            conversationId,
+            explicitEdit.copy(
+                messageNodes = listOf(message.toMessageNode()),
+                stateRevision = 1,
+            ),
+        )
+
+        assertEquals("preview", (beforeCommit.currentMessages.single().parts.first() as UIMessagePart.Text).text)
+        assertEquals("old", (afterCommit.currentMessages.single().parts.first() as UIMessagePart.Text).text)
     }
 
     @Test
@@ -176,5 +264,14 @@ class TavernPreviewMutationRebaserTest {
         val advanced = advanceConversationRevision(current, current.copy(stateRevision = 3))
 
         assertEquals(8, advanced.stateRevision)
+    }
+
+    private fun TavernPreviewMutationRebaser.rebaseAndCommit(
+        conversationId: Uuid,
+        conversation: Conversation,
+    ): Conversation {
+        val prepared = prepareRebase(conversationId, conversation)
+        prepared.commit()
+        return prepared.conversation
     }
 }

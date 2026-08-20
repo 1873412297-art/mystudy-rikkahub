@@ -179,6 +179,44 @@ Result: `BUILD SUCCESSFUL` — 106 test classes / 759 tests / 0 failures / 0 err
 Result: `BUILD SUCCESSFUL` (227 actionable tasks, 11 executed / 216 up-to-date). `git diff --check` reported no
 whitespace errors.
 
+## Final independent review: transactional journal retirement
+
+The next read-only review confirmed every earlier finding closed, then identified one persistence-failure window:
+`rebase` retired explicit-edit journal entries while preparing a save. If a later message in the same preparation
+raised `StaleTavernPreviewSnapshotException`, or if repository persistence failed afterward, those retirements survived
+even though the save did not.
+
+A two-message regression was written first. The first mutation was eligible for retirement and the second was missing
+from the stale snapshot; before the fix the rejected preparation lost the first mutation (`8 tests / 1 failed`). A
+second contract test was then written before the new API and failed compilation on the missing `prepareRebase` symbol.
+
+Rebasing is now two-phase. `prepareRebase` computes the rebased conversation and pending retirements without mutating
+the journal. `ChatService` commits those retirements only after conversation repository persistence returns
+successfully. Rejected preparation and repository failure therefore keep every replay entry. The commit is idempotent,
+removes only the exact mutations from the same journal instance, and cannot erase a replacement journal created after
+service cleanup.
+
+Fresh final verification after the transactional fix:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "*TavernPermissionMigrationTest" --tests "*TavernGreetingPreviewTargetTest" --tests "*TavernPersistingVariableGatewayTest" --tests "*ConversationPersistenceGateTest" --tests "*TavernPreviewMutationRebaserTest" --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL`.
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL` — 106 test classes / 766 tests / 0 failures / 0 errors / 0 skipped.
+
+```powershell
+.\gradlew.bat :app:compileDebugKotlin :app:assembleDebug --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL` (227 actionable tasks, 11 executed / 216 up-to-date). `git diff --check` reported no
+whitespace errors.
+
 ## Independent review and revision-aware rebase fix
 
 The independent read-only review rejected the value-only rebaser because an intentional later edit back to a field's

@@ -2154,7 +2154,8 @@ class ChatService(
             return@withConversation // 新会话且为空时不保存
         }
 
-        val updatedConversation = tavernPreviewMutationRebaser.rebase(conversationId, conversation).copy()
+        val preparedRebase = tavernPreviewMutationRebaser.prepareRebase(conversationId, conversation)
+        val updatedConversation = preparedRebase.conversation.copy()
         persistConversationAndCleanupPromptTraces(
             conversationId = conversationId,
             conversation = updatedConversation,
@@ -2172,6 +2173,7 @@ class ChatService(
                 greetingSessionFlows[conversationId]?.value = null
             }
         }
+        preparedRebase.commit()
     }
 
     // ---- 翻译消息 ----
