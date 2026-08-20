@@ -79,6 +79,8 @@ releases a single conversation lease. Focused regression tests passed after thes
 - Preview writes are serialized in callback order. Conversation repository writes share a per-conversation persistence
   gate, publish preview mutations to the live session before persistence, and roll back only when no newer live state
   has replaced them.
+- Message-write callbacks receive the conversation ID captured by their owning runtime controller. They do not infer it
+  from the latest Compose callback, so an old WebView cannot be redirected to a newly selected target during disposal.
 
 ## Verification
 
@@ -115,6 +117,8 @@ Result: `BUILD SUCCESSFUL`.
 - Fixed every Critical/Important item from the first independent review and added focused regressions for the
   persistence gate, durable variables, stale callbacks, single runtime ownership, unique target labels, lease cleanup,
   and FIFO bridge writes.
+- A post-commit self-audit found and closed the remaining Compose callback handoff window by moving target-ID capture
+  into the runtime controller boundary.
 - Confirmed preset actions preserve per-permission controls and never enable request-header reads.
 - Confirmed target switching/destroy paths detach active sendHook controllers and release conversation references.
 - No plan or ledger files were modified.

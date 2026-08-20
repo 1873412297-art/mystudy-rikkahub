@@ -563,7 +563,7 @@ private fun GreetingSourcePreviewEditor(
                 loading = false,
                 actions = actions,
                 ownsSendHookController = true,
-                currentMessageWriter = { patch -> onMessageWrite(target.conversationId, patch) },
+                currentMessageWriter = onMessageWrite,
                 chatVariablesWriter = onChatVariablesWrite,
                 modifier = Modifier.fillMaxWidth().height(360.dp),
             )

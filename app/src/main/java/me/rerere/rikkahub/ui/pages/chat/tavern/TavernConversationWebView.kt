@@ -97,7 +97,7 @@ internal fun TavernConversationPane(
     visibleMessageId: Uuid? = null,
     ownsSendHookController: Boolean = true,
     candidateRuntime: TavernGreetingCandidateRuntime? = null,
-    currentMessageWriter: ((JsonElement) -> Unit)? = null,
+    currentMessageWriter: ((Uuid, JsonElement) -> Unit)? = null,
     chatVariablesWriter: ((Uuid, JsonObject) -> Unit)? = null,
     onRenderStatus: (TavernConversationRenderStatus) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -201,7 +201,7 @@ internal fun TavernConversationWebView(
     actions: TavernConversationActions,
     ownsSendHookController: Boolean = true,
     runtimeBindings: TavernGreetingRuntimeBindings? = null,
-    currentMessageWriter: ((JsonElement) -> Unit)? = null,
+    currentMessageWriter: ((Uuid, JsonElement) -> Unit)? = null,
     chatVariablesWriter: ((Uuid, JsonObject) -> Unit)? = null,
     onRenderStatus: (TavernConversationRenderStatus) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -256,7 +256,9 @@ internal fun TavernConversationWebView(
                 ?: me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeRegistrationObserver.NONE,
             currentMessageWriter = runtimeBindings?.currentMessageWriter
                 ?: { patch ->
-                    latestCurrentMessageWriter?.invoke(patch)
+                    conversationUuid?.let { conversationId ->
+                        latestCurrentMessageWriter?.invoke(conversationId, patch)
+                    }
                     Unit
                 },
         )
