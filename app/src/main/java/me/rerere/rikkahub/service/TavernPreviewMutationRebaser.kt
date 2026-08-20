@@ -104,10 +104,13 @@ internal class TavernPreviewMutationRebaser {
             if (rebased.stateRevision >= mutation.previewRevision) {
                 if (current != mutation.after) messageIterator.remove()
             } else {
-                when (current) {
-                    mutation.before -> rebased = rebased.replaceFirstText(messageId, mutation.after)
-                    mutation.after -> Unit
-                    else -> messageIterator.remove()
+                if (current == null) {
+                    throw StaleTavernPreviewSnapshotException(
+                        "Stale conversation snapshot no longer contains preview message $messageId",
+                    )
+                }
+                if (current != mutation.after) {
+                    rebased = rebased.replaceFirstText(messageId, mutation.after)
                 }
             }
         }
@@ -121,11 +124,7 @@ internal class TavernPreviewMutationRebaser {
                 if (rebased.stateRevision >= mutation.previewRevision) {
                     if (current != mutation.after) variableIterator.remove()
                 } else {
-                    when (current) {
-                        mutation.before -> mutation.after.applyTo(variables, key)
-                        mutation.after -> Unit
-                        else -> variableIterator.remove()
-                    }
+                    mutation.after.applyTo(variables, key)
                 }
             }
             rebased = rebased.copy(statusVariables = JsonObject(variables))
@@ -190,3 +189,5 @@ internal class TavernPreviewMutationRebaser {
 
 internal fun advanceConversationRevision(current: Conversation, incoming: Conversation): Conversation =
     incoming.copy(stateRevision = maxOf(current.stateRevision, incoming.stateRevision) + 1L)
+
+internal class StaleTavernPreviewSnapshotException(message: String) : IllegalStateException(message)

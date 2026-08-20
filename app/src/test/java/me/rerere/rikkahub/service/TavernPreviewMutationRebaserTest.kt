@@ -97,6 +97,74 @@ class TavernPreviewMutationRebaserTest {
     }
 
     @Test
+    fun `older divergent message snapshot is rebased to newer preview text`() {
+        val message = UIMessage.assistant("A")
+        val stale = Conversation(
+            id = conversationId,
+            assistantId = assistantId,
+            messageNodes = listOf(message.toMessageNode()),
+            stateRevision = 1,
+        )
+        val rebaser = TavernPreviewMutationRebaser()
+        rebaser.recordMessage(
+            conversationId,
+            message.id,
+            before = "B",
+            after = "P",
+            previewRevision = 3,
+        )
+
+        val rebased = rebaser.rebase(conversationId, stale)
+
+        assertEquals("P", (rebased.currentMessages.single().parts.first() as UIMessagePart.Text).text)
+    }
+
+    @Test
+    fun `older divergent variable snapshot is rebased to newer preview value`() {
+        val stale = Conversation(
+            id = conversationId,
+            assistantId = assistantId,
+            messageNodes = emptyList(),
+            statusVariables = buildJsonObject { put("route", "A") },
+            stateRevision = 1,
+        )
+        val rebaser = TavernPreviewMutationRebaser()
+        rebaser.recordVariables(
+            conversationId,
+            before = buildJsonObject { put("route", "B") },
+            after = buildJsonObject { put("route", "P") },
+            previewRevision = 3,
+        )
+
+        val rebased = rebaser.rebase(conversationId, stale)
+
+        assertEquals(JsonPrimitive("P"), rebased.statusVariables["route"])
+    }
+
+    @Test
+    fun `older snapshot missing the preview message is rejected instead of persisted`() {
+        val messageId = Uuid.parse("50000000-0000-4000-8000-000000000003")
+        val stale = Conversation(
+            id = conversationId,
+            assistantId = assistantId,
+            messageNodes = emptyList(),
+            stateRevision = 1,
+        )
+        val rebaser = TavernPreviewMutationRebaser()
+        rebaser.recordMessage(
+            conversationId,
+            messageId,
+            before = "B",
+            after = "P",
+            previewRevision = 3,
+        )
+
+        org.junit.Assert.assertThrows(StaleTavernPreviewSnapshotException::class.java) {
+            rebaser.rebase(conversationId, stale)
+        }
+    }
+
+    @Test
     fun `session publication advances revision beyond current and incoming snapshots`() {
         val current = Conversation(
             id = conversationId,

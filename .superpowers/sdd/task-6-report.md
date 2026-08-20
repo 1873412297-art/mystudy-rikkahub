@@ -216,3 +216,38 @@ Result: `BUILD SUCCESSFUL` — 106 test classes / 761 tests / 0 failures / 0 err
 
 Result: `BUILD SUCCESSFUL` (227 actionable tasks, 12 executed / 215 up-to-date). The only compiler warnings were
 pre-existing unresolved/deprecation warnings outside the Task 6 diff. `git diff --check` remained clean.
+
+## Second independent review: older divergent snapshots
+
+The re-review closed the earlier revision/no-op findings but identified one stricter stale-save case: an older snapshot
+could contain a value that differed from both the state immediately before preview and the preview result. Treating that
+value as a later edit retired the journal and allowed the old whole object to overwrite the newer preview write.
+
+Message and variable regressions were added first. Both failed before production code changed (`2 failed / 6 tests`),
+showing the older divergent values persisted instead of the preview values. The rebaser now uses revision order as the
+authority: every snapshot older than the preview publication replays the recorded preview result regardless of its old
+field value. A snapshot at or beyond the preview revision still represents a possible explicit later edit and therefore
+retires the journal when its value differs from the preview result. An older snapshot that no longer contains the
+preview-mutated message is rejected rather than silently saved because that structural conflict cannot be safely
+rebased.
+
+Fresh final verification:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "*TavernPermissionMigrationTest" --tests "*TavernGreetingPreviewTargetTest" --tests "*TavernPersistingVariableGatewayTest" --tests "*ConversationPersistenceGateTest" --tests "*TavernPreviewMutationRebaserTest" --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL`.
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL` — 106 test classes / 764 tests / 0 failures / 0 errors / 0 skipped.
+
+```powershell
+.\gradlew.bat :app:compileDebugKotlin :app:assembleDebug --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL` (227 actionable tasks, 11 executed / 216 up-to-date). `git diff --check` reported no
+whitespace errors.
