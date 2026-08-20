@@ -158,11 +158,11 @@ fun buildStatusHudPresentation(conversation: Conversation): StatusHudPresentatio
 - Modify: `app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt`
 - Test: `app/src/test/java/me/rerere/rikkahub/data/datastore/TavernPermissionMigrationTest.kt`
 
-- [ ] Write RED tests proving legacy stored permissions migrate once to maximum compatibility while request headers remain false, and preset factories return exact values.
-- [ ] Implement the preference migration and maximum/conservative preset helpers; make tests green.
-- [ ] Add both preset controls to runtime settings while preserving per-permission switches.
-- [ ] Add source/live preview for first and alternate greetings; require a manually selected real conversation, display the target persistently, and run preview writes against that conversation.
-- [ ] Run focused tests and compile; commit Task 6.
+- [x] Write RED tests proving legacy stored permissions migrate once to maximum compatibility while request headers remain false, and preset factories return exact values.
+- [x] Implement the preference migration and maximum/conservative preset helpers; make tests green.
+- [x] Add both preset controls to runtime settings while preserving per-permission switches.
+- [x] Add source/live preview for first and alternate greetings; require a manually selected real conversation, display the target persistently, and run preview writes against that conversation.
+- [x] Run focused tests and compile; commit Task 6.
 
 ### Task 7: Localize remaining assets and harden reload/failure behavior
 
