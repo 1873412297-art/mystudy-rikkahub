@@ -26,7 +26,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -34,12 +33,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.toMessageNode
+import me.rerere.rikkahub.data.model.tavernPreviewTargetLabel
 import me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationActions
 import me.rerere.rikkahub.ui.pages.chat.tavern.TavernConversationPane
 import me.rerere.rikkahub.ui.theme.CustomColors
@@ -59,6 +60,15 @@ fun TavernCardEditorPage(assistantId: String) {
     val selectedPreviewTarget by vm.selectedPreviewTarget.collectAsStateWithLifecycle()
     val selectedPreviewTargetReady by vm.selectedPreviewTargetReady.collectAsStateWithLifecycle()
     val selectedPreviewConversation by vm.selectedPreviewConversation.collectAsStateWithLifecycle()
+    val previewOwner = remember { TavernGreetingPreviewOwner() }
+    val activePreviewFieldKey by previewOwner.active.collectAsStateWithLifecycle()
+    val selectedPreviewLabel = selectedPreviewConversation
+        ?.takeIf { it.id == selectedPreviewTarget?.conversationId }
+        ?.tavernPreviewTargetLabel()
+        ?: selectedPreviewTarget?.let {
+            val rawId = it.conversationId.toString()
+            "${it.title} · ${rawId.take(8)}…${rawId.takeLast(4)}"
+        }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val scrollState = rememberScrollState()
     var showPreviewTargetPicker by remember { mutableStateOf(false) }
@@ -88,7 +98,7 @@ fun TavernCardEditorPage(assistantId: String) {
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(conversation.title.ifBlank { "未命名对话" })
+                            Text(conversation.tavernPreviewTargetLabel())
                         }
                     }
                 }
@@ -112,9 +122,9 @@ fun TavernCardEditorPage(assistantId: String) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        selectedPreviewTarget?.let { target ->
+                        selectedPreviewLabel?.let { targetLabel ->
                             Text(
-                                text = "预览 → ${target.title}",
+                                text = "预览 → $targetLabel",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.error,
                             )
@@ -235,7 +245,7 @@ fun TavernCardEditorPage(assistantId: String) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("全功能预览目标", style = MaterialTheme.typography.labelLarge)
                         Text(
-                            selectedPreviewTarget?.title ?: "尚未选择（不会自动选择）",
+                            selectedPreviewLabel ?: "尚未选择（不会自动选择）",
                             style = MaterialTheme.typography.bodySmall,
                             color = if (selectedPreviewTarget == null) {
                                 MaterialTheme.colorScheme.error
@@ -251,7 +261,6 @@ fun TavernCardEditorPage(assistantId: String) {
             }
 
             GreetingSourcePreviewEditor(
-                fieldKey = "first_mes",
                 label = "开场白",
                 value = card.firstMes,
                 onValueChange = { value -> vm.update { it.copy(firstMes = value) } },
@@ -260,8 +269,12 @@ fun TavernCardEditorPage(assistantId: String) {
                 target = selectedPreviewTarget,
                 targetReady = selectedPreviewTargetReady,
                 targetConversation = selectedPreviewConversation,
+                previewActive = activePreviewFieldKey == "first_mes",
+                onShowSource = { previewOwner.showSource("first_mes") },
+                onShowPreview = { previewOwner.show("first_mes") },
                 onSelectTarget = { showPreviewTargetPicker = true },
                 onMessageWrite = vm::writePreviewCurrentMessage,
+                onChatVariablesWrite = vm::writePreviewChatVariables,
             )
 
             // Alternate greetings
@@ -270,7 +283,6 @@ fun TavernCardEditorPage(assistantId: String) {
                 Text("备选开场白", style = MaterialTheme.typography.labelLarge)
                 card.alternateGreetings.forEachIndexed { index, greeting ->
                     GreetingSourcePreviewEditor(
-                        fieldKey = "alternate_$index",
                         label = "#${index + 1}",
                         value = greeting,
                         onValueChange = { newVal ->
@@ -282,8 +294,12 @@ fun TavernCardEditorPage(assistantId: String) {
                         target = selectedPreviewTarget,
                         targetReady = selectedPreviewTargetReady,
                         targetConversation = selectedPreviewConversation,
+                        previewActive = activePreviewFieldKey == "alternate_$index",
+                        onShowSource = { previewOwner.showSource("alternate_$index") },
+                        onShowPreview = { previewOwner.show("alternate_$index") },
                         onSelectTarget = { showPreviewTargetPicker = true },
                         onMessageWrite = vm::writePreviewCurrentMessage,
+                        onChatVariablesWrite = vm::writePreviewChatVariables,
                     )
                 }
                 FormItem(label = { Text("新增") }) {
@@ -466,7 +482,6 @@ fun TavernCardEditorPage(assistantId: String) {
 
 @Composable
 private fun GreetingSourcePreviewEditor(
-    fieldKey: String,
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
@@ -475,10 +490,13 @@ private fun GreetingSourcePreviewEditor(
     target: TavernGreetingPreviewTarget?,
     targetReady: Boolean,
     targetConversation: Conversation?,
+    previewActive: Boolean,
+    onShowSource: () -> Unit,
+    onShowPreview: () -> Unit,
     onSelectTarget: () -> Unit,
-    onMessageWrite: (JsonElement) -> Unit,
+    onMessageWrite: (Uuid, JsonElement) -> Unit,
+    onChatVariablesWrite: (Uuid, JsonObject) -> Unit,
 ) {
-    var showPreview by rememberSaveable(fieldKey) { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -486,11 +504,11 @@ private fun GreetingSourcePreviewEditor(
         ) {
             Text(label, style = MaterialTheme.typography.labelLarge)
             Row {
-                TextButton(onClick = { showPreview = false }) { Text("源码") }
-                TextButton(onClick = { showPreview = true }) { Text("实时预览") }
+                TextButton(onClick = onShowSource) { Text("源码") }
+                TextButton(onClick = onShowPreview) { Text("实时预览") }
             }
         }
-        if (!showPreview) {
+        if (!previewActive) {
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
@@ -545,7 +563,8 @@ private fun GreetingSourcePreviewEditor(
                 loading = false,
                 actions = actions,
                 ownsSendHookController = true,
-                currentMessageWriter = onMessageWrite,
+                currentMessageWriter = { patch -> onMessageWrite(target.conversationId, patch) },
+                chatVariablesWriter = onChatVariablesWrite,
                 modifier = Modifier.fillMaxWidth().height(360.dp),
             )
         }

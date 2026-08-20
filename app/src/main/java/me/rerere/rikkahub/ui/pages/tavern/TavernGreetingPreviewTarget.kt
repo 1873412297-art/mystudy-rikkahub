@@ -1,8 +1,11 @@
 package me.rerere.rikkahub.ui.pages.tavern
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
 import kotlin.uuid.Uuid
 
@@ -42,13 +45,84 @@ internal class TavernGreetingPreviewTargetSelection(
     }
 
     fun routeMessageWrite(
+        expectedConversationId: Uuid,
         patch: JsonElement,
         writer: (conversationId: Uuid, patch: JsonElement) -> Unit,
     ) {
+        val target = requireReadyTarget(expectedConversationId)
+        writer(target.conversationId, patch)
+    }
+
+    fun routeChatVariables(
+        expectedConversationId: Uuid,
+        variables: kotlinx.serialization.json.JsonObject,
+        writer: (conversationId: Uuid, variables: kotlinx.serialization.json.JsonObject) -> Unit,
+    ) {
+        val target = requireReadyTarget(expectedConversationId)
+        writer(target.conversationId, variables)
+    }
+
+    private fun requireReadyTarget(expectedConversationId: Uuid): TavernGreetingPreviewTarget {
         val target = checkNotNull(_selected.value) {
             "Select a real conversation before starting the full Tavern preview"
         }
+        check(target.conversationId == expectedConversationId) {
+            "Discarding a stale preview callback for a previously selected conversation"
+        }
         check(_ready.value) { "The selected preview conversation is not loaded yet" }
-        writer(target.conversationId, patch)
+        return target
+    }
+}
+
+internal class TavernGreetingPreviewOwner {
+    private val _active = MutableStateFlow<String?>(null)
+    val active: StateFlow<String?> = _active.asStateFlow()
+
+    fun show(fieldKey: String) {
+        _active.value = fieldKey
+    }
+
+    fun showSource(fieldKey: String) {
+        if (_active.value == fieldKey) _active.value = null
+    }
+}
+
+internal class TavernPreviewConversationLease(
+    private val acquire: (Uuid) -> Unit,
+    private val release: (Uuid) -> Unit,
+) {
+    private var current: Uuid? = null
+
+    fun switchTo(conversationId: Uuid) {
+        if (current == conversationId) return
+        current?.let(release)
+        current = conversationId
+        acquire(conversationId)
+    }
+
+    fun clear() {
+        current?.let(release)
+        current = null
+    }
+}
+
+/** Serializes bridge callbacks so a later preview write cannot overtake an earlier suspended persistence call. */
+internal class TavernPreviewSideEffectQueue(scope: CoroutineScope) {
+    private val effects = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+
+    init {
+        scope.launch {
+            for (effect in effects) {
+                runCatching { effect() }
+            }
+        }
+    }
+
+    fun submit(effect: suspend () -> Unit) {
+        effects.trySend(effect).getOrThrow()
+    }
+
+    fun close() {
+        effects.close()
     }
 }

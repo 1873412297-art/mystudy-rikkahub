@@ -420,6 +420,7 @@ class ChatService(
     private val _sessionsVersion = MutableStateFlow(0L)
     private val greetingSessionFlows = ConcurrentHashMap<Uuid, MutableStateFlow<TavernGreetingSession?>>()
     private val greetingCommitMutex = Mutex()
+    private val conversationPersistenceGate = ConversationPersistenceGate()
 
     // 错误状态
     private val _errors = MutableStateFlow<List<ChatError>>(emptyList())
@@ -459,6 +460,7 @@ class ChatService(
     fun cleanup() = runCatching {
         sessions.values.forEach { it.cleanup() }
         sessions.clear()
+        conversationPersistenceGate.clear()
     }
 
     // ---- Session 管理 ----
@@ -2064,9 +2066,35 @@ class ChatService(
 
     /** Persists a full-function editor preview's message side effect to its explicitly selected real conversation. */
     suspend fun applyTavernPreviewCurrentMessagePatch(conversationId: Uuid, patch: JsonElement) {
+        persistTavernPreviewMutation(conversationId) { current ->
+            applyTavernPreviewMessagePatch(current, patch)
+        }
+    }
+
+    suspend fun persistTavernPreviewChatVariables(conversationId: Uuid, variables: JsonObject) {
+        persistTavernPreviewMutation(conversationId) { current ->
+            current.copy(statusVariables = variables)
+        }
+    }
+
+    private suspend fun persistTavernPreviewMutation(
+        conversationId: Uuid,
+        transform: (Conversation) -> Conversation,
+    ) = conversationPersistenceGate.withConversation(conversationId) {
         val current = getConversationFlow(conversationId).value
-        val updated = applyTavernPreviewMessagePatch(current, patch)
-        if (updated != current) saveConversation(conversationId, updated)
+        val updated = transform(current)
+        if (updated == current) return@withConversation
+
+        // Publish first so concurrent chat operations derive from the preview mutation. Their saves wait on this gate.
+        updateConversation(conversationId, updated)
+        try {
+            conversationRepo.updateConversation(updated)
+        } catch (error: Throwable) {
+            if (getConversationFlow(conversationId).value == updated) {
+                updateConversation(conversationId, current)
+            }
+            throw error
+        }
     }
 
     private suspend fun saveConversationAfterRemovingMessages(
@@ -2085,10 +2113,10 @@ class ChatService(
         conversationId: Uuid,
         conversation: Conversation,
         promptTraceCleanup: PromptTraceCleanup,
-    ) {
+    ) = conversationPersistenceGate.withConversation(conversationId) {
         val exists = conversationRepo.existsConversationById(conversation.id)
         if (!exists && conversation.title.isBlank() && conversation.messageNodes.isEmpty()) {
-            return // 新会话且为空时不保存
+            return@withConversation // 新会话且为空时不保存
         }
 
         val updatedConversation = conversation.copy()

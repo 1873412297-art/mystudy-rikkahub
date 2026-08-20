@@ -68,6 +68,7 @@ import me.rerere.rikkahub.ui.components.richtext.hex
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsBackedTavernWorldRepository
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernVariableGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernWorldGateway
+import me.rerere.rikkahub.ui.components.richtext.runtime.PersistingTavernRuntimeVariableGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.StatusStoreTavernVariableGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernContextSnapshotInput
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeController
@@ -97,6 +98,7 @@ internal fun TavernConversationPane(
     ownsSendHookController: Boolean = true,
     candidateRuntime: TavernGreetingCandidateRuntime? = null,
     currentMessageWriter: ((JsonElement) -> Unit)? = null,
+    chatVariablesWriter: ((Uuid, JsonObject) -> Unit)? = null,
     onRenderStatus: (TavernConversationRenderStatus) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -183,6 +185,7 @@ internal fun TavernConversationPane(
         ownsSendHookController = ownsSendHookController,
         runtimeBindings = candidateRuntime?.runtimeBindings(),
         currentMessageWriter = currentMessageWriter,
+        chatVariablesWriter = chatVariablesWriter,
         onRenderStatus = onRenderStatus,
         modifier = modifier,
     )
@@ -199,6 +202,7 @@ internal fun TavernConversationWebView(
     ownsSendHookController: Boolean = true,
     runtimeBindings: TavernGreetingRuntimeBindings? = null,
     currentMessageWriter: ((JsonElement) -> Unit)? = null,
+    chatVariablesWriter: ((Uuid, JsonObject) -> Unit)? = null,
     onRenderStatus: (TavernConversationRenderStatus) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -217,17 +221,32 @@ internal fun TavernConversationWebView(
     val permissionStore = remember { TavernRuntimePermissionStore(appSettings.runtimePermissions) }
     val latestHeaderSource by rememberUpdatedState(headerSource)
     val latestCurrentMessageWriter by rememberUpdatedState(currentMessageWriter)
-    val runtimeController = remember(snapshot.conversationId, runtimeBindings, ownsSendHookController) {
+    val latestChatVariablesWriter by rememberUpdatedState(chatVariablesWriter)
+    val runtimeController = remember(
+        snapshot.conversationId,
+        runtimeBindings,
+        ownsSendHookController,
+        chatVariablesWriter != null,
+    ) {
+        val baseVariableGateway = runtimeBindings?.variableGateway
+            ?: StatusStoreTavernVariableGateway(
+                statusVariableStore,
+                SettingsStoreTavernVariableGateway(settingsStore),
+            )
+        val variableGateway = if (runtimeBindings == null && chatVariablesWriter != null && conversationUuid != null) {
+            val targetId = conversationUuid
+            PersistingTavernRuntimeVariableGateway(baseVariableGateway, targetId) { id, variables ->
+                latestChatVariablesWriter?.invoke(id, variables)
+            }
+        } else {
+            baseVariableGateway
+        }
         TavernRuntimeController(
             conversationId = conversationUuid,
             worldRepository = runtimeBindings?.worldRepository
                 ?: SettingsBackedTavernWorldRepository(SettingsStoreTavernWorldGateway(settingsStore)),
             permissionStore = permissionStore,
-            variableGateway = runtimeBindings?.variableGateway
-                ?: StatusStoreTavernVariableGateway(
-                    statusVariableStore,
-                    SettingsStoreTavernVariableGateway(settingsStore),
-                ),
+            variableGateway = variableGateway,
             hostEventFlow = hostEventBus.events,
             hostEventScope = runtimeScope,
             scriptRegistry = runtimeBindings?.scriptRegistry

@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -47,6 +48,11 @@ class TavernCardEditorVM(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val previewTargetSelection = TavernGreetingPreviewTargetSelection(parsedAssistantId)
+    private val previewConversationLease = TavernPreviewConversationLease(
+        acquire = chatService::addConversationReference,
+        release = chatService::removeConversationReference,
+    )
+    private val previewSideEffectQueue = TavernPreviewSideEffectQueue(viewModelScope)
     internal val selectedPreviewTarget = previewTargetSelection.selected
     internal val selectedPreviewTargetReady = previewTargetSelection.ready
     val selectedPreviewConversation: StateFlow<Conversation?> = selectedPreviewTarget
@@ -210,9 +216,11 @@ class TavernCardEditorVM(
     }
 
     fun selectPreviewTarget(conversation: Conversation) {
+        require(conversation.assistantId == parsedAssistantId) {
+            "Preview target must belong to the edited Tavern assistant"
+        }
         val current = selectedPreviewTarget.value
         if (current?.conversationId == conversation.id) return
-        current?.let { chatService.removeConversationReference(it.conversationId) }
         previewTargetSelection.select(
             TavernGreetingPreviewTarget(
                 conversationId = conversation.id,
@@ -220,7 +228,7 @@ class TavernCardEditorVM(
                 title = conversation.title.ifBlank { "未命名对话" },
             ),
         )
-        chatService.addConversationReference(conversation.id)
+        previewConversationLease.switchTo(conversation.id)
         viewModelScope.launch {
             runCatching { chatService.initializeConversation(conversation.id) }
                 .onSuccess {
@@ -230,23 +238,32 @@ class TavernCardEditorVM(
                 }
                 .onFailure {
                     if (selectedPreviewTarget.value?.conversationId == conversation.id) {
-                        chatService.removeConversationReference(conversation.id)
+                        previewConversationLease.clear()
                         previewTargetSelection.clear()
                     }
                 }
         }
     }
 
-    fun writePreviewCurrentMessage(patch: JsonElement) {
-        previewTargetSelection.routeMessageWrite(patch) { conversationId, routedPatch ->
-            viewModelScope.launch {
+    fun writePreviewCurrentMessage(expectedConversationId: Uuid, patch: JsonElement) {
+        previewTargetSelection.routeMessageWrite(expectedConversationId, patch) { conversationId, routedPatch ->
+            previewSideEffectQueue.submit {
                 chatService.applyTavernPreviewCurrentMessagePatch(conversationId, routedPatch)
             }
         }
     }
 
+    fun writePreviewChatVariables(expectedConversationId: Uuid, variables: JsonObject) {
+        previewTargetSelection.routeChatVariables(expectedConversationId, variables) { conversationId, routedVariables ->
+            previewSideEffectQueue.submit {
+                chatService.persistTavernPreviewChatVariables(conversationId, routedVariables)
+            }
+        }
+    }
+
     override fun onCleared() {
-        selectedPreviewTarget.value?.let { chatService.removeConversationReference(it.conversationId) }
+        previewSideEffectQueue.close()
+        previewConversationLease.clear()
         previewTargetSelection.clear()
         super.onCleared()
     }
