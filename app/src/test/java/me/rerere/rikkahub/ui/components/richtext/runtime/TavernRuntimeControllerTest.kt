@@ -206,6 +206,38 @@ class TavernRuntimeControllerTest {
     }
 
     @Test
+    fun `every document ready republishes unchanged context`() = runBlocking {
+        val controller = TavernRuntimeController(
+            conversationId = Uuid.random(),
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions().copy(allowScripts = true)
+            ),
+        )
+        val received = mutableListOf<Pair<String, JsonElement?>>()
+        val job = launch {
+            controller.outboundEvents.collect { received.add(it) }
+        }
+        yield()
+        val context = buildJsonObject {
+            put("conversationId", "c1")
+            put("chat", JsonArray(emptyList()))
+        }
+        val current = buildJsonObject { put("messageId", "m1") }
+
+        controller.onDocumentReady(context, current)
+        yield()
+        controller.onDocumentReady(context, current)
+        yield()
+
+        assertEquals(2, received.count { it.first == "context_updated" })
+        val currentResponse = controller.dispatch(
+            TavernRuntimeRequest(id = "ready-current", method = "messages.getCurrent")
+        )
+        assertEquals(current, currentResponse.result)
+        job.cancel()
+    }
+
+    @Test
     fun `messages getCurrent returns current chat entry from context when set`() {
         val controller = TavernRuntimeController(
             conversationId = Uuid.random(),

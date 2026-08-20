@@ -3,14 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fontsapi.zeoseven.com https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://esm.sh; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com https://fontsapi.zeoseven.com; connect-src 'self' https://cdn.jsdelivr.net https://esm.sh; frame-src 'self' data: blob:; child-src 'self' data: blob:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'unsafe-eval'; img-src data: blob: https:; font-src data:; connect-src https:; frame-src data: blob:; child-src data: blob:;">
     <title>Markdown Preview</title>
 
-    <!-- KaTeX for LaTeX math rendering -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-
-    <!-- Highlight.js for syntax highlighting -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/atom-one-dark.min.css">
+    {{VENDOR_STYLES}}
+    {{VENDOR_LIBS}}
+    <script>{{TAVERN_RUNTIME}}</script>
 
     <style>
         * {
@@ -213,19 +211,33 @@
 <body>
     <div id="content"></div>
 
-    <script type="module">
-        // Import markdown-it and plugins using esm.sh
-        import MarkdownIt from 'https://esm.sh/markdown-it@14.0.0';
-        import vscodemarkdownItKatex from 'https://esm.sh/@vscode/markdown-it-katex'
-        import markdownItTaskLists from 'https://esm.sh/markdown-it-task-lists@2.1.1';
+    <script>
+        (function () {
+        // All renderers are bundled into this document by Android. No file/network asset lookup occurs at runtime.
+        const vscodeKatex = window.vscodeKatex;
+        const MarkdownItTaskLists = window.MarkdownItTaskLists;
+        const katex = window.katex;
+        const hljs = window.hljs;
+        const mermaid = window.mermaid;
+        const DOMPurify = window.DOMPurify;
 
-        import katex from 'https://esm.sh/katex@0.16.8';
-        // mhchem 扩展: 支持 \ce{} 等化学公式语法
-        import 'https://esm.sh/katex@0.16.8/dist/contrib/mhchem.mjs';
-        import hljs from 'https://esm.sh/highlight.js@11.9.0';
-        import mermaid from 'https://esm.sh/mermaid@11';
-        import { Base64 } from 'https://esm.sh/js-base64@3.7.5';
-        import DOMPurify from 'https://esm.sh/dompurify@3.1.7';
+        function reportDocumentReady() {
+            try {
+                if (window.RikkahubBridge && window.RikkahubBridge.documentReady) {
+                    window.RikkahubBridge.documentReady();
+                }
+            } catch (_) {}
+        }
+
+        function decodeBase64Utf8(value) {
+            const binary = window.atob(value);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            if (window.TextDecoder) return new TextDecoder('utf-8').decode(bytes);
+            let encoded = '';
+            for (let i = 0; i < bytes.length; i++) encoded += '%' + bytes[i].toString(16).padStart(2, '0');
+            return decodeURIComponent(encoded);
+        }
 
         // Configure markdown-it
         const md = new MarkdownIt({
@@ -251,9 +263,9 @@
         // Add plugins
         // 传入已加载 mhchem 扩展的 katex 实例, 否则插件会使用其内部自带的另一个 katex 实例,
         // 导致 \ce 等 mhchem 语法无法识别 (Undefined control sequence: \ce)
-        md.use(vscodemarkdownItKatex, { katex });
+        md.use(vscodeKatex, { katex: katex });
 
-        md.use(markdownItTaskLists, {
+        md.use(MarkdownItTaskLists, {
             enabled: true,
             label: true,
             labelAfter: true
@@ -287,7 +299,7 @@
 
         // The markdown content to render (base64 encoded)
         const markdownBase64 = `{{MARKDOWN_BASE64}}`;
-        let markdownContent = Base64.decode(markdownBase64);
+        let markdownContent = decodeBase64Utf8(markdownBase64);
 
         // 安全：HTML 自动检测 + iframe 渲染路径已禁用。
         // 旧实现使用 sandbox="allow-scripts allow-same-origin" 是 W3C 警告的危险组合
@@ -518,6 +530,7 @@ ${htmlContent}
         if (detection.isHtml) {
             // Render as HTML directly
             renderHtmlContent(detection.htmlContent);
+            reportDocumentReady();
         } else {
             // Render markdown with markdown-it
             async function renderMarkdown() {
@@ -579,16 +592,16 @@ ${htmlContent}
                     });
                 } catch (error) {
                     console.error('Error rendering markdown:', error);
-                    document.getElementById('content').innerHTML = '<p>Error rendering markdown content: ' + error.message + '</p>';
+                    document.getElementById('content').textContent = 'Error rendering markdown content: ' + error.message;
+                } finally {
+                    reportDocumentReady();
                 }
             }
 
             // Call the render function
             renderMarkdown();
         }
-    </script>
-    <script nomodule>
-        alert('您的系统WebView不支持 ES Modules，请升级WebView或者系统!');
+        })();
     </script>
 </body>
 </html>

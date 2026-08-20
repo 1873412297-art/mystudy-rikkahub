@@ -5,6 +5,41 @@ import androidx.compose.material3.ColorScheme
 import me.rerere.rikkahub.utils.base64Encode
 import me.rerere.rikkahub.utils.escapeHtml
 import me.rerere.rikkahub.utils.toCssHex
+import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScript
+
+private data class MarkdownPreviewAssets(
+    val template: String,
+    val vendorScripts: String,
+    val vendorStyles: String,
+)
+
+@Volatile
+private var cachedMarkdownPreviewAssets: MarkdownPreviewAssets? = null
+
+private fun loadMarkdownPreviewAssets(context: Context): MarkdownPreviewAssets {
+    cachedMarkdownPreviewAssets?.let { return it }
+    return synchronized(MarkdownPreviewAssets::class.java) {
+        cachedMarkdownPreviewAssets ?: MarkdownPreviewAssets(
+            template = context.assets.open("html/mark.html").bufferedReader().use { it.readText() },
+            vendorScripts = context.assets.list("html/vendor")
+                .orEmpty()
+                .filter { it.endsWith(".js") }
+                .sorted()
+                .joinToString("\n") { name ->
+                    val code = context.assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
+                    "<script>$code</script>"
+                },
+            vendorStyles = context.assets.list("html/vendor")
+                .orEmpty()
+                .filter { it.endsWith(".css") }
+                .sorted()
+                .joinToString("\n") { name ->
+                    val css = context.assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
+                    "<style>$css</style>"
+                },
+        ).also { cachedMarkdownPreviewAssets = it }
+    }
+}
 
 /**
  * Build HTML page for markdown preview with support for:
@@ -15,10 +50,13 @@ import me.rerere.rikkahub.utils.toCssHex
  * - Auto-detection of HTML content for direct rendering
  */
 fun buildMarkdownPreviewHtml(context: Context, markdown: String, colorScheme: ColorScheme): String {
-    val htmlTemplate = context.assets.open("html/mark.html").bufferedReader().use { it.readText() }
+    val assets = loadMarkdownPreviewAssets(context)
     val normalizedMarkdown = normalizeRichTextContent(markdown)
 
-    return htmlTemplate
+    return assets.template
+        .replace("{{VENDOR_LIBS}}", assets.vendorScripts)
+        .replace("{{VENDOR_STYLES}}", assets.vendorStyles)
+        .replace("{{TAVERN_RUNTIME}}", buildTavernRuntimeScript())
         .replace("{{MARKDOWN_BASE64}}", normalizedMarkdown.base64Encode())
         .replace("{{BACKGROUND_COLOR}}", colorScheme.background.toCssHex())
         .replace("{{ON_BACKGROUND_COLOR}}", colorScheme.onBackground.toCssHex())

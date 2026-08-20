@@ -111,6 +111,18 @@ internal class TavernRuntimeController(
     }
 
     /**
+     * A WebView document owns its JavaScript caches and listeners, while this controller survives document reloads.
+     * Reset the delivery watermark for every new document so an unchanged snapshot is still published into the new
+     * JavaScript world. Event subscription registrations intentionally remain: the freshly injected runtime registers
+     * its listeners again, and keeping the host-side set prevents a reload gap from dropping subscribed host events.
+     */
+    fun onDocumentReady(context: JsonObject?, message: JsonElement) {
+        lastContextHash = null
+        setCurrentMessage(message)
+        setContext(context)
+    }
+
+    /**
      * 宿主推送上下文快照（SillyTavern.getContext 数据源）。
      * 内容不变时跳过推送；变化时经 outbound 事件 th:context_updated 送达 WebView。
      * 受 allowScripts 总开关保护：脚本禁用时丢弃快照且不更新哈希（启用后下次快照变化自愈）。

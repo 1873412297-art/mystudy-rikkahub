@@ -1,35 +1,58 @@
 package me.rerere.rikkahub.ui.components.richtext
 
 import android.annotation.SuppressLint
+import android.os.Build
 import android.view.MotionEvent
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebViewRenderProcess
+import android.webkit.WebViewRenderProcessClient
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.io.ByteArrayInputStream
+import java.net.URI
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -53,6 +76,59 @@ import me.rerere.rikkahub.ui.components.richtext.st.StableSegmentSnapshot
 import me.rerere.rikkahub.ui.pages.chat.tavern.TavernSendHookControllerBinding
 import org.json.JSONObject
 import org.koin.compose.koinInject
+
+private const val MARKDOWN_INITIAL_RENDER_TIMEOUT_MS = 8_000L
+
+internal enum class MarkdownWebViewRenderStatus { LOADING, READY, FAILED, COMPOSE }
+
+internal data class MarkdownWebViewRenderState(
+    val rawContent: String,
+    val generation: Int,
+    val status: MarkdownWebViewRenderStatus,
+    val reason: String? = null,
+) {
+    fun onReady(generation: Int): MarkdownWebViewRenderState =
+        if (this.generation == generation && status == MarkdownWebViewRenderStatus.LOADING) {
+            copy(status = MarkdownWebViewRenderStatus.READY, reason = null)
+        } else {
+            this
+        }
+
+    fun onFailure(generation: Int, reason: String): MarkdownWebViewRenderState =
+        if (this.generation == generation && status != MarkdownWebViewRenderStatus.COMPOSE) {
+            copy(status = MarkdownWebViewRenderStatus.FAILED, reason = reason)
+        } else {
+            this
+        }
+
+    fun retry(): MarkdownWebViewRenderState = copy(
+        generation = generation + 1,
+        status = MarkdownWebViewRenderStatus.LOADING,
+        reason = null,
+    )
+
+    fun reload(rawContent: String): MarkdownWebViewRenderState = copy(
+        rawContent = rawContent,
+        generation = generation + 1,
+        status = MarkdownWebViewRenderStatus.LOADING,
+        reason = null,
+    )
+
+    fun withRawContent(rawContent: String): MarkdownWebViewRenderState = copy(rawContent = rawContent)
+
+    fun switchToCompose(): MarkdownWebViewRenderState = copy(
+        status = MarkdownWebViewRenderStatus.COMPOSE,
+        reason = null,
+    )
+
+    companion object {
+        fun initial(rawContent: String) = MarkdownWebViewRenderState(
+            rawContent = rawContent,
+            generation = 0,
+            status = MarkdownWebViewRenderStatus.LOADING,
+        )
+    }
+}
 
 /**
  * Renders content in a WebView. Two modes:
@@ -199,9 +275,11 @@ internal fun MarkdownWebView(
     // 宿主注入当前消息（messages.getCurrent 的数据源）与上下文快照（getContext 数据源）。
     // setContext 内部按内容哈希去重，LaunchedEffect 每次 key 变化调用即可。
     LaunchedEffect(runtimeController, tavernCurrentMessage, tavernContextSnapshot) {
-        tavernContextSnapshot?.let { runtimeController.setContext(it) }
-        tavernCurrentMessage?.let { runtimeController.setCurrentMessage(it) }
+        runtimeController.setContext(tavernContextSnapshot)
+        runtimeController.setCurrentMessage(tavernCurrentMessage ?: JsonNull)
     }
+    val latestContextSnapshot by rememberUpdatedState(tavernContextSnapshot)
+    val latestCurrentMessage by rememberUpdatedState(tavernCurrentMessage)
     // 脚本/宿主事件 → WebView 内 th:<name> DOM CustomEvent
     val tavernWebViewRef = remember { mutableStateOf<WebView?>(null) }
     // WebView 销毁治理：离开组合时移除 JS 桥、停止加载并销毁原生 WebView。
@@ -245,6 +323,21 @@ internal fun MarkdownWebView(
         streaming,
     ).joinToString("|")
     val contentKey = "${content.length}|${content.hashCode()}"
+    val networkAllowed = remember { AtomicBoolean(appSettings.runtimePermissions.allowNetwork) }
+    SideEffect { networkAllowed.set(appSettings.runtimePermissions.allowNetwork) }
+    var renderState by remember { mutableStateOf(MarkdownWebViewRenderState.initial(content)) }
+    LaunchedEffect(content) {
+        if (renderState.rawContent != content) renderState = renderState.withRawContent(content)
+    }
+    LaunchedEffect(renderState.generation, renderState.status) {
+        if (renderState.status == MarkdownWebViewRenderStatus.LOADING) {
+            val generation = renderState.generation
+            delay(MARKDOWN_INITIAL_RENDER_TIMEOUT_MS)
+            if (renderState.generation == generation && renderState.status == MarkdownWebViewRenderStatus.LOADING) {
+                renderState = renderState.onFailure(generation, "富文本加载超时，原始内容已保留")
+            }
+        }
+    }
 
     Surface(
         modifier = modifier,
@@ -258,7 +351,13 @@ internal fun MarkdownWebView(
         val lastBaseKey = remember { mutableStateOf<String?>(null) }
         val lastContentKey = remember { mutableStateOf<String?>(null) }
         val lastSegments = remember { mutableStateOf<List<StableDomSegment>>(emptyList()) }
-        AndroidView(
+        Box {
+            if (
+                renderState.status != MarkdownWebViewRenderStatus.FAILED &&
+                renderState.status != MarkdownWebViewRenderStatus.COMPOSE
+            ) key(renderState.generation) {
+                val generation = renderState.generation
+                AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
                     val webView = this
@@ -351,19 +450,45 @@ internal fun MarkdownWebView(
                             }
                         },
                         onOpenLink = { rawUrl ->
-                            // 协议白名单：只放 http/https/mailto/tel，其它（含 javascript:/intent:/file:）直接吞掉。
                             val trimmed = rawUrl.trim()
-                            val lower = trimmed.lowercase()
-                            val safe = lower.startsWith("http://") || lower.startsWith("https://") ||
-                                lower.startsWith("mailto:") || lower.startsWith("tel:")
-                            if (safe) {
+                            if (isAllowedMarkdownExternalLink(trimmed)) {
                                 runCatching {
                                     val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(trimmed))
                                         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                                     context.startActivity(intent)
                                 }
                             }
-                        }
+                        },
+                        onDocumentReady = {
+                            webView.post {
+                                runtimeController.onDocumentReady(
+                                    latestContextSnapshot,
+                                    latestCurrentMessage ?: JsonNull,
+                                )
+                                val firstReady = renderState.generation == generation &&
+                                    renderState.status == MarkdownWebViewRenderStatus.LOADING
+                                renderState = renderState.onReady(generation)
+                                if (firstReady) {
+                                    tavernConversationId?.let { cid ->
+                                        tavernHostEventBus.emit(
+                                            type = TavernHostEventType.MESSAGE_RENDERED,
+                                            conversationId = cid,
+                                        )
+                                        when (tavernMessageRole) {
+                                            MessageRole.USER -> tavernHostEventBus.emit(
+                                                type = TavernHostEventType.USER_MESSAGE_RENDERED,
+                                                conversationId = cid,
+                                            )
+                                            MessageRole.ASSISTANT -> tavernHostEventBus.emit(
+                                                type = TavernHostEventType.CHARACTER_MESSAGE_RENDERED,
+                                                conversationId = cid,
+                                            )
+                                            else -> Unit
+                                        }
+                                    }
+                                }
+                            }
+                        },
                     )
                     addJavascriptInterface(bridge, "RikkahubBridge")
 
@@ -382,19 +507,53 @@ internal fun MarkdownWebView(
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(
                             view: WebView?,
-                            request: android.webkit.WebResourceRequest?
+                            request: WebResourceRequest?
                         ): Boolean {
-                            // 拒绝任何尝试导航父页的动作（用户卡里的 a 标签 / 表单提交等）。
-                            // http/https 转交系统浏览器；其它协议（intent:/file:/about: 等）直接屏蔽。
                             val uri = request?.url ?: return true
-                            val scheme = uri.scheme?.lowercase()
-                            if (scheme == "http" || scheme == "https") {
+                            if (isAllowedMarkdownExternalLink(uri.toString())) {
                                 runCatching {
                                     val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
                                         .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                                     view?.context?.startActivity(intent)
                                 }
                             }
+                            return true
+                        }
+
+                        override fun shouldInterceptRequest(
+                            view: WebView?,
+                            request: WebResourceRequest?,
+                        ): WebResourceResponse? {
+                            val url = request?.url?.toString() ?: return blockedMarkdownResponse()
+                            return if (
+                                shouldAllowMarkdownSubresource(
+                                    rawUrl = url,
+                                    networkAllowed = networkAllowed.get(),
+                                    tavernScoped = tavernConversationId != null,
+                                )
+                            ) null else blockedMarkdownResponse()
+                        }
+
+                        override fun onReceivedError(
+                            view: WebView?,
+                            request: WebResourceRequest?,
+                            error: android.webkit.WebResourceError?,
+                        ) {
+                            if (request?.isForMainFrame == true) {
+                                renderState = renderState.onFailure(generation, "富文本加载失败，原始内容已保留")
+                            }
+                        }
+
+                        override fun onRenderProcessGone(
+                            view: WebView?,
+                            detail: RenderProcessGoneDetail?,
+                        ): Boolean {
+                            val reason = if (detail?.didCrash() == true) {
+                                "富文本渲染进程崩溃，原始内容已保留"
+                            } else {
+                                "富文本渲染进程已退出，原始内容已保留"
+                            }
+                            renderState = renderState.onFailure(generation, reason)
                             return true
                         }
 
@@ -440,25 +599,28 @@ internal fun MarkdownWebView(
                                     }
                                 }, delay)
                             }
-                            // 酒馆脚本宿主事件：消息渲染完成
-                            tavernConversationId?.let { cid ->
-                                tavernHostEventBus.emit(
-                                    type = TavernHostEventType.MESSAGE_RENDERED,
-                                    conversationId = cid,
-                                )
-                                when (tavernMessageRole) {
-                                    MessageRole.USER -> tavernHostEventBus.emit(
-                                        type = TavernHostEventType.USER_MESSAGE_RENDERED,
-                                        conversationId = cid,
-                                    )
-                                    MessageRole.ASSISTANT -> tavernHostEventBus.emit(
-                                        type = TavernHostEventType.CHARACTER_MESSAGE_RENDERED,
-                                        conversationId = cid,
-                                    )
-                                    else -> Unit
-                                }
-                            }
                         }
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        setWebViewRenderProcessClient(
+                            ContextCompat.getMainExecutor(ctx),
+                            object : WebViewRenderProcessClient() {
+                                override fun onRenderProcessResponsive(
+                                    view: WebView,
+                                    renderer: WebViewRenderProcess?,
+                                ) = Unit
+
+                                override fun onRenderProcessUnresponsive(
+                                    view: WebView,
+                                    renderer: WebViewRenderProcess?,
+                                ) {
+                                    renderState = renderState.onFailure(
+                                        generation,
+                                        "富文本渲染进程无响应，原始内容已保留",
+                                    )
+                                }
+                            },
+                        )
                     }
                     settings.apply {
                         // 父页 shell 始终开 JS：
@@ -482,10 +644,11 @@ internal fun MarkdownWebView(
                         @Suppress("DEPRECATION")
                         allowUniversalAccessFromFileURLs = false
                     }
+                    val source = renderState.rawContent
                     val html = if (useIframeSandbox) {
-                        buildSandboxHostHtml(content, bgHex, textHex, fixedHeight)
+                        buildSandboxHostHtml(source, bgHex, textHex, fixedHeight)
                     } else {
-                        buildMarkdownPreviewHtml(context, normalizeRichTextContent(content), colorScheme)
+                        buildMarkdownPreviewHtml(context, normalizeRichTextContent(source), colorScheme)
                     }
                     loadDataWithBaseURL("https://rikkahub.local/", html, "text/html", "UTF-8", null)
                     lastBaseKey.value = baseKey
@@ -497,15 +660,7 @@ internal fun MarkdownWebView(
                 // baseKey（路径/主题/角色/卡样式）变了才整文档重载；
                 // 否则 contentKey 变化时：streaming 走段 diff 增量 patch，非 streaming 才重 load。
                 if (lastBaseKey.value != baseKey) {
-                    val html = if (useIframeSandbox) {
-                        buildSandboxHostHtml(content, bgHex, textHex, fixedHeight)
-                    } else {
-                        buildMarkdownPreviewHtml(context, normalizeRichTextContent(content), colorScheme)
-                    }
-                    webView.loadDataWithBaseURL("https://rikkahub.local/", html, "text/html", "UTF-8", null)
-                    lastBaseKey.value = baseKey
-                    lastContentKey.value = contentKey
-                    lastSegments.value = streamSegments.orEmpty()
+                    renderState = renderState.reload(content)
                     return@AndroidView
                 }
                 if (lastContentKey.value == contentKey) return@AndroidView
@@ -521,15 +676,15 @@ internal fun MarkdownWebView(
                         "window.RikkahubDomBridge && window.RikkahubDomBridge.applySegmentPatch($patchJson);"
                     )
                 } else {
-                    val html = if (useIframeSandbox) {
-                        buildSandboxHostHtml(content, bgHex, textHex, fixedHeight)
-                    } else {
-                        buildMarkdownPreviewHtml(context, normalizeRichTextContent(content), colorScheme)
-                    }
-                    webView.loadDataWithBaseURL("https://rikkahub.local/", html, "text/html", "UTF-8", null)
-                    lastContentKey.value = contentKey
-                    lastSegments.value = streamSegments.orEmpty()
+                    renderState = renderState.reload(content)
                 }
+            },
+            onRelease = { webView ->
+                if (tavernWebViewRef.value === webView) tavernWebViewRef.value = null
+                runCatching { webView.removeJavascriptInterface("RikkahubBridge") }
+                runCatching { webView.removeJavascriptInterface("TavernRuntimeBridge") }
+                runCatching { webView.stopLoading() }
+                runCatching { webView.destroy() }
             },
             // fixedHeight：让 WebView 占满外层 modifier 给的空间（如调用方写了 .height(300.dp)）
             // 否则按内容自适应到 viewHeight（首次上报前用 minHeightDp 占位）。
@@ -540,7 +695,31 @@ internal fun MarkdownWebView(
                     maxOf(viewHeight, with(density) { minHeightDp.dp.toPx() }.toInt()).toDp()
                 })
             },
-        )
+                )
+            }
+            when (renderState.status) {
+                MarkdownWebViewRenderStatus.LOADING -> CircularProgressIndicator(
+                    modifier = Modifier.align(Alignment.Center),
+                )
+                MarkdownWebViewRenderStatus.FAILED -> MarkdownStaticFallback(
+                    state = renderState,
+                    maxHeightDp = maxHeightDp,
+                    fixedHeight = fixedHeight,
+                    minHeightDp = minHeightDp,
+                    onRetry = { renderState = renderState.retry() },
+                    onCompose = { renderState = renderState.switchToCompose() },
+                )
+                MarkdownWebViewRenderStatus.COMPOSE -> MarkdownStaticFallback(
+                    state = renderState,
+                    maxHeightDp = maxHeightDp,
+                    fixedHeight = fixedHeight,
+                    minHeightDp = minHeightDp,
+                    onRetry = { renderState = renderState.retry() },
+                    onCompose = null,
+                )
+                MarkdownWebViewRenderStatus.READY -> Unit
+            }
+        }
     }
 }
 
@@ -557,6 +736,7 @@ internal fun MarkdownWebView(
 internal class RikkahubBridge(
     private val onContentHeight: (Int) -> Unit,
     private val onOpenLink: (String) -> Unit,
+    private val onDocumentReady: () -> Unit = {},
 ) {
     @JavascriptInterface
     fun reportHeight(px: Int) {
@@ -567,7 +747,78 @@ internal class RikkahubBridge(
     fun openLink(url: String) {
         if (url.length <= 4096) onOpenLink(url)
     }
+
+    @JavascriptInterface
+    fun documentReady() {
+        onDocumentReady()
+    }
 }
+
+@Composable
+private fun MarkdownStaticFallback(
+    state: MarkdownWebViewRenderState,
+    maxHeightDp: Int?,
+    fixedHeight: Boolean,
+    minHeightDp: Int,
+    onRetry: () -> Unit,
+    onCompose: (() -> Unit)?,
+) {
+    val sizeModifier = when {
+        fixedHeight -> Modifier.fillMaxWidth().fillMaxHeight()
+        maxHeightDp != null -> Modifier.fillMaxWidth().heightIn(
+            min = minHeightDp.dp,
+            max = maxHeightDp.dp,
+        )
+        else -> Modifier.fillMaxWidth()
+    }
+    Column(
+        modifier = sizeModifier
+            .verticalScroll(rememberScrollState())
+            .padding(12.dp),
+    ) {
+        state.reason?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+        }
+        SelectionContainer {
+            Text(state.rawContent, style = MaterialTheme.typography.bodyMedium)
+        }
+        TextButton(onClick = onRetry) { Text("重试富文本视图") }
+        onCompose?.let { switch ->
+            TextButton(onClick = switch) { Text("使用 Compose 纯文本") }
+        }
+    }
+}
+
+internal fun isAllowedMarkdownExternalLink(rawUrl: String): Boolean {
+    val value = rawUrl.trim()
+    if (value.isEmpty() || value.length > 4096) return false
+    val scheme = runCatching { URI(value).scheme?.lowercase() }.getOrNull() ?: return false
+    return scheme in setOf("http", "https", "mailto", "tel")
+}
+
+internal fun shouldAllowMarkdownSubresource(
+    rawUrl: String,
+    networkAllowed: Boolean,
+    tavernScoped: Boolean,
+): Boolean {
+    val value = rawUrl.trim()
+    if (value.isEmpty() || value.length > 16_384) return false
+    val scheme = runCatching { URI(value).scheme?.lowercase() }.getOrNull() ?: return false
+    return when (scheme) {
+        "data", "blob", "about" -> true
+        "http", "https" -> !tavernScoped || networkAllowed
+        else -> false
+    }
+}
+
+private fun blockedMarkdownResponse() = WebResourceResponse(
+    "text/plain",
+    "UTF-8",
+    403,
+    "Blocked",
+    mapOf("Cache-Control" to "no-store"),
+    ByteArrayInputStream(ByteArray(0)),
+)
 
 /** Measure host page content height via JS. */
 private fun WebView.measureContentHeight(onResult: (Int) -> Unit) {
@@ -814,12 +1065,13 @@ internal fun stripMarkdownCodeRegions(text: String): String {
  * 安全模型：
  *  1. WebView 加载 origin = `https://rikkahub.local/`（合成域，无任何真实后端服务），
  *     用户脚本即使能跑 fetch / XHR 也访问不到任何敏感资源。
- *  2. RikkahubBridge 只暴露两个方法：
+ *  2. RikkahubBridge 只暴露三个受限方法：
  *      - reportHeight(px)：被严格 range-check (1..200000)，副作用仅是设置 Compose
  *        viewHeight 状态，没法用于任何攻击。
  *      - openLink(url)：长度上限 4096 + 协议白名单（http/https/mailto/tel），
  *        无法触发 intent: / file: / javascript: 等危险跳转。
- *     这两个方法即使被恶意脚本任意调用都构不成攻击面。
+ *      - documentReady()：无参数，只重推当前文档的宿主快照并解除加载态。
+ *     这些方法即使被恶意脚本任意调用也不暴露文件、请求头或原生对象。
  *  3. WebViewClient.shouldOverrideUrlLoading 拦截所有顶层导航：
  *      - http/https → 用 system Intent 转交浏览器（不在本 WebView 加载）
  *      - 其它协议 → 直接屏蔽
@@ -868,6 +1120,12 @@ $injectTag
  */
 private fun buildIframeInjectScript(): String = """
 (function(){
+  var didReportReady=false;
+  function reportReady(){
+    if(didReportReady)return;
+    didReportReady=true;
+    try{window.RikkahubBridge&&window.RikkahubBridge.documentReady&&window.RikkahubBridge.documentReady();}catch(e){}
+  }
   function measure(){
     var de=document.documentElement,b=document.body;
     return Math.max(de?de.scrollHeight:0,de?de.offsetHeight:0,b?b.scrollHeight:0,b?b.offsetHeight:0);
@@ -884,8 +1142,8 @@ private fun buildIframeInjectScript(): String = """
       }
     },16);
   }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',tick);else tick();
-  window.addEventListener('load',tick);
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){tick();reportReady();});else{tick();reportReady();}
+  window.addEventListener('load',function(){tick();reportReady();});
   [50,200,500,1000,2000,4000].forEach(function(d){setTimeout(tick,d);});
   if(typeof ResizeObserver!=='undefined'){try{var ro=new ResizeObserver(function(){tick();});ro.observe(document.documentElement);if(document.body)ro.observe(document.body);}catch(e){}}
   if(typeof MutationObserver!=='undefined'){try{var mo=new MutationObserver(function(){tick();});mo.observe(document.documentElement,{childList:true,subtree:true});}catch(e){}}
