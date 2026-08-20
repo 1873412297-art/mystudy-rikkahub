@@ -52,14 +52,14 @@ class MarkdownWebViewReloadInstrumentedTest {
                                             null,
                                         )
                                     }
-                                    2 -> webView.post {
+                                    2 -> webView.postDelayed({
                                         webView.evaluateJavascript(
-                                            "JSON.stringify({heading:!!document.querySelector('h1'),task:!!document.querySelector('.task-list-item'),katex:!!document.querySelector('.katex')})",
+                                            "JSON.stringify({heading:!!document.querySelector('h1'),task:!!document.querySelector('.task-list-item'),katex:!!document.querySelector('.katex'),katexFont:Array.from(document.fonts||[]).some(function(f){return f.family.indexOf('KaTeX_Main')>=0&&f.status==='loaded';})})",
                                         ) {
                                             result.set(it)
                                             latch.countDown()
                                         }
-                                    }
+                                    }, 1_000)
                                 }
                             }
                         },
@@ -83,6 +83,7 @@ class MarkdownWebViewReloadInstrumentedTest {
             assertTrue(dom.getBoolean("heading"))
             assertTrue(dom.getBoolean("task"))
             assertTrue(dom.getBoolean("katex"))
+            assertTrue(dom.getBoolean("katexFont"))
             scenario.onActivity {
                 assertFalse(webView.settings.allowFileAccess)
                 assertFalse(webView.settings.allowContentAccess)

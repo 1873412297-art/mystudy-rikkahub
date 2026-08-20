@@ -64,4 +64,20 @@ class MarkTemplateContractTest {
         assertTrue("katex.min.css" in names)
         assertTrue("atom-one-dark.min.css" in names)
     }
+
+    @Test
+    fun `every katex font source is bundled as an inline data URI`() {
+        val vendorDir = listOf(
+            File("src/main/assets/html/vendor"),
+            File("app/src/main/assets/html/vendor"),
+        ).firstOrNull { it.isDirectory } ?: error("vendor directory not found")
+        val fontData = File(vendorDir, "katex-fonts.b64").readLines()
+            .filter { it.isNotBlank() }
+            .associate { it.substringBefore('=') to it.substringAfter('=') }
+        val inlined = inlineKatexFontSources(File(vendorDir, "katex.min.css").readText()) { fontData[it] }
+
+        assertFalse(inlined.contains("url(fonts/"))
+        assertTrue(inlined.contains("url(data:font/woff2;base64,"))
+        assertTrue(fontData.keys.containsAll(setOf("KaTeX_Main-Regular", "KaTeX_AMS-Regular", "KaTeX_Size4-Regular")))
+    }
 }

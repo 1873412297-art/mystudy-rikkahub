@@ -4,6 +4,8 @@ import android.content.Context
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.data.ai.status.CssSanitizer
+import me.rerere.rikkahub.ui.components.richtext.inlineKatexFontSources
+import me.rerere.rikkahub.ui.components.richtext.loadBundledKatexFontData
 
 private val json = Json {
     encodeDefaults = true
@@ -48,7 +50,13 @@ internal fun buildStableMessageHtml(
         .sorted()
         .joinToString("\n") { name ->
             val css = context.assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
-            "<style>$css</style>"
+            val localizedCss = if (name == "katex.min.css") {
+                val fonts = loadBundledKatexFontData(context)
+                inlineKatexFontSources(css, fonts::get)
+            } else {
+                css
+            }
+            "<style>$localizedCss</style>"
         }
     return buildStableMessageHtml(message, template, vendorScripts, vendorStyles, cssVariables, extraCss)
 }

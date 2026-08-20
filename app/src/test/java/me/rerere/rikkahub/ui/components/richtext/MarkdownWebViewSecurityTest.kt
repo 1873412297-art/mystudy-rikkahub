@@ -20,6 +20,9 @@ class MarkdownWebViewSecurityTest {
         assertEquals(source, retrying.rawContent)
         assertEquals(retrying, retrying.onReady(generation = 0))
         assertEquals(MarkdownWebViewRenderStatus.READY, retrying.onReady(generation = 1).status)
+        assertFalse(retrying.acceptsDocumentReady(generation = 0))
+        assertTrue(retrying.acceptsDocumentReady(generation = 1))
+        assertFalse(failed.acceptsDocumentReady(generation = 0))
     }
 
     @Test

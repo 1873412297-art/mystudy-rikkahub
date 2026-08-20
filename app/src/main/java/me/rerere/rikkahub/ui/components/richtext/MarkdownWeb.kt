@@ -13,8 +13,37 @@ private data class MarkdownPreviewAssets(
     val vendorStyles: String,
 )
 
+private val katexFontSourceRegex = Regex(
+    """src:url\(fonts/([A-Za-z0-9_-]+)\.woff2\)[^}]+""",
+)
+
 @Volatile
 private var cachedMarkdownPreviewAssets: MarkdownPreviewAssets? = null
+
+@Volatile
+private var cachedKatexFontData: Map<String, String>? = null
+
+internal fun inlineKatexFontSources(
+    css: String,
+    fontData: (String) -> String?,
+): String = katexFontSourceRegex.replace(css) { match ->
+    val name = match.groupValues[1]
+    val encoded = requireNotNull(fontData(name)) { "Missing bundled KaTeX font: $name" }
+    "src:url(data:font/woff2;base64,$encoded) format(\"woff2\")"
+}
+
+internal fun loadBundledKatexFontData(context: Context): Map<String, String> {
+    cachedKatexFontData?.let { return it }
+    return synchronized(MarkdownPreviewAssets::class.java) {
+        cachedKatexFontData ?: context.assets.open("html/vendor/katex-fonts.b64")
+            .bufferedReader()
+            .useLines { lines ->
+                lines.filter { it.isNotBlank() }
+                    .associate { it.substringBefore('=') to it.substringAfter('=') }
+            }
+            .also { cachedKatexFontData = it }
+    }
+}
 
 private fun loadMarkdownPreviewAssets(context: Context): MarkdownPreviewAssets {
     cachedMarkdownPreviewAssets?.let { return it }
@@ -35,7 +64,13 @@ private fun loadMarkdownPreviewAssets(context: Context): MarkdownPreviewAssets {
                 .sorted()
                 .joinToString("\n") { name ->
                     val css = context.assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
-                    "<style>$css</style>"
+                    val localizedCss = if (name == "katex.min.css") {
+                        val fonts = loadBundledKatexFontData(context)
+                        inlineKatexFontSources(css, fonts::get)
+                    } else {
+                        css
+                    }
+                    "<style>$localizedCss</style>"
                 },
         ).also { cachedMarkdownPreviewAssets = it }
     }

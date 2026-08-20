@@ -101,6 +101,10 @@ internal data class MarkdownWebViewRenderState(
             this
         }
 
+    fun acceptsDocumentReady(generation: Int): Boolean =
+        this.generation == generation &&
+            (status == MarkdownWebViewRenderStatus.LOADING || status == MarkdownWebViewRenderStatus.READY)
+
     fun retry(): MarkdownWebViewRenderState = copy(
         generation = generation + 1,
         status = MarkdownWebViewRenderStatus.LOADING,
@@ -461,6 +465,10 @@ internal fun MarkdownWebView(
                         },
                         onDocumentReady = {
                             webView.post {
+                                if (
+                                    tavernWebViewRef.value !== webView ||
+                                    !renderState.acceptsDocumentReady(generation)
+                                ) return@post
                                 runtimeController.onDocumentReady(
                                     latestContextSnapshot,
                                     latestCurrentMessage ?: JsonNull,
