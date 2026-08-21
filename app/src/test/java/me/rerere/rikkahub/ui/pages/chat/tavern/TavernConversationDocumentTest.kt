@@ -30,6 +30,15 @@ class TavernConversationDocumentTest {
     }
 
     @Test
+    fun `conversation document locks touch input to vertical scrolling`() {
+        assertTrue(template.contains("html, body { touch-action: pan-y; overscroll-behavior-x: none; }"))
+        assertTrue(template.contains("#chat { touch-action: pan-y; }"))
+        val rawHtmlFrameStyle = template.substringAfter(".html-part iframe {").substringBefore("}")
+        assertTrue(rawHtmlFrameStyle.contains("touch-action: pan-y"))
+        assertTrue(template.contains("html,body{touch-action:pan-y!important;overscroll-behavior-x:none!important;}"))
+    }
+
+    @Test
     fun `template preserves raw html in sandbox iframe with fullscreen marker`() {
         assertTrue(template.contains("data-render-mode=\"html\""))
         assertTrue(template.contains("data-html-frame"))

@@ -19,8 +19,10 @@
       --rikkahub-accent: #4a90d9;
     }
     html, body { margin: 0; padding: 0; background: var(--rikkahub-bg); color: var(--rikkahub-text); }
+    html, body { touch-action: pan-y; overscroll-behavior-x: none; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     #chat[data-card-css-scope] { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+    #chat { touch-action: pan-y; }
     .mes { position: relative; display: flex; flex-direction: column; border-radius: 12px; padding: 10px 12px; }
     .mes.user { background: var(--rikkahub-surface-variant); }
     .mes.assistant, .mes.system, .mes.tool { background: var(--rikkahub-surface); }
@@ -35,7 +37,7 @@
     .mes_text img { max-width: 100%; height: auto; }
     .mes_text a { color: var(--rikkahub-accent); }
     .html-part { position: relative; min-height: 120px; max-height: 100vh; overflow: hidden; border-radius: 8px; }
-    .html-part iframe { display: block; width: 100%; min-height: 120px; max-height: 100vh; border: 0; background: transparent; }
+    .html-part iframe { display: block; width: 100%; min-height: 120px; max-height: 100vh; border: 0; background: transparent; touch-action: pan-y; }
     .html-fullscreen { position: absolute; top: 6px; right: 6px; z-index: 2; }
     .message-actions { align-self: flex-end; border: 0; border-radius: 999px; padding: 2px 8px; color: var(--rikkahub-text-secondary); background: transparent; }
     .branch-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 6px; }
@@ -249,6 +251,9 @@
           "if(typeof ResizeObserver!=='undefined'){try{new ResizeObserver(__rhSize).observe(document.documentElement);}catch(_){}}" +
           "addEventListener('load',__rhSize);setTimeout(__rhSize,50);setTimeout(__rhSize,400);";
         var parsed = new DOMParser().parseFromString(rawHtml, 'text/html');
+        var gestureStyle = parsed.createElement('style');
+        gestureStyle.textContent = 'html,body{touch-action:pan-y!important;overscroll-behavior-x:none!important;}';
+        parsed.head.insertBefore(gestureStyle, parsed.head.firstChild);
         var bootstrap = parsed.createElement('script');
         bootstrap.textContent = helper;
         parsed.head.insertBefore(bootstrap, parsed.head.firstChild);
