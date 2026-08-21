@@ -27,6 +27,28 @@ class MarkdownWebViewSecurityTest {
     }
 
     @Test
+    fun `parent scroll mode keeps a chat list continuous even when a message overflows`() {
+        assertFalse(
+            shouldMarkdownWebViewCaptureVerticalDrag(
+                mode = MarkdownWebViewVerticalScrollMode.PARENT,
+                hasOverflow = true,
+                deltaY = 24f,
+                atTop = false,
+                atBottom = false,
+            ),
+        )
+        assertTrue(
+            shouldMarkdownWebViewCaptureVerticalDrag(
+                mode = MarkdownWebViewVerticalScrollMode.INTERNAL,
+                hasOverflow = true,
+                deltaY = 24f,
+                atTop = false,
+                atBottom = false,
+            ),
+        )
+    }
+
+    @Test
     fun `renderer failure preserves source through retry generations`() {
         val source = "# opening\n<script>window.demo = true</script>"
         val failed = MarkdownWebViewRenderState.initial(source)

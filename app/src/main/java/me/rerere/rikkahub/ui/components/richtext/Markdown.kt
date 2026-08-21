@@ -290,6 +290,9 @@ fun MarkdownBlock(
     tavernMessageRole: MessageRole? = null,
     /** 请求头数据源（透传 MarkdownWebView，requestHeaders.get RPC 按需拉取） */
     tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
+    /** 聊天列表传 null + PARENT，避免每个消息 WebView 截获纵向滚动。 */
+    webViewMaxHeightDp: Int? = 600,
+    webViewVerticalScrollMode: MarkdownWebViewVerticalScrollMode = MarkdownWebViewVerticalScrollMode.INTERNAL,
 ) {
     val normalizedContent = remember(content) { normalizeRichTextContent(content) }
     val segments = remember(normalizedContent) { parseRichTextSegments(normalizedContent) }
@@ -346,6 +349,8 @@ fun MarkdownBlock(
                 tavernContextSnapshot = tavernContextSnapshot,
                 tavernMessageRole = tavernMessageRole,
                 tavernHeaderSource = tavernHeaderSource,
+                maxHeightDp = webViewMaxHeightDp,
+                verticalScrollMode = webViewVerticalScrollMode,
             )
             return
         }
@@ -366,6 +371,8 @@ fun MarkdownBlock(
                         tavernContextSnapshot = tavernContextSnapshot,
                         tavernMessageRole = tavernMessageRole,
                         tavernHeaderSource = tavernHeaderSource,
+                        webViewMaxHeightDp = webViewMaxHeightDp,
+                        webViewVerticalScrollMode = webViewVerticalScrollMode,
                     )
                     RichTextSegment.Kind.STATUS_BLOCK,
                     RichTextSegment.Kind.JSON_PATCH -> MarkdownWebView(
@@ -375,6 +382,8 @@ fun MarkdownBlock(
                         tavernContextSnapshot = tavernContextSnapshot,
                         tavernMessageRole = tavernMessageRole,
                         tavernHeaderSource = tavernHeaderSource,
+                        maxHeightDp = webViewMaxHeightDp,
+                        verticalScrollMode = webViewVerticalScrollMode,
                     )
                     RichTextSegment.Kind.HTML_DOCUMENT -> MarkdownWebView(
                         content = segment.raw,
@@ -384,6 +393,8 @@ fun MarkdownBlock(
                         tavernContextSnapshot = tavernContextSnapshot,
                         tavernMessageRole = tavernMessageRole,
                         tavernHeaderSource = tavernHeaderSource,
+                        maxHeightDp = webViewMaxHeightDp,
+                        verticalScrollMode = webViewVerticalScrollMode,
                     )
                 }
             }
@@ -418,6 +429,8 @@ fun MarkdownBlock(
             tavernContextSnapshot = tavernContextSnapshot,
             tavernMessageRole = tavernMessageRole,
             tavernHeaderSource = tavernHeaderSource,
+            maxHeightDp = webViewMaxHeightDp,
+            verticalScrollMode = webViewVerticalScrollMode,
         )
     } else if (data.hasHtml) {
         MarkdownNew(

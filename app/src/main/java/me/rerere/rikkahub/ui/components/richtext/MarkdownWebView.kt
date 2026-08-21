@@ -84,6 +84,21 @@ private const val MARKDOWN_HORIZONTAL_DOMINANCE_RATIO = 1.5f
 
 internal enum class MarkdownWebViewDragAxis { UNDECIDED, VERTICAL, HORIZONTAL }
 
+/** Whether a bounded WebView or its surrounding Compose list owns vertical scrolling. */
+enum class MarkdownWebViewVerticalScrollMode { INTERNAL, PARENT }
+
+internal fun shouldMarkdownWebViewCaptureVerticalDrag(
+    mode: MarkdownWebViewVerticalScrollMode,
+    hasOverflow: Boolean,
+    deltaY: Float,
+    atTop: Boolean,
+    atBottom: Boolean,
+): Boolean {
+    if (mode == MarkdownWebViewVerticalScrollMode.PARENT || !hasOverflow) return false
+    if (abs(deltaY) < 8f) return true
+    return !((deltaY < 0f && atTop) || (deltaY > 0f && atBottom))
+}
+
 /**
  * Keeps diagonal downward scrolling in the WebView instead of donating it to the parent horizontal pager.
  * A pager handoff needs both a deliberate horizontal distance and clear horizontal dominance.
@@ -181,6 +196,8 @@ internal fun MarkdownWebView(
      * 传 null 才是**不限高，按内容真实高度展开**（外层 LazyList 自然滚动）。
      */
     maxHeightDp: Int? = 600,
+    /** Chat lists use PARENT so one long message cannot turn a fling into card-by-card scrolling. */
+    verticalScrollMode: MarkdownWebViewVerticalScrollMode = MarkdownWebViewVerticalScrollMode.INTERNAL,
     /**
      * 给定时跳过内部高度自适应，WebView 直接占满外层 modifier 给的空间。
      * 用于「卡片预览」那种刻意限定的窗口尺寸（罕见）。
@@ -412,7 +429,7 @@ internal fun MarkdownWebView(
                                 downX = event.x
                                 downY = event.y
                                 swipeDir = 0
-                                if (hasOverflow) {
+                                if (hasOverflow && verticalScrollMode == MarkdownWebViewVerticalScrollMode.INTERNAL) {
                                     parent.requestDisallowInterceptTouchEvent(true)
                                 }
                             }
@@ -430,16 +447,18 @@ internal fun MarkdownWebView(
                                     parent.requestDisallowInterceptTouchEvent(false)
                                     return@setOnTouchListener false
                                 }
-                                if (!hasOverflow) return@setOnTouchListener false
-                                if (dy < 8) return@setOnTouchListener false
                                 val atTop = scrollY <= 2
                                 val atBottom = scrollY + height >= contentHeightPx - 4
                                 val dirY = (downY - event.y).toInt()
-                                if ((dirY < 0 && atTop) || (dirY > 0 && atBottom)) {
-                                    parent.requestDisallowInterceptTouchEvent(false)
-                                } else {
-                                    parent.requestDisallowInterceptTouchEvent(true)
-                                }
+                                parent.requestDisallowInterceptTouchEvent(
+                                    shouldMarkdownWebViewCaptureVerticalDrag(
+                                        mode = verticalScrollMode,
+                                        hasOverflow = hasOverflow,
+                                        deltaY = dirY.toFloat(),
+                                        atTop = atTop,
+                                        atBottom = atBottom,
+                                    ),
+                                )
                                 downY = event.y
                             }
                             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {

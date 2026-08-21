@@ -86,6 +86,7 @@ import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.service.group.GroupRuntimeState
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
 import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
+import me.rerere.rikkahub.ui.components.richtext.MarkdownWebViewVerticalScrollMode
 import me.rerere.rikkahub.ui.components.richtext.ZoomableAsyncImage
 import me.rerere.rikkahub.ui.components.richtext.buildMarkdownPreviewHtml
 import me.rerere.rikkahub.ui.components.webview.WebViewContentCache
@@ -502,6 +503,8 @@ private fun MessagePartsBlock(
                         if (part.renderMode == UIMessagePart.RenderMode.HTML) {
                             MarkdownWebView(
                                 content = part.text,
+                                maxHeightDp = null,
+                                verticalScrollMode = MarkdownWebViewVerticalScrollMode.PARENT,
                                 tavernConversationId = tavernConversationId,
                                 tavernCurrentMessage = tavernCurrentMessage,
                                 tavernContextSnapshot = tavernContextSnapshot,
@@ -537,6 +540,8 @@ private fun MessagePartsBlock(
                                                 tavernContextSnapshot = tavernContextSnapshot,
                                                 tavernMessageRole = role,
                                                 tavernHeaderSource = tavernHeaderSource,
+                                                webViewMaxHeightDp = null,
+                                                webViewVerticalScrollMode = MarkdownWebViewVerticalScrollMode.PARENT,
                                             )
                                         }
                                     }
@@ -564,6 +569,8 @@ private fun MessagePartsBlock(
                                                     tavernContextSnapshot = tavernContextSnapshot,
                                                     tavernMessageRole = role,
                                                     tavernHeaderSource = tavernHeaderSource,
+                                                    webViewMaxHeightDp = null,
+                                                    webViewVerticalScrollMode = MarkdownWebViewVerticalScrollMode.PARENT,
                                                 )
                                             }
                                         }
@@ -584,6 +591,8 @@ private fun MessagePartsBlock(
                                             tavernContextSnapshot = tavernContextSnapshot,
                                             tavernMessageRole = role,
                                             tavernHeaderSource = tavernHeaderSource,
+                                            webViewMaxHeightDp = null,
+                                            webViewVerticalScrollMode = MarkdownWebViewVerticalScrollMode.PARENT,
                                             modifier = Modifier
                                                 .animateContentSize()
                                         )
@@ -756,6 +765,8 @@ private fun MessagePartsBlock(
                             MarkdownWebView(
                                 content = part.htmlContent,
                                 isRawHtml = true,
+                                maxHeightDp = null,
+                                verticalScrollMode = MarkdownWebViewVerticalScrollMode.PARENT,
                                 tavernConversationId = tavernConversationId,
                                 tavernCurrentMessage = tavernCurrentMessage,
                                 tavernContextSnapshot = tavernContextSnapshot,
