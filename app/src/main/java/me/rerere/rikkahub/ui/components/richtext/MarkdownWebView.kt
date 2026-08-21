@@ -78,6 +78,31 @@ import org.json.JSONObject
 import org.koin.compose.koinInject
 
 private const val MARKDOWN_INITIAL_RENDER_TIMEOUT_MS = 8_000L
+private const val MARKDOWN_VERTICAL_DRAG_THRESHOLD_PX = 10f
+private const val MARKDOWN_HORIZONTAL_DRAG_THRESHOLD_PX = 24f
+private const val MARKDOWN_HORIZONTAL_DOMINANCE_RATIO = 1.5f
+
+internal enum class MarkdownWebViewDragAxis { UNDECIDED, VERTICAL, HORIZONTAL }
+
+/**
+ * Keeps diagonal downward scrolling in the WebView instead of donating it to the parent horizontal pager.
+ * A pager handoff needs both a deliberate horizontal distance and clear horizontal dominance.
+ */
+internal fun classifyMarkdownWebViewDrag(deltaX: Float, deltaY: Float): MarkdownWebViewDragAxis {
+    val horizontal = abs(deltaX)
+    val vertical = abs(deltaY)
+    return when {
+        horizontal < MARKDOWN_VERTICAL_DRAG_THRESHOLD_PX && vertical < MARKDOWN_VERTICAL_DRAG_THRESHOLD_PX ->
+            MarkdownWebViewDragAxis.UNDECIDED
+
+        horizontal >= MARKDOWN_HORIZONTAL_DRAG_THRESHOLD_PX &&
+            horizontal >= vertical * MARKDOWN_HORIZONTAL_DOMINANCE_RATIO ->
+            MarkdownWebViewDragAxis.HORIZONTAL
+
+        vertical >= MARKDOWN_VERTICAL_DRAG_THRESHOLD_PX -> MarkdownWebViewDragAxis.VERTICAL
+        else -> MarkdownWebViewDragAxis.UNDECIDED
+    }
+}
 
 internal enum class MarkdownWebViewRenderStatus { LOADING, READY, FAILED, COMPOSE }
 
@@ -394,8 +419,12 @@ internal fun MarkdownWebView(
                             MotionEvent.ACTION_MOVE -> {
                                 val dx = abs(event.x - downX)
                                 val dy = abs(event.y - downY)
-                                if (swipeDir == 0 && (dx > 10 || dy > 10)) {
-                                    swipeDir = if (dx > dy) 2 else 1
+                                if (swipeDir == 0) {
+                                    swipeDir = when (classifyMarkdownWebViewDrag(dx, dy)) {
+                                        MarkdownWebViewDragAxis.UNDECIDED -> 0
+                                        MarkdownWebViewDragAxis.VERTICAL -> 1
+                                        MarkdownWebViewDragAxis.HORIZONTAL -> 2
+                                    }
                                 }
                                 if (swipeDir == 2) {
                                     parent.requestDisallowInterceptTouchEvent(false)

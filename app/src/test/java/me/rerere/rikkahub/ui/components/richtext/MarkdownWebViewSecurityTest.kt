@@ -7,6 +7,26 @@ import org.junit.Test
 
 class MarkdownWebViewSecurityTest {
     @Test
+    fun `downward diagonal drag stays vertical instead of handing off to the horizontal pager`() {
+        assertEquals(
+            MarkdownWebViewDragAxis.VERTICAL,
+            classifyMarkdownWebViewDrag(deltaX = 11f, deltaY = 10f),
+        )
+    }
+
+    @Test
+    fun `only a clearly dominant horizontal drag hands off to the parent pager`() {
+        assertEquals(
+            MarkdownWebViewDragAxis.HORIZONTAL,
+            classifyMarkdownWebViewDrag(deltaX = 30f, deltaY = 10f),
+        )
+        assertEquals(
+            MarkdownWebViewDragAxis.UNDECIDED,
+            classifyMarkdownWebViewDrag(deltaX = 9f, deltaY = 9f),
+        )
+    }
+
+    @Test
     fun `renderer failure preserves source through retry generations`() {
         val source = "# opening\n<script>window.demo = true</script>"
         val failed = MarkdownWebViewRenderState.initial(source)
