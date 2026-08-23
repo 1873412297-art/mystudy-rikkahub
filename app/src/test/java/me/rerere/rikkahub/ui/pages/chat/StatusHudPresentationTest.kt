@@ -87,10 +87,12 @@ class StatusHudPresentationTest {
     }
 
     @Test
-    fun `status hud gives the primary card the remaining adaptive panel height`() {
+    fun `status hud lets the sheet host own adaptive panel height`() {
         val source = statusHudSource()
 
-        assertTrue(source.contains("fillMaxHeight(policy.panelFraction)"))
+        assertTrue(source.contains("TavernHudSheetHost("))
+        assertTrue(source.contains("dragHandle = null"))
+        assertFalse(source.contains("BoxWithConstraints(Modifier.fillMaxSize())"))
         assertTrue(source.contains("maxHeightDp = null"))
         assertTrue(source.contains("contentDescription = \"全屏显示状态栏\""))
         assertTrue(source.contains("contentDescription = \"恢复角色卡显示默认设置\""))

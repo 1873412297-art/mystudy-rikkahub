@@ -174,6 +174,35 @@ internal data class MarkdownWebViewRenderState(
     }
 }
 
+internal fun isCurrentMarkdownWebViewHeightCallback(
+    callbackGeneration: Int,
+    currentGeneration: Int,
+    callbackWebViewIdentity: Any,
+    currentWebViewIdentity: Any?,
+): Boolean =
+    !(
+        callbackGeneration != currentGeneration ||
+        callbackWebViewIdentity !== currentWebViewIdentity
+    )
+
+internal inline fun runIfCurrentMarkdownWebViewHeightCallback(
+    callbackGeneration: Int,
+    currentGeneration: Int,
+    callbackWebViewIdentity: Any,
+    currentWebViewIdentity: Any?,
+    update: () -> Unit,
+): Boolean {
+    val isCurrent = isCurrentMarkdownWebViewHeightCallback(
+        callbackGeneration = callbackGeneration,
+        currentGeneration = currentGeneration,
+        callbackWebViewIdentity = callbackWebViewIdentity,
+        currentWebViewIdentity = currentWebViewIdentity,
+    )
+    if (!isCurrent) return false
+    update()
+    return true
+}
+
 /**
  * Renders content in a WebView. Two modes:
  * - Pre-rendered HTML: 用 sandbox="allow-scripts" 的 iframe 隔离运行（opaque origin，
@@ -507,7 +536,15 @@ internal fun MarkdownWebView(
                     //  - 新值 << 当前（小于当前的 50%）→ 重置（content 已被替换为新文档）
                     //  - 中间值 → 忽略（防抖动）
                     val bridge = RikkahubBridge(
-                        onContentHeight = { pxHeight ->
+                        onContentHeight = onContentHeight@ { pxHeight ->
+                            if (
+                                !isCurrentMarkdownWebViewHeightCallback(
+                                    callbackGeneration = generation,
+                                    currentGeneration = renderState.generation,
+                                    callbackWebViewIdentity = webView,
+                                    currentWebViewIdentity = tavernWebViewRef.value,
+                                )
+                            ) return@onContentHeight
                             val h = pxHeight + 16
                             val shouldUpdate = when {
                                 h > contentHeightPx -> true
@@ -517,14 +554,21 @@ internal fun MarkdownWebView(
                             if (shouldUpdate) {
                                 contentHeightPx = h
                                 post {
-                                    if (maxHeightPx != null && h > maxHeightPx) {
-                                        viewHeight = maxHeightPx
-                                        hasOverflow = true
-                                        isVerticalScrollBarEnabled = true
-                                    } else {
-                                        viewHeight = h.coerceAtLeast(60)
-                                        hasOverflow = false
-                                        isVerticalScrollBarEnabled = false
+                                    runIfCurrentMarkdownWebViewHeightCallback(
+                                        callbackGeneration = generation,
+                                        currentGeneration = renderState.generation,
+                                        callbackWebViewIdentity = webView,
+                                        currentWebViewIdentity = tavernWebViewRef.value,
+                                    ) {
+                                        if (maxHeightPx != null && h > maxHeightPx) {
+                                            viewHeight = maxHeightPx
+                                            hasOverflow = true
+                                            isVerticalScrollBarEnabled = true
+                                        } else {
+                                            viewHeight = h.coerceAtLeast(60)
+                                            hasOverflow = false
+                                            isVerticalScrollBarEnabled = false
+                                        }
                                     }
                                 }
                             }
@@ -647,37 +691,61 @@ internal fun MarkdownWebView(
                             // sandbox iframe 路径不依赖这次测量——iframe 内 JS 会通过 postMessage
                             // 持续上报真实高度到 RikkahubBridge.reportHeight，那条路径会更新 viewHeight。
                             // 但首次还是测一下，给个不至于 60dp 闪一下的初值。
-                            view?.measureContentHeight { pxHeight ->
-                                val h = pxHeight + 16
-                                contentHeightPx = h
-                                if (maxHeightPx != null && h > maxHeightPx) {
-                                    viewHeight = maxHeightPx
-                                    hasOverflow = true
-                                    view.post { view.isVerticalScrollBarEnabled = true }
-                                } else {
-                                    viewHeight = h.coerceAtLeast(60)
-                                    hasOverflow = false
-                                    view.post { view.isVerticalScrollBarEnabled = false }
+                            val callbackView = view ?: return
+                            if (callbackView !== webView) return
+                            callbackView.measureContentHeight { pxHeight ->
+                                runIfCurrentMarkdownWebViewHeightCallback(
+                                    callbackGeneration = generation,
+                                    currentGeneration = renderState.generation,
+                                    callbackWebViewIdentity = callbackView,
+                                    currentWebViewIdentity = tavernWebViewRef.value,
+                                ) {
+                                    val h = pxHeight + 16
+                                    contentHeightPx = h
+                                    if (maxHeightPx != null && h > maxHeightPx) {
+                                        viewHeight = maxHeightPx
+                                        hasOverflow = true
+                                        callbackView.isVerticalScrollBarEnabled = true
+                                    } else {
+                                        viewHeight = h.coerceAtLeast(60)
+                                        hasOverflow = false
+                                        callbackView.isVerticalScrollBarEnabled = false
+                                    }
                                 }
                             }
                             // 多次延迟重测兜底——markdown 异步渲染（mermaid/katex/dompurify）
                             // 完成时间不固定。sandbox 路径走 postMessage 不依赖这里。
                             listOf(150L, 400L, 1000L, 2500L).forEach { delay ->
-                                view?.postDelayed({
-                                    view.measureContentHeight { h2 ->
-                                        val h = h2 + 16
-                                        // 只在新高度比当前大时才更新（防止 iframe 还没载完时
-                                        // 测到一个小值把已经报上来的大值给覆盖回去）
-                                        if (h > contentHeightPx) {
-                                            contentHeightPx = h
-                                            if (maxHeightPx == null || h <= maxHeightPx) {
-                                                viewHeight = h.coerceAtLeast(60)
-                                                hasOverflow = false
-                                                view.isVerticalScrollBarEnabled = false
-                                            } else if (!hasOverflow) {
-                                                viewHeight = maxHeightPx
-                                                hasOverflow = true
-                                                view.isVerticalScrollBarEnabled = true
+                                callbackView.postDelayed({
+                                    if (
+                                        !isCurrentMarkdownWebViewHeightCallback(
+                                            callbackGeneration = generation,
+                                            currentGeneration = renderState.generation,
+                                            callbackWebViewIdentity = callbackView,
+                                            currentWebViewIdentity = tavernWebViewRef.value,
+                                        )
+                                    ) return@postDelayed
+                                    callbackView.measureContentHeight { h2 ->
+                                        runIfCurrentMarkdownWebViewHeightCallback(
+                                            callbackGeneration = generation,
+                                            currentGeneration = renderState.generation,
+                                            callbackWebViewIdentity = callbackView,
+                                            currentWebViewIdentity = tavernWebViewRef.value,
+                                        ) {
+                                            val h = h2 + 16
+                                            // 只在新高度比当前大时才更新（防止 iframe 还没载完时
+                                            // 测到一个小值把已经报上来的大值给覆盖回去）
+                                            if (h > contentHeightPx) {
+                                                contentHeightPx = h
+                                                if (maxHeightPx == null || h <= maxHeightPx) {
+                                                    viewHeight = h.coerceAtLeast(60)
+                                                    hasOverflow = false
+                                                    callbackView.isVerticalScrollBarEnabled = false
+                                                } else if (!hasOverflow) {
+                                                    viewHeight = maxHeightPx
+                                                    hasOverflow = true
+                                                    callbackView.isVerticalScrollBarEnabled = true
+                                                }
                                             }
                                         }
                                     }

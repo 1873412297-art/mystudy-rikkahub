@@ -11,4 +11,5 @@ data class TavernRenderPreferences(
     )
 }
 
-fun normalizeTavernHudFraction(value: Float): Float = value.coerceIn(0.50f, 0.90f)
+fun normalizeTavernHudFraction(value: Float): Float =
+    if (value.isFinite()) value.coerceIn(0.50f, 0.90f) else 0.80f

@@ -3,13 +3,10 @@ package me.rerere.rikkahub.ui.pages.chat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -35,6 +32,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -57,7 +55,6 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.ui.components.message.MultiCharacterStatusView
 import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
-import me.rerere.rikkahub.ui.pages.chat.tavern.render.TavernRenderPolicy
 import me.rerere.rikkahub.ui.pages.chat.tavern.render.TavernRenderSurface
 import me.rerere.rikkahub.ui.pages.chat.tavern.render.resolveTavernRenderPolicy
 import me.rerere.rikkahub.utils.JsonInstant
@@ -149,20 +146,17 @@ fun StatusHudBar(
         ModalBottomSheet(
             onDismissRequest = { showSheet = false },
             sheetState = sheetState,
+            dragHandle = null,
         ) {
-            BoxWithConstraints(Modifier.fillMaxSize()) {
-                val availableHeightDp = maxHeight.value.toInt()
-                val policy = resolveTavernRenderPolicy(
-                    surface = TavernRenderSurface.HUD,
-                    availableHeightDp = availableHeightDp,
-                    persistedHudFraction = settings.tavernRenderPreferences.hudFraction,
-                    fullscreen = fullscreen,
-                )
+            TavernHudSheetHost(
+                persistedHudFraction = settings.tavernRenderPreferences.hudFraction,
+                fullscreen = fullscreen,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 StatusHudPanel(
                     presentation = presentation,
                     conversation = conversation,
                     currentMessage = currentMessage,
-                    policy = policy,
                     fullscreen = fullscreen,
                     presentationResetSignal = presentationResetSignal,
                     onToggleFullscreen = { fullscreen = !fullscreen },
@@ -174,11 +168,52 @@ fun StatusHudBar(
                             onDismiss = { showSheet = false },
                         )
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(policy.panelFraction),
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
+        }
+    }
+}
+
+internal fun resolveTavernHudSheetHostHeight(
+    availableHeight: Int,
+    persistedHudFraction: Float,
+    fullscreen: Boolean,
+): Int {
+    if (availableHeight <= 0) return 0
+    return resolveTavernRenderPolicy(
+        surface = TavernRenderSurface.HUD,
+        availableHeightDp = availableHeight,
+        persistedHudFraction = persistedHudFraction,
+        fullscreen = fullscreen,
+    ).maxHeightDp.coerceAtMost(availableHeight)
+}
+
+/**
+ * Measures the sheet content itself to the requested HUD height. The sheet anchor therefore
+ * follows the 80%/fullscreen contract instead of wrapping a shorter child in a full-height surface.
+ */
+@Composable
+private fun TavernHudSheetHost(
+    persistedHudFraction: Float,
+    fullscreen: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Layout(
+        content = content,
+        modifier = modifier,
+    ) { measurables, constraints ->
+        val targetHeight = resolveTavernHudSheetHostHeight(
+            availableHeight = constraints.maxHeight,
+            persistedHudFraction = persistedHudFraction,
+            fullscreen = fullscreen,
+        ).coerceIn(constraints.minHeight, constraints.maxHeight)
+        val placeable = measurables.single().measure(
+            constraints.copy(minHeight = targetHeight, maxHeight = targetHeight),
+        )
+        layout(placeable.width.coerceIn(constraints.minWidth, constraints.maxWidth), targetHeight) {
+            placeable.placeRelative(0, 0)
         }
     }
 }
@@ -188,7 +223,6 @@ private fun StatusHudPanel(
     presentation: StatusHudPresentation,
     conversation: Conversation,
     currentMessage: JsonElement?,
-    policy: TavernRenderPolicy,
     fullscreen: Boolean,
     presentationResetSignal: Int,
     onToggleFullscreen: () -> Unit,
