@@ -76,8 +76,8 @@ import me.rerere.hugeicons.stroke.MusicNote03
 import me.rerere.hugeicons.stroke.Video01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
-import me.rerere.rikkahub.data.ai.status.StatusBlockExtractor
 import me.rerere.rikkahub.data.ai.status.TavernCardStyleResolver
+import me.rerere.rikkahub.data.ai.status.withoutInlineStatus
 import me.rerere.rikkahub.data.ai.transformers.replaceResidualUserName
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
@@ -178,18 +178,7 @@ fun ChatMessage(
             } else {
                 part
             }
-        }.mapNotNull { part ->
-            // 状态块清理：气泡只留叙事正文，状态内容由 StatusHudBar 展示（仅动显示层）
-            if (part is UIMessagePart.Text &&
-                (part.text.contains("<status", ignoreCase = true) ||
-                    part.text.contains("<maintext", ignoreCase = true))
-            ) {
-                val cleaned = StatusBlockExtractor.extract(part.text).cleanedText
-                if (cleaned.isBlank()) null else part.copy(text = cleaned)
-            } else {
-                part
-            }
-        }
+        }.mapNotNull { it.withoutInlineStatus() }
     }
     Column(
         modifier = modifier.fillMaxWidth(),

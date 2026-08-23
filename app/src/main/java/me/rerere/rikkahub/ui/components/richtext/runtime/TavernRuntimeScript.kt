@@ -165,7 +165,20 @@ internal fun buildTavernRuntimeScript(): String = """
     },
     messages: {
       getCurrent: function(){ return call('messages.getCurrent', {}); },
-      updateCurrent: function(patch){ return call('messages.updateCurrent', { patch: patch }); }
+      updateCurrent: function(patch){ return call('messages.updateCurrent', { patch: patch }); },
+      getChatMessages: function(range, options){
+        return call('messages.getChatMessages', { range: String(range), options: options || {} });
+      },
+      setChatMessage: function(fieldValues, messageId, options){
+        return call('messages.setChatMessage', {
+          field_values: typeof fieldValues === 'string' ? { message: fieldValues } : (fieldValues || {}),
+          message_id: Number(messageId),
+          options: options || {}
+        });
+      },
+      setChatMessages: function(messages, options){
+        return call('messages.setChatMessages', { messages: messages || [], options: options || {} });
+      }
     },
 
     // ── TavernHelper 风格别名（委托上面的 api.variables，保持单一实现） ──
@@ -182,8 +195,63 @@ internal fun buildTavernRuntimeScript(): String = """
     }
   };
 
+  // ── MVU / Tavern Helper globals used by imported visual status templates ──
+  // Keep a synchronous snapshot because these templates render through _.get(getAllVariables()).
+  var cachedCompatVariables = {};
+  function refreshCompatVariables(){
+    return api.variables.list('chat').then(function(value){
+      cachedCompatVariables = value && typeof value === 'object' ? value : {};
+      return cachedCompatVariables;
+    }).catch(function(){ return cachedCompatVariables; });
+  }
+  window.getAllVariables = function(){
+    var variables = stContext && stContext.variables && typeof stContext.variables === 'object'
+      ? stContext.variables
+      : cachedCompatVariables;
+    return variables && variables.stat_data ? variables : { stat_data: variables || {} };
+  };
+  window._ = window._ || {};
+  if (typeof window._.get !== 'function') {
+    window._.get = function(source, path, fallback){
+      var parts = Array.isArray(path) ? path : String(path || '').split('.');
+      var value = source;
+      for (var i = 0; i < parts.length; i++) {
+        if (value == null || !Object.prototype.hasOwnProperty.call(Object(value), parts[i])) return fallback;
+        value = value[parts[i]];
+      }
+      return value === undefined ? fallback : value;
+    };
+  }
+  window.Mvu = window.Mvu || { events: { VARIABLE_UPDATE_ENDED: 'VARIABLE_UPDATE_ENDED' } };
+  window.waitGlobalInitialized = function(name){
+    return name === 'Mvu' ? refreshCompatVariables() : Promise.resolve(window[name]);
+  };
+  window.errorCatched = function(fn){
+    return function(){
+      try {
+        var result = fn.apply(this, arguments);
+        if (result && typeof result.catch === 'function') result.catch(function(error){ console.error(error); });
+        return result;
+      } catch (error) {
+        console.error(error);
+      }
+    };
+  };
+  window.eventOn = function(name, handler){
+    if (name === window.Mvu.events.VARIABLE_UPDATE_ENDED) {
+      document.addEventListener('th:context_updated', function(){
+        refreshCompatVariables().then(handler);
+      });
+      return true;
+    }
+    return eventSource.on(name, handler);
+  };
+
   window.TavernHelperCompat = api;
   window.TavernHelper = window.TavernHelper || api;
   window.TH = window.TH || api;
+  window.getChatMessages = api.messages.getChatMessages;
+  window.setChatMessage = api.messages.setChatMessage;
+  window.setChatMessages = api.messages.setChatMessages;
 })();
 """.trimIndent()

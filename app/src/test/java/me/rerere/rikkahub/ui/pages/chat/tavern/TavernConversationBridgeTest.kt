@@ -22,10 +22,12 @@ class TavernConversationBridgeTest {
         assertTrue(bridge.longPress(actionToken, messageId.toString()))
         assertTrue(bridge.selectBranch(actionToken, nodeId.toString(), 2))
         assertTrue(bridge.openHtml(actionToken, messageId.toString()))
-        assertTrue(bridge.requestFallback(actionToken))
+        assertTrue(bridge.toolApproval(actionToken, "call-1", true, ""))
+        assertTrue(bridge.toolAnswer(actionToken, "call-2", "answer"))
+        assertTrue(bridge.selectGreeting(actionToken, 1, 3, 0))
 
         assertEquals(
-            listOf("long:$messageId", "branch:$nodeId:2", "html:$messageId", "fallback"),
+            listOf("long:$messageId", "branch:$nodeId:2", "html:$messageId", "approval:call-1:true:", "answer:call-2:answer", "greeting:1"),
             actions.events,
         )
     }
@@ -46,6 +48,9 @@ class TavernConversationBridgeTest {
                 TavernConversationBridge.MAX_BRANCH_INDEX + 1,
             ),
         )
+        assertFalse(bridge.selectGreeting(actionToken, -1, 3, 0))
+        assertFalse(bridge.selectGreeting(actionToken, 3, 3, 0))
+        assertFalse(bridge.selectGreeting(actionToken, 1, 3, 99))
 
         assertTrue(actions.events.isEmpty())
     }
@@ -90,7 +95,6 @@ class TavernConversationBridgeTest {
         assertFalse(bridge.longPress("wrong-token", messageId.toString()))
         assertFalse(bridge.selectBranch("wrong-token", nodeId.toString(), 0))
         assertFalse(bridge.openHtml("wrong-token", messageId.toString()))
-        assertFalse(bridge.requestFallback("wrong-token"))
         assertFalse(bridge.openLink("wrong-token", "https://example.com", true))
         assertFalse(bridge.ready("wrong-token"))
 
@@ -206,6 +210,55 @@ class TavernConversationBridgeTest {
     }
 
     @Test
+    fun `subresource routing keeps local access ahead of network and media interception`() {
+        assertEquals(
+            TavernSubresourceRoute.LOCAL,
+            routeTavernSubresource(
+                rawUrl = TAVERN_RESOURCE_ORIGIN + "token",
+                accept = "image/*",
+                isLocalResource = true,
+                networkAllowed = false,
+            ),
+        )
+        assertEquals(
+            TavernSubresourceRoute.BLOCKED,
+            routeTavernSubresource(
+                rawUrl = "https://files.example/portrait.webp",
+                accept = "image/webp,*/*",
+                isLocalResource = false,
+                networkAllowed = false,
+            ),
+        )
+        assertEquals(
+            TavernSubresourceRoute.REMOTE_MEDIA,
+            routeTavernSubresource(
+                rawUrl = "https://files.example/portrait.webp",
+                accept = "image/webp,*/*",
+                isLocalResource = false,
+                networkAllowed = true,
+            ),
+        )
+        assertEquals(
+            TavernSubresourceRoute.WEBVIEW,
+            routeTavernSubresource(
+                rawUrl = "https://files.example/card.js",
+                accept = "*/*",
+                isLocalResource = false,
+                networkAllowed = true,
+            ),
+        )
+        assertEquals(
+            TavernSubresourceRoute.BLOCKED,
+            routeTavernSubresource(
+                rawUrl = "file:///sdcard/portrait.png",
+                accept = "image/*",
+                isLocalResource = false,
+                networkAllowed = true,
+            ),
+        )
+    }
+
+    @Test
     fun `fullscreen viewer does not replace or clear conversation send hook owner`() {
         val store = TavernSendHookStore()
         val conversationId = kotlin.uuid.Uuid.random()
@@ -240,6 +293,27 @@ class TavernConversationBridgeTest {
         override fun onMessageLongPress(messageId: Uuid) { events += "long:$messageId" }
         override fun onSelectBranch(nodeId: Uuid, index: Int) { events += "branch:$nodeId:$index" }
         override fun onOpenHtml(messageId: Uuid) { events += "html:$messageId" }
-        override fun onFallbackRequested() { events += "fallback" }
+        override fun onToolApproval(toolCallId: String, approved: Boolean, reason: String) {
+            events += "approval:$toolCallId:$approved:$reason"
+        }
+        override fun onToolAnswer(toolCallId: String, answer: String) { events += "answer:$toolCallId:$answer" }
+        override fun onSelectGreeting(index: Int) { events += "greeting:$index" }
+    }
+
+    @Test
+    fun `renderer automatically rebuilds twice then waits for manual retry`() {
+        val firstFailure = TavernConversationRenderState.initial().onFailure(0, "first")
+        assertEquals(250L, firstFailure.nextAutomaticRetryDelayMillis())
+        val firstRetry = firstFailure.automaticRetry()!!
+        val secondFailure = firstRetry.onFailure(firstRetry.generation, "second")
+        assertEquals(1_000L, secondFailure.nextAutomaticRetryDelayMillis())
+        val secondRetry = secondFailure.automaticRetry()!!
+        val terminal = secondRetry.onFailure(secondRetry.generation, "third")
+
+        assertEquals(null, terminal.nextAutomaticRetryDelayMillis())
+        assertEquals(null, terminal.automaticRetry())
+        val manual = terminal.manualRetry()
+        assertEquals(0, manual.automaticRetryCount)
+        assertEquals(TavernConversationRenderStatus.LOADING, manual.status)
     }
 }

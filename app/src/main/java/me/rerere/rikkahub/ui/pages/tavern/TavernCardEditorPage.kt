@@ -551,7 +551,8 @@ private fun GreetingSourcePreviewEditor(
                     override fun onMessageLongPress(messageId: Uuid) = Unit
                     override fun onSelectBranch(nodeId: Uuid, index: Int) = Unit
                     override fun onOpenHtml(messageId: Uuid) = Unit
-                    override fun onFallbackRequested() = Unit
+                    override fun onToolApproval(toolCallId: String, approved: Boolean, reason: String) = Unit
+                    override fun onToolAnswer(toolCallId: String, answer: String) = Unit
                 }
             }
             Text(

@@ -1,6 +1,13 @@
 package me.rerere.rikkahub.data.model
 
 import kotlinx.serialization.Serializable
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+
+fun tavernCardPermissionFingerprint(cardJson: String): String = MessageDigest
+    .getInstance("SHA-256")
+    .digest(cardJson.toByteArray(StandardCharsets.UTF_8))
+    .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
 
 @Serializable
 data class TavernRuntimePermissions(

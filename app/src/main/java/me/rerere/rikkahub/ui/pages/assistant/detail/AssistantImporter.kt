@@ -43,6 +43,7 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.withImportedTavernCardImage
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.AssistantRegex
 import me.rerere.rikkahub.data.model.InjectionPosition
@@ -697,7 +698,7 @@ private suspend fun importAssistantFromUri(
 ) {
     try {
         val mime = withContext(Dispatchers.IO) { filesManager.getFileMimeType(uri) }
-        val (jsonString, backgroundStr) = withContext(Dispatchers.IO) {
+        val (jsonString, sourceImageUri) = withContext(Dispatchers.IO) {
             when (mime) {
                 "image/png" -> {
                     val result = ImageUtils.getTavernCharacterMeta(context, uri)
@@ -720,13 +721,13 @@ private suspend fun importAssistantFromUri(
         }
 
         val json = Json.parseToJsonElement(jsonString).jsonObject
-        val (assistant, extras) = parseAssistantFromJson(context = context, json = json, background = backgroundStr)
+        val (assistant, extras) = parseAssistantFromJson(context = context, json = json, background = null)
 
         // Build the final assistant with all imported data
         var finalAssistant = assistant.copy(
             tavernCardJson = jsonString,
             statusRenderJs = extras.statusRenderJs,
-        )
+        ).withImportedTavernCardImage(sourceImageUri)
         TavernCharacterCard.fromJson(jsonString)?.takeIf { it.allGreetings().isNotEmpty() }?.let { card ->
             val ref = card.openingRef(0)
             finalAssistant = finalAssistant.copy(

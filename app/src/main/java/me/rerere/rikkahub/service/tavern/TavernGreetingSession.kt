@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -25,6 +27,11 @@ import me.rerere.rikkahub.data.model.withTavernOpeningRuntimeState
 import me.rerere.rikkahub.data.model.tavernOpeningRef
 import me.rerere.rikkahub.data.model.toMessageNode
 import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
+import me.rerere.rikkahub.data.ai.status.JsonPatchOp
+import me.rerere.rikkahub.data.ai.status.StatusFallbackHtml
+import me.rerere.rikkahub.data.ai.status.extractTavernCardStatusTemplate
+import me.rerere.rikkahub.data.ai.status.applyPatch
+import me.rerere.rikkahub.data.ai.status.toPlainValue
 import me.rerere.rikkahub.ui.components.richtext.runtime.TAVERN_VARIABLE_SCOPE_CHAT
 import me.rerere.rikkahub.ui.components.richtext.runtime.TAVERN_VARIABLE_SCOPE_GLOBAL
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeRegistrationObserver
@@ -422,16 +429,21 @@ class TavernGreetingSession private constructor(
             initialWorldEntries: List<JsonObject>,
             commitTarget: TavernGreetingCommitTarget,
         ): TavernGreetingSession {
+            val statusTemplate = extractTavernCardStatusTemplate(card.extensions)
             val candidates = card.allGreetings().mapIndexed { index, opening ->
-                val message = card.openingMessage(index)
+                val prepared = prepareTavernOpening(
+                    card.openingMessage(index),
+                    initialChatVariables,
+                    statusTemplate,
+                )
                 TavernGreetingCandidate(
                     greetingIndex = index,
                     openingRef = card.openingRef(index),
                     renderedOpening = opening,
                     runtime = TavernGreetingCandidateRuntime(
                         TavernGreetingOverlay(
-                            messages = listOf(message),
-                            chatVariables = initialChatVariables,
+                            messages = listOf(prepared.message),
+                            chatVariables = prepared.variables,
                             globalVariables = initialGlobalVariables,
                             worldEntries = initialWorldEntries,
                             registrations = TavernGreetingRegistrations(),
@@ -447,6 +459,107 @@ class TavernGreetingSession private constructor(
             )
         }
     }
+}
+
+private data class PreparedTavernOpening(
+    val message: UIMessage,
+    val variables: JsonObject,
+)
+
+private val OPENING_UPDATE_VARIABLE = Regex(
+    """<UpdateVariable>\s*(?:<Analysis>.*?</Analysis>\s*)?<JSONPatch>(.*?)</JSONPatch>\s*</UpdateVariable>""",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+)
+private val OPENING_STATUS_PLACEHOLDER = Regex(
+    """<StatusPlaceHolderImpl\s*/>""",
+    RegexOption.IGNORE_CASE,
+)
+private val OPENING_REQUIRES_ISOLATED_HTML = Regex(
+    """<!doctype\b|<(?:html|head|body|script|style|iframe)\b""",
+    RegexOption.IGNORE_CASE,
+)
+@OptIn(ExperimentalSerializationApi::class)
+private val openingJson = Json {
+    ignoreUnknownKeys = true
+    allowTrailingComma = true
+}
+
+/**
+ * ST cards store first_mes as HTML for compatibility even when it is ordinary Markdown plus
+ * operational status tags. Resolve those tags before the opening enters the conversation so
+ * they cannot leak into an iframe as visible JSON.
+ */
+private fun prepareTavernOpening(
+    message: UIMessage,
+    initialVariables: JsonObject,
+    statusTemplate: String? = null,
+): PreparedTavernOpening {
+    var variables: JsonElement = initialVariables
+    val preparedParts = message.parts.flatMap { part ->
+        if (part !is me.rerere.ai.ui.UIMessagePart.Text) return@flatMap listOf(part)
+
+        var text = part.text
+        text = OPENING_UPDATE_VARIABLE.replace(text) { match ->
+            runCatching {
+                val operations = openingJson.decodeFromString<List<JsonPatchOp>>(match.groupValues[1].trim())
+                variables = variables.applyPatch(operations)
+                ""
+            }.getOrElse { "" }
+        }
+
+        val containsStatus = OPENING_STATUS_PLACEHOLDER.containsMatchIn(text)
+        text = OPENING_STATUS_PLACEHOLDER.replace(text, "").trim()
+        val visibleMode = if (OPENING_REQUIRES_ISOLATED_HTML.containsMatchIn(text)) {
+            me.rerere.ai.ui.UIMessagePart.RenderMode.HTML
+        } else {
+            me.rerere.ai.ui.UIMessagePart.RenderMode.MARKDOWN
+        }
+        buildList {
+            if (text.isNotBlank()) add(part.copy(text = text, renderMode = visibleMode))
+            if (containsStatus) {
+                add(buildOpeningStatusPart(variables as? JsonObject ?: JsonObject(emptyMap()), statusTemplate))
+            }
+        }
+    }
+    return PreparedTavernOpening(
+        message = message.copy(
+            parts = preparedParts,
+            finishedAt = message.finishedAt ?: message.createdAt,
+        ),
+        variables = variables as? JsonObject ?: initialVariables,
+    )
+}
+
+private fun buildOpeningStatusPart(
+    variables: JsonObject,
+    statusTemplate: String? = null,
+): me.rerere.ai.ui.UIMessagePart.StatusPlaceholder {
+    @Suppress("UNCHECKED_CAST")
+    val plain = variables.toPlainValue() as? Map<String, Any?> ?: emptyMap()
+    val worldKeys = setOf("世界", "world", "_expression")
+    val characters = plain.entries
+        .filter { (name, value) -> name !in worldKeys && value is Map<*, *> && value.size >= 2 }
+        .sortedBy { it.key }
+    val pages = if (statusTemplate != null || characters.size < 2) {
+        emptyList()
+    } else {
+        characters.map { (name, value) ->
+            val html = StringBuilder()
+                .append("<div style=\"font-family:sans-serif;font-size:13px;line-height:1.6;\">")
+                .append("<div style=\"font-size:15px;font-weight:700;margin-bottom:6px;\">")
+                .append(StatusFallbackHtml.escapeHtml(name))
+                .append("</div>")
+            @Suppress("UNCHECKED_CAST")
+            StatusFallbackHtml.appendRows(html, value as Map<String, Any?>)
+            html.append("</div>")
+            me.rerere.ai.ui.UIMessagePart.CharacterStatusPage(name, html.toString())
+        }
+    }
+    val visibleVariables = if (pages.isEmpty()) plain else plain.filterKeys { it in worldKeys }
+    return me.rerere.ai.ui.UIMessagePart.StatusPlaceholder(
+        htmlContent = statusTemplate ?: StatusFallbackHtml.build(visibleVariables, emptyMap()),
+        characterPages = pages,
+    )
 }
 
 fun requiresNewConversationForGreetingChange(conversation: Conversation): Boolean =

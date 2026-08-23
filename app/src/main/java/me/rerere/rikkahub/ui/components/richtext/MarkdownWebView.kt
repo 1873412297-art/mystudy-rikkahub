@@ -74,7 +74,10 @@ import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScrip
 import me.rerere.rikkahub.ui.components.richtext.st.StableDomSegment
 import me.rerere.rikkahub.ui.components.richtext.st.StableSegmentSnapshot
 import me.rerere.rikkahub.ui.pages.chat.tavern.TavernSendHookControllerBinding
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernRemoteMediaLoader
+import me.rerere.rikkahub.ui.pages.chat.tavern.isLikelyTavernImageRequest
 import me.rerere.rikkahub.ui.pages.chat.tavern.render.buildTavernViewportAdapterScript
+import okhttp3.OkHttpClient
 import org.json.JSONObject
 import org.koin.compose.koinInject
 
@@ -99,6 +102,11 @@ internal fun shouldMarkdownWebViewCaptureVerticalDrag(
     if (abs(deltaY) < 8f) return true
     return !((deltaY < 0f && atTop) || (deltaY > 0f && atBottom))
 }
+
+/** Keeps horizontal gestures inside bounded rich cards so their JS carousels receive ACTION_UP. */
+internal fun shouldMarkdownWebViewCaptureHorizontalDrag(
+    mode: MarkdownWebViewVerticalScrollMode,
+): Boolean = mode == MarkdownWebViewVerticalScrollMode.INTERNAL
 
 /**
  * Keeps diagonal downward scrolling in the WebView instead of donating it to the parent horizontal pager.
@@ -289,6 +297,7 @@ internal fun MarkdownWebView(
     val tavernHostEventBus: TavernHostEventBus = koinInject()
     val tavernScriptRegistry: TavernScriptRegistry = koinInject()
     val tavernSendHookStore: TavernSendHookStore = koinInject()
+    val httpClient: OkHttpClient = koinInject()
     val appSettings by settingsStore.settingsFlow.collectAsStateWithLifecycle()
     val colorScheme = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -363,6 +372,10 @@ internal fun MarkdownWebView(
     val latestCurrentMessage by rememberUpdatedState(tavernCurrentMessage)
     // 脚本/宿主事件 → WebView 内 th:<name> DOM CustomEvent
     val tavernWebViewRef = remember { mutableStateOf<WebView?>(null) }
+    val remoteMediaLoader = remember(context.applicationContext, httpClient) {
+        TavernRemoteMediaLoader.createUncached(httpClient)
+    }
+    DisposableEffect(remoteMediaLoader) { onDispose(remoteMediaLoader::close) }
     // WebView 销毁治理：离开组合时移除 JS 桥、停止加载并销毁原生 WebView。
     DisposableEffect(Unit) {
         onDispose {
@@ -487,7 +500,7 @@ internal fun MarkdownWebView(
                                 downX = event.x
                                 downY = event.y
                                 swipeDir = 0
-                                if (hasOverflow && verticalScrollMode == MarkdownWebViewVerticalScrollMode.INTERNAL) {
+                                if (verticalScrollMode == MarkdownWebViewVerticalScrollMode.INTERNAL) {
                                     parent.requestDisallowInterceptTouchEvent(true)
                                 }
                             }
@@ -502,17 +515,19 @@ internal fun MarkdownWebView(
                                     }
                                 }
                                 if (swipeDir == 2) {
-                                    parent.requestDisallowInterceptTouchEvent(false)
+                                    parent.requestDisallowInterceptTouchEvent(
+                                        shouldMarkdownWebViewCaptureHorizontalDrag(verticalScrollMode),
+                                    )
                                     return@setOnTouchListener false
                                 }
                                 val atTop = scrollY <= 2
                                 val atBottom = scrollY + height >= contentHeightPx - 4
                                 val dirY = (downY - event.y).toInt()
                                 parent.requestDisallowInterceptTouchEvent(
-                                    shouldMarkdownWebViewCaptureVerticalDrag(
-                                        mode = verticalScrollMode,
-                                        hasOverflow = hasOverflow,
-                                        deltaY = dirY.toFloat(),
+                                     shouldMarkdownWebViewCaptureVerticalDrag(
+                                         mode = verticalScrollMode,
+                                         hasOverflow = hasOverflow || fixedHeight,
+                                         deltaY = dirY.toFloat(),
                                         atTop = atTop,
                                         atBottom = atBottom,
                                     ),
@@ -654,13 +669,22 @@ internal fun MarkdownWebView(
                             request: WebResourceRequest?,
                         ): WebResourceResponse? {
                             val url = request?.url?.toString() ?: return blockedMarkdownResponse()
-                            return if (
-                                shouldAllowMarkdownSubresource(
+                            return when (
+                                routeMarkdownSubresource(
                                     rawUrl = url,
+                                    accept = request.requestHeaders.entries
+                                        .firstOrNull { it.key.equals("Accept", ignoreCase = true) }
+                                        ?.value,
                                     networkAllowed = networkAllowed.get(),
                                     tavernScoped = tavernConversationId != null,
                                 )
-                            ) null else blockedMarkdownResponse()
+                            ) {
+                                MarkdownSubresourceRoute.BLOCKED -> blockedMarkdownResponse()
+                                MarkdownSubresourceRoute.REMOTE_MEDIA ->
+                                    remoteMediaLoader.intercept(url, request.requestHeaders)
+                                        ?: super.shouldInterceptRequest(view, request)
+                                MarkdownSubresourceRoute.WEBVIEW -> super.shouldInterceptRequest(view, request)
+                            }
                         }
 
                         override fun onReceivedError(
@@ -964,6 +988,22 @@ internal fun shouldAllowMarkdownSubresource(
     }
 }
 
+internal enum class MarkdownSubresourceRoute { BLOCKED, REMOTE_MEDIA, WEBVIEW }
+
+internal fun routeMarkdownSubresource(
+    rawUrl: String,
+    accept: String?,
+    networkAllowed: Boolean,
+    tavernScoped: Boolean,
+): MarkdownSubresourceRoute {
+    if (!shouldAllowMarkdownSubresource(rawUrl, networkAllowed, tavernScoped)) {
+        return MarkdownSubresourceRoute.BLOCKED
+    }
+    return if (
+        tavernScoped && networkAllowed && isLikelyTavernImageRequest(rawUrl, accept)
+    ) MarkdownSubresourceRoute.REMOTE_MEDIA else MarkdownSubresourceRoute.WEBVIEW
+}
+
 private fun blockedMarkdownResponse() = WebResourceResponse(
     "text/plain",
     "UTF-8",
@@ -1236,22 +1276,32 @@ internal fun stripMarkdownCodeRegions(text: String): String {
  *     不构成数据泄漏。如果未来要按卡隔离，可以在每次 load 前调
  *     WebStorage.getInstance().deleteAllData()。
  */
-private fun buildSandboxHostHtml(userHtml: String, bgHex: String, textHex: String, fixedHeight: Boolean = false): String {
+internal fun buildSandboxHostHtml(userHtml: String, bgHex: String, textHex: String, fixedHeight: Boolean = false): String {
     val unwrapped = unwrapFencedHtml(userHtml)
 
-    val injectTag = "<script>${buildTavernRuntimeScript()}\n${buildIframeInjectScript()}</script>"
+    val earlyInjectTag = "<script>${buildTavernRuntimeScript()}\n${buildTavernCompatibilityPrelude()}</script>"
+    val lateInjectTag = "<script>${buildIframeInjectScript()}</script>"
 
     val isCompleteDoc = unwrapped.trimStart().let {
         it.startsWith("<!DOCTYPE", ignoreCase = true) || it.startsWith("<html", ignoreCase = true)
     }
 
     val finalHtml = if (isCompleteDoc) {
-        // 完整文档：把测量/链接拦截脚本插到 </body> 前
-        val bodyEnd = unwrapped.lastIndexOf("</body>", ignoreCase = true)
-        if (bodyEnd >= 0) {
-            unwrapped.substring(0, bodyEnd) + injectTag + unwrapped.substring(bodyEnd)
+        // Runtime and the small ST/jQuery-ready compatibility layer must precede card scripts.
+        // Many imported cards call `$(() => ...)` from their own body script.
+        val headStart = unwrapped.indexOf("<head", ignoreCase = true)
+        val headOpenEnd = if (headStart >= 0) unwrapped.indexOf('>', headStart) else -1
+        val withEarlyRuntime = if (headOpenEnd >= 0) {
+            unwrapped.substring(0, headOpenEnd + 1) + earlyInjectTag + unwrapped.substring(headOpenEnd + 1)
         } else {
-            unwrapped + injectTag
+            earlyInjectTag + unwrapped
+        }
+        // 完整文档：把测量/链接拦截脚本插到 </body> 前
+        val bodyEnd = withEarlyRuntime.lastIndexOf("</body>", ignoreCase = true)
+        if (bodyEnd >= 0) {
+            withEarlyRuntime.substring(0, bodyEnd) + lateInjectTag + withEarlyRuntime.substring(bodyEnd)
+        } else {
+            withEarlyRuntime + lateInjectTag
         }
     } else {
         // HTML 片段：包一个最小外壳，给个默认背景/字体
@@ -1259,13 +1309,28 @@ private fun buildSandboxHostHtml(userHtml: String, bgHex: String, textHex: Strin
 <html><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <style>html,body{margin:0;padding:0;background:$bgHex;color:$textHex;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.5;word-wrap:break-word}img{max-width:100%;height:auto}</style>
-</head><body>
+</head><body>$earlyInjectTag
 $unwrapped
-$injectTag
+$lateInjectTag
 </body></html>"""
     }
     return finalHtml
 }
+
+private fun buildTavernCompatibilityPrelude(): String = """
+(function(){
+  if(typeof window.${'$'}!=='function'){
+    window.${'$'}=function(arg){
+      if(typeof arg==='function'){
+        if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',arg,{once:true});
+        else Promise.resolve().then(arg);
+        return document;
+      }
+      return document.querySelectorAll(arg);
+    };
+  }
+})();
+""".trimIndent()
 
 /**
  * 注入脚本：测量高度 → RikkahubBridge.reportHeight()，链接拦截 → RikkahubBridge.openLink()。

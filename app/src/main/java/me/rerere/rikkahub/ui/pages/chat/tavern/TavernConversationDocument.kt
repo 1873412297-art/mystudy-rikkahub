@@ -49,6 +49,8 @@ internal fun buildTavernConversationDocument(
 ): String {
     val initialJson = conversationJson.encodeToString(initial).replace("<", "\\u003c")
     val runtimeJson = conversationJson.encodeToString(runtimeScript).replace("<", "\\u003c")
+    val viewportAdapter = buildTavernViewportAdapterScript()
+    val viewportAdapterJson = conversationJson.encodeToString(viewportAdapter).replace("<", "\\u003c")
     val safeRuntime = RUNTIME_SCRIPT_END.replace(runtimeScript) { "<\\/script" }
     val runtimeMarkup = if (runtimeScript.isBlank()) {
         ""
@@ -61,7 +63,8 @@ internal fun buildTavernConversationDocument(
         "VENDOR_STYLES" to vendorStyles,
         "RUNTIME_LIB" to runtimeMarkup,
         "ACTION_TOKEN" to conversationJson.encodeToString(actionToken).replace("<", "\\u003c"),
-        "VIEWPORT_ADAPTER" to buildTavernViewportAdapterScript(),
+        "VIEWPORT_ADAPTER" to viewportAdapter,
+        "VIEWPORT_ADAPTER_SOURCE" to viewportAdapterJson,
     )
     return DOCUMENT_PLACEHOLDER.replace(template) { match ->
         replacements[match.groupValues[1]] ?: match.value

@@ -12,6 +12,7 @@ import me.rerere.rikkahub.data.ai.status.StatusRenderer
 import me.rerere.rikkahub.data.ai.status.StatusFallbackHtml
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.status.TavernCardCssExtractor
+import me.rerere.rikkahub.data.ai.status.extractTavernCardStatusTemplate
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
 import kotlin.uuid.Uuid
@@ -92,6 +93,16 @@ private val STATUS_PLACEHOLDER_REGEX = Regex(
     RegexOption.IGNORE_CASE
 )
 
+internal fun buildStatusPlaceholderPart(
+    fallbackHtml: String,
+    characterPages: List<UIMessagePart.CharacterStatusPage>,
+    cardTemplate: String?,
+): UIMessagePart.StatusPlaceholder = if (cardTemplate != null) {
+    UIMessagePart.StatusPlaceholder(htmlContent = cardTemplate, characterPages = emptyList())
+} else {
+    UIMessagePart.StatusPlaceholder(htmlContent = fallbackHtml, characterPages = characterPages)
+}
+
 /** Match `<Expression name="..."/>` or `<Expression>...</Expression>` tags. */
 private val EXPRESSION_REGEX = Regex(
     """<Expression\s+name\s*=\s*"([^"]*)"\s*/>|<Expression>(.*?)</Expression>""",
@@ -139,6 +150,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
         }
 
         ensureScriptLoaded(ctx)
+        val cardTemplate = extractTavernCardStatusTemplate(ctx.assistant.tavernCardJson)
 
         return messages.map { message ->
             if (message.role != MessageRole.ASSISTANT) {
@@ -171,7 +183,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
 
                     if (first == null) {
                         if (text.isNotBlank()) {
-                            resultParts.add(UIMessagePart.Text(text))
+                            resultParts.add(part.copy(text = text))
                         }
                         break
                     }
@@ -179,7 +191,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                     // Text before this tag
                     val before = text.substring(0, first.start)
                     if (before.isNotBlank()) {
-                        resultParts.add(UIMessagePart.Text(before))
+                        resultParts.add(part.copy(text = before))
                     }
 
                     val rawContent = text.substring(first.start, first.end)
@@ -201,7 +213,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                                 }
                             } catch (e: Exception) {
                                 android.util.Log.e("StatusPlhd", "  ✗ UpdateVariable parse error: ${e.message}")
-                                resultParts.add(UIMessagePart.Text(rawContent))
+                                resultParts.add(part.copy(text = rawContent))
                             }
                         }
                         "barePatch" -> {
@@ -211,7 +223,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                                 variablesChanged = true
                             } catch (e: Exception) {
                                 android.util.Log.e("StatusPlhd", "  ✗ Bare patch parse error", e)
-                                resultParts.add(UIMessagePart.Text(rawContent))
+                                resultParts.add(part.copy(text = rawContent))
                             }
                         }
                         "expr" -> {
@@ -258,7 +270,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                 for (match in matches) {
                     val before = text.substring(0, match.range.first)
                     if (before.isNotBlank()) {
-                        newParts.add(UIMessagePart.Text(before))
+                        newParts.add(part.copy(text = before))
                     }
                     try {
                         val variables = store.toJsObject(convId)
@@ -272,23 +284,18 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                             buildFallbackHtmlDirect(variables, metadata)
                         }
                         val fullHtml = if (worldHeader.isNotBlank()) "$worldHeader\n$bodyHtml" else bodyHtml
-                        if (fullHtml.isNotBlank()) {
-                            newParts.add(
-                                UIMessagePart.StatusPlaceholder(
-                                    htmlContent = fullHtml,
-                                    characterPages = charPages,
-                                )
-                            )
+                        if (fullHtml.isNotBlank() || cardTemplate != null) {
+                            newParts.add(buildStatusPlaceholderPart(fullHtml, charPages, cardTemplate))
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
-                        newParts.add(UIMessagePart.Text(match.value))
+                        newParts.add(part.copy(text = match.value))
                     }
                     text = text.substring(match.range.last + 1)
                 }
 
                 if (text.isNotBlank()) {
-                    newParts.add(UIMessagePart.Text(text))
+                    newParts.add(part.copy(text = text))
                 }
 
                 newParts.ifEmpty { listOf(part) }
@@ -310,8 +317,12 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                                 buildFallbackHtmlDirect(variables, metadata)
                             }
                             val fullHtml = if (worldHeader.isNotBlank()) "$worldHeader\n$bodyHtml" else bodyHtml
-                            if (fullHtml.isNotBlank()) {
-                                part.copy(htmlContent = fullHtml, characterPages = charPages)
+                            if (fullHtml.isNotBlank() || cardTemplate != null) {
+                                val renderedPart = buildStatusPlaceholderPart(fullHtml, charPages, cardTemplate)
+                                part.copy(
+                                    htmlContent = renderedPart.htmlContent,
+                                    characterPages = renderedPart.characterPages,
+                                )
                             } else part
                         } catch (e: Exception) { part }
                     } else part
@@ -329,8 +340,8 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                             buildFallbackHtmlDirect(variables, metadata)
                         }
                         val fullHtml = if (worldHeader.isNotBlank()) "$worldHeader\n$bodyHtml" else bodyHtml
-                        if (fullHtml.isNotBlank()) {
-                            val sp = UIMessagePart.StatusPlaceholder(htmlContent = fullHtml, characterPages = charPages)
+                        if (fullHtml.isNotBlank() || cardTemplate != null) {
+                            val sp = buildStatusPlaceholderPart(fullHtml, charPages, cardTemplate)
                             rendered + sp
                         } else rendered
                     } catch (e: Exception) { rendered }
@@ -348,6 +359,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
         messages: List<UIMessage>,
     ): List<UIMessage> {
         val convId = ctx.conversationId ?: return messages
+        val cardTemplate = extractTavernCardStatusTemplate(ctx.assistant.tavernCardJson)
 
         // Only re-render the LAST message's StatusPlaceholder with the final state.
         // Older messages keep their snapshot-of-that-moment HTML — otherwise
@@ -358,6 +370,9 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
             message.copy(
                 parts = message.parts.map { part ->
                     if (part is UIMessagePart.StatusPlaceholder) {
+                        if (cardTemplate != null) {
+                            return@map part.copy(htmlContent = cardTemplate, characterPages = emptyList())
+                        }
                         try {
                             val variables = store.toJsObject(convId)
                             val metadata = buildMetadata(ctx, convId)

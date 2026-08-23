@@ -8,149 +8,240 @@ import org.junit.Test
 
 class TavernViewportAdapterTest {
     @Test
-    fun `owned repair follows viewport changes`() {
-        val initial = decideViewportRepair(
+    fun `initial repair owns only inline properties it actually writes`() {
+        val decision = decideViewportRepair(
             viewportHeightPx = 720,
             computedMaxHeightPx = 0,
+            computedOverflowY = "auto",
             clientHeightPx = 48,
             scrollHeightPx = 314,
             visible = true,
             fixedOverlay = true,
+            inlineMaxHeight = style("0px", "important"),
+            inlineOverflowY = style("auto"),
+        )
+
+        assertEquals(style("696px"), decision?.maxHeightMutation)
+        assertNull(decision?.overflowYMutation)
+        assertEquals(
+            OwnedInlineStyle(
+                original = style("0px", "important"),
+                written = style("696px"),
+            ),
+            decision?.nextOwnership?.maxHeight,
+        )
+        assertNull(decision?.nextOwnership?.overflowY)
+    }
+
+    @Test
+    fun `release preserves card supplied inline overflow auto`() {
+        val ownership = ownership(
+            maxOriginal = style("0px"),
+            maxWritten = style("696px", "important"),
+            overflow = null,
         )
 
         assertEquals(
             ViewportRepairDecision(
-                maxHeightPx = 696,
-                enableVerticalScroll = true,
-                ownedMaxHeightPx = 696,
-            ),
-            initial,
-        )
-        assertEquals(
-            ViewportRepairDecision(
-                maxHeightPx = 576,
-                ownedMaxHeightPx = 576,
+                maxHeightMutation = style("0px"),
+                nextOwnership = null,
             ),
             decideViewportRepair(
-                viewportHeightPx = 600,
-                computedMaxHeightPx = initial?.ownedMaxHeightPx,
+                viewportHeightPx = 720,
+                computedMaxHeightPx = 696,
+                computedOverflowY = "auto",
                 clientHeightPx = 314,
                 scrollHeightPx = 314,
-                visible = true,
+                visible = false,
                 fixedOverlay = true,
-                inlineMaxHeightPx = initial?.ownedMaxHeightPx,
-                inlineOverflowYAuto = true,
-                ownedMaxHeightPx = initial?.ownedMaxHeightPx,
+                inlineMaxHeight = style("696px", "important"),
+                inlineOverflowY = style("auto"),
+                ownership = ownership,
             ),
         )
     }
 
     @Test
-    fun `preserves a card supplied usable max height`() {
-        assertNull(
+    fun `release restores original values and priorities`() {
+        val ownership = ownership(
+            maxOriginal = style("0px", "important"),
+            maxWritten = style("696px", "important"),
+            overflow = OwnedInlineStyle(
+                original = style("scroll", "important"),
+                written = style("auto", "important"),
+            ),
+        )
+
+        assertEquals(
+            ViewportRepairDecision(
+                maxHeightMutation = style("0px", "important"),
+                overflowYMutation = style("scroll", "important"),
+                nextOwnership = null,
+            ),
+            decideViewportRepair(
+                viewportHeightPx = 720,
+                computedMaxHeightPx = 696,
+                computedOverflowY = "auto",
+                clientHeightPx = 314,
+                scrollHeightPx = 314,
+                visible = true,
+                fixedOverlay = false,
+                inlineMaxHeight = style("696px", "important"),
+                inlineOverflowY = style("auto", "important"),
+                ownership = ownership,
+            ),
+        )
+    }
+
+    @Test
+    fun `card rewrites are not overwritten while unchanged adapter property is restored`() {
+        val ownership = ownership(
+            maxOriginal = style("0px"),
+            maxWritten = style("696px", "important"),
+            overflow = OwnedInlineStyle(style("scroll"), style("auto", "important")),
+        )
+
+        assertEquals(
+            ViewportRepairDecision(
+                overflowYMutation = style("scroll"),
+                nextOwnership = null,
+            ),
             decideViewportRepair(
                 viewportHeightPx = 720,
                 computedMaxHeightPx = 540,
+                computedOverflowY = "auto",
                 clientHeightPx = 314,
                 scrollHeightPx = 314,
                 visible = true,
                 fixedOverlay = true,
-                inlineMaxHeightPx = 540,
+                inlineMaxHeight = style("540px", "important"),
+                inlineOverflowY = style("auto", "important"),
+                ownership = ownership,
             ),
         )
     }
 
     @Test
-    fun `unchanged owned repair does not repeat style writes`() {
+    fun `same numeric max height with card important priority relinquishes ownership`() {
+        val ownership = ownership(
+            maxOriginal = style(""),
+            maxWritten = style("696px"),
+            overflow = OwnedInlineStyle(style(""), style("auto", "important")),
+        )
+
+        assertEquals(
+            ViewportRepairDecision(
+                overflowYMutation = style(""),
+                nextOwnership = null,
+            ),
+            decideViewportRepair(
+                viewportHeightPx = 720,
+                computedMaxHeightPx = 696,
+                computedOverflowY = "auto",
+                clientHeightPx = 314,
+                scrollHeightPx = 314,
+                visible = true,
+                fixedOverlay = true,
+                inlineMaxHeight = style("696px", "important"),
+                inlineOverflowY = style("auto", "important"),
+                ownership = ownership,
+            ),
+        )
+    }
+
+    @Test
+    fun `owned repair follows viewport changes without repeated writes`() {
+        val ownership = ownership(
+            maxOriginal = style(""),
+            maxWritten = style("696px"),
+            overflow = OwnedInlineStyle(style(""), style("auto")),
+        )
+
         assertNull(
             decideViewportRepair(
                 viewportHeightPx = 720,
                 computedMaxHeightPx = 696,
+                computedOverflowY = "auto",
                 clientHeightPx = 314,
                 scrollHeightPx = 314,
                 visible = true,
                 fixedOverlay = true,
-                inlineMaxHeightPx = 696,
-                inlineOverflowYAuto = true,
-                ownedMaxHeightPx = 696,
+                inlineMaxHeight = style("696px"),
+                inlineOverflowY = style("auto"),
+                ownership = ownership,
             ),
         )
+
+        val resized = decideViewportRepair(
+            viewportHeightPx = 600,
+            computedMaxHeightPx = 696,
+            computedOverflowY = "auto",
+            clientHeightPx = 314,
+            scrollHeightPx = 314,
+            visible = true,
+            fixedOverlay = true,
+            inlineMaxHeight = style("696px"),
+            inlineOverflowY = style("auto"),
+            ownership = ownership,
+        )
+        assertEquals(style("576px"), resized?.maxHeightMutation)
+        assertEquals(style("576px"), resized?.nextOwnership?.maxHeight?.written)
+        assertEquals(style(""), resized?.nextOwnership?.maxHeight?.original)
     }
 
     @Test
-    fun `card supplied replacement constraint releases ownership`() {
-        assertEquals(
-            ViewportRepairDecision(
-                releaseOwnership = true,
-                clearInlineOverflowY = true,
-            ),
+    fun `preserves a card supplied usable max height and ignores ineligible panels`() {
+        assertNull(
             decideViewportRepair(
                 viewportHeightPx = 720,
                 computedMaxHeightPx = 540,
+                computedOverflowY = "visible",
                 clientHeightPx = 314,
                 scrollHeightPx = 314,
                 visible = true,
                 fixedOverlay = true,
-                inlineMaxHeightPx = 540,
-                inlineOverflowYAuto = true,
-                ownedMaxHeightPx = 696,
+                inlineMaxHeight = style("540px"),
+                inlineOverflowY = style(""),
             ),
         )
+        assertNull(decideViewportRepair(720, 0, "visible", 48, 314, false, true, style(""), style("")))
+        assertNull(decideViewportRepair(720, 0, "visible", 48, 314, true, false, style(""), style("")))
+        assertNull(decideViewportRepair(720, null, "visible", 306, 314, true, true, style(""), style("")))
     }
 
     @Test
-    fun `card stylesheet constraint clears only adapter inline styles`() {
-        assertEquals(
-            ViewportRepairDecision(
-                releaseOwnership = true,
-                clearInlineMaxHeight = true,
-                clearInlineOverflowY = true,
-            ),
-            decideViewportRepair(
-                viewportHeightPx = 720,
-                computedMaxHeightPx = 540,
-                clientHeightPx = 314,
-                scrollHeightPx = 314,
-                visible = true,
-                fixedOverlay = true,
-                inlineMaxHeightPx = 696,
-                inlineOverflowYAuto = true,
-                ownedMaxHeightPx = 696,
-            ),
-        )
+    fun `marker parser accepts only a complete finite integer`() {
+        assertEquals(696, parseViewportRepairMarker("696"))
+        listOf(null, "", "696junk", "696.0", "NaN", "Infinity", "-696", "0").forEach { marker ->
+            assertNull("marker must be rejected: $marker", parseViewportRepairMarker(marker))
+        }
     }
 
     @Test
-    fun `ignores hidden and non fixed content`() {
-        assertNull(decideViewportRepair(720, 0, 48, 314, visible = false, fixedOverlay = true))
-        assertNull(decideViewportRepair(720, 0, 48, 314, visible = true, fixedOverlay = false))
-    }
-
-    @Test
-    fun `ignores panels without meaningful clipping`() {
-        assertNull(decideViewportRepair(720, null, 306, 314, visible = true, fixedOverlay = true))
-    }
-
-    @Test
-    fun `shared adapter invokes state decision with marker ownership`() {
+    fun `generated adapter tracks explicit per property ownership without observer feedback`() {
         val script = buildTavernViewportAdapterScript()
 
-        assertTrue(script.contains("const tavernViewportAdapter"))
-        assertTrue(script.contains("function decideViewportRepair(input)"))
-        assertTrue(script.contains("const decision = decideViewportRepair({"))
-        assertTrue(script.contains("ownedMaxHeightPx: owned ? ownedMaxHeight : null"))
-        assertTrue(script.contains("if (decision.releaseOwnership)"))
-        assertTrue(script.contains("delete panel.dataset.rikkahubOverlayRepaired"))
-        assertTrue(
-            script.contains(
-                "panel.dataset.rikkahubOverlayRepaired = String(decision.ownedMaxHeightPx)",
-            ),
-        )
-        assertTrue(script.contains("return { schedule };"))
-        assertTrue(script.contains("new MutationObserver(schedule)"))
-        assertTrue(script.contains("new ResizeObserver(schedule)"))
+        assertTrue(script.contains("const ownedRepairs = new WeakMap()"))
+        assertTrue(script.contains("function parseViewportRepairMarker(raw)"))
+        assertTrue(script.contains("/^[1-9]\\d*$/"))
+        assertTrue(script.contains("getPropertyPriority(property)"))
+        assertTrue(script.contains("snapshotInlineStyle(panel, 'max-height')"))
+        assertTrue(script.contains("snapshotInlineStyle(panel, 'overflow-y')"))
+        assertTrue(script.contains("style.setProperty(property, mutation.value, mutation.priority)"))
+        assertTrue(script.contains("mutationObserver.disconnect()"))
         assertTrue(script.contains("attributeFilter: ['class', 'style', 'open']"))
-        assertFalse(script.contains("lastViewportHeight"))
-        assertFalse(script.contains("attributeFilter: ['data-rikkahub-overlay-repaired'"))
+        assertFalse(script.contains("Number.parseFloat(panel.dataset.rikkahubOverlayRepaired)"))
+        assertFalse(script.contains("clearInlineOverflowY: input.inlineOverflowYAuto"))
     }
+
+    private fun style(value: String, priority: String = "") = InlineStyleSnapshot(value, priority)
+
+    private fun ownership(
+        maxOriginal: InlineStyleSnapshot,
+        maxWritten: InlineStyleSnapshot,
+        overflow: OwnedInlineStyle?,
+    ) = ViewportRepairOwnership(
+        maxHeight = OwnedInlineStyle(maxOriginal, maxWritten),
+        overflowY = overflow,
+    )
 }

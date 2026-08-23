@@ -7,6 +7,10 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AssistantType
+import me.rerere.rikkahub.data.model.Avatar
+import me.rerere.rikkahub.data.model.GroupMember
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.TavernOpeningRef
 import me.rerere.rikkahub.data.model.markTavernOpeningRuntimeExecuted
@@ -19,6 +23,65 @@ import org.junit.Test
 import kotlin.uuid.Uuid
 
 class TavernConversationSnapshotTest {
+
+    @Test
+    fun `snapshot resolves user and char macros without mutating source`() {
+        val originalText = "<section>{user} / {{USER}} / {char} / {{CHAR}}</section>"
+        val sourceMessage = uiMessage(
+            "00000000-0000-0000-0000-000000000021",
+            MessageRole.ASSISTANT,
+            originalText,
+            UIMessagePart.RenderMode.HTML,
+        )
+        val source = conversation(MessageNode.of(sourceMessage))
+
+        val snapshot = buildTavernConversationSnapshot(
+            conversation = source,
+            userName = "阿澈",
+            characterName = "白露",
+            themeCssVariables = emptyMap(),
+            cardCss = null,
+            streaming = false,
+        )
+
+        val part = snapshot.nodes.single().selectedMessage.parts.single() as TavernConversationTextPart
+        assertEquals("<section>阿澈 / 阿澈 / 白露 / 白露</section>", part.text)
+        assertEquals(originalText, (sourceMessage.parts.single() as UIMessagePart.Text).text)
+    }
+
+    @Test
+    fun `snapshot uses Chinese fallback for blank user nickname`() {
+        val snapshot = buildTavernConversationSnapshot(
+            conversation = conversation(MessageNode.of(UIMessage.assistant("欢迎，{user}"))),
+            userName = "",
+            characterName = "白露",
+            themeCssVariables = emptyMap(),
+            cardCss = null,
+            streaming = false,
+        )
+
+        val part = snapshot.nodes.single().selectedMessage.parts.single() as TavernConversationTextPart
+        assertEquals("欢迎，你", part.text)
+    }
+
+    @Test
+    fun `group member descriptors resolve names avatars and isolated card css`() {
+        val memberAssistant = Assistant(
+            name = "Alice",
+            avatar = Avatar.Image("https://example.com/alice.png"),
+            tavernCardJson = """{"name":"Alice","extensions":{"css":".mes, body { color: red; }"}}""",
+        )
+        val member = GroupMember(assistantId = memberAssistant.id, displayName = "Alice A")
+        val group = Assistant(assistantType = AssistantType.GROUP, groupMembers = listOf(member))
+
+        val descriptors = buildTavernConversationMembers(group, mapOf(memberAssistant.id to memberAssistant))
+
+        assertEquals("Alice A", descriptors.single().name)
+        assertEquals("https://example.com/alice.png", descriptors.single().avatarUrl)
+        assertTrue(descriptors.single().scopedCss.contains("[data-member-id=\"${member.id}\"].mes"))
+        assertTrue(descriptors.single().scopedCss.contains("[data-member-id=\"${member.id}\"]"))
+        assertFalse(descriptors.single().scopedCss.contains("</style"))
+    }
 
     @Test
     fun `snapshot uses selected branches and preserves the current raw html message`() {
@@ -51,10 +114,99 @@ class TavernConversationSnapshotTest {
         assertEquals(2, snapshot.nodes.single().branchCount)
         assertEquals(html.id.toString(), snapshot.nodes.single().selectedMessage.id)
         assertEquals(UIMessagePart.RenderMode.HTML, snapshot.nodes.single().selectedMessage.parts.single().renderMode)
-        assertEquals("<html><body>{{char}} says hi</body></html>", snapshot.nodes.single().selectedMessage.parts.single().text)
+        assertEquals("<html><body>Alice says hi</body></html>", snapshot.nodes.single().selectedMessage.parts.single().text)
         assertEquals("Alice", snapshot.nodes.single().selectedMessage.name)
         assertEquals(listOf("--a", "--z"), snapshot.themeCssVariables.keys.toList())
         assertTrue(snapshot.streaming)
+    }
+
+    @Test
+    fun `snapshot keeps narrative but excludes raw and structured status from the message body`() {
+        val originalText = UIMessagePart.Text(
+            "<maintext>Story line</maintext>\n<Status_block>HP 10/10</Status_block>",
+        )
+        val originalStatus = UIMessagePart.StatusPlaceholder("<b>HP 10/10</b>")
+        val message = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(originalText, originalStatus, UIMessagePart.Image("content://portrait")),
+        )
+
+        val snapshot = buildTavernConversationSnapshot(
+            conversation = conversation(MessageNode.of(message)),
+            userName = "User",
+            characterName = "Alice",
+            themeCssVariables = emptyMap(),
+            cardCss = null,
+            streaming = false,
+        )
+
+        val parts = snapshot.nodes.single().selectedMessage.parts
+        assertEquals("Story line", (parts[0] as TavernConversationTextPart).text)
+        assertTrue(parts.none { it is TavernConversationStatusPart })
+        assertTrue(parts[1] is TavernConversationImagePart)
+        assertEquals(listOf(originalText, originalStatus, UIMessagePart.Image("content://portrait")), message.parts)
+    }
+
+    @Test
+    fun `snapshot hides an unfinished streaming status block without leaking its tag`() {
+        val snapshot = buildTavernConversationSnapshot(
+            conversation = conversation(
+                MessageNode.of(
+                    UIMessage.assistant("Visible story\n<status_block>partial status"),
+                ),
+            ),
+            userName = "User",
+            characterName = "Alice",
+            themeCssVariables = emptyMap(),
+            cardCss = null,
+            streaming = true,
+        )
+
+        val part = snapshot.nodes.single().selectedMessage.parts.single() as TavernConversationTextPart
+        assertEquals("Visible story", part.text)
+    }
+
+    @Test
+    fun `version two snapshot has no embedded composer state`() {
+        val snapshot = buildTavernConversationSnapshot(
+            conversation = conversation(MessageNode.of(UIMessage.assistant("hello"))),
+            userName = "User",
+            characterName = "Alice",
+            themeCssVariables = emptyMap(),
+            cardCss = null,
+            streaming = false,
+        )
+        val encoded = Json { encodeDefaults = true; classDiscriminator = "partType" }.encodeToString(snapshot)
+
+        assertEquals(2, snapshot.protocolVersion)
+        assertFalse(encoded.contains("\"draftText\""))
+        assertFalse(encoded.contains("\"capabilities\""))
+    }
+
+    @Test
+    fun `versioned chat snapshot carries solo avatar and opening swipe state`() {
+        val conversation = conversation(MessageNode.of(uiMessage(
+            "00000000-0000-0000-0000-000000000011",
+            MessageRole.ASSISTANT,
+            "hello",
+        )))
+
+        val snapshot = buildTavernConversationSnapshot(
+            conversation = conversation,
+            userName = "User",
+            characterName = "Alice",
+            themeCssVariables = emptyMap(),
+            cardCss = null,
+            streaming = false,
+            characterAvatarUrl = "content://cards/alice.png",
+            openingSwipe = TavernOpeningSwipe(index = 1, count = 3, ready = true),
+            revision = 7,
+        )
+
+        assertEquals(TAVERN_CHAT_PROTOCOL_VERSION, snapshot.protocolVersion)
+        assertEquals(7, snapshot.revision)
+        assertEquals("content://cards/alice.png", snapshot.characterAvatarUrl)
+        assertEquals(TavernOpeningSwipe(1, 3, true), snapshot.openingSwipe)
     }
 
     @Test
@@ -84,6 +236,53 @@ class TavernConversationSnapshotTest {
         assertEquals(2, snapshot.nodes.single().branchCount)
     }
 
+    @Suppress("DEPRECATION")
+    @Test
+    fun `snapshot serializes every selected message part in original order`() {
+        val message = UIMessage(
+            id = uuid("00000000-0000-0000-0000-000000000012"),
+            role = MessageRole.ASSISTANT,
+            memberId = uuid("00000000-0000-0000-0000-000000000099"),
+            parts = listOf(
+                UIMessagePart.Reasoning("thinking", finishedAt = null),
+                UIMessagePart.Text("hello"),
+                UIMessagePart.StatusPlaceholder(
+                    htmlContent = "<b>status</b>",
+                    characterPages = listOf(UIMessagePart.CharacterStatusPage("Alice", "<i>page</i>")),
+                ),
+                UIMessagePart.Image("content://media/image"),
+                UIMessagePart.Video("https://example.com/video.mp4"),
+                UIMessagePart.Audio("https://example.com/audio.mp3"),
+                UIMessagePart.Document("content://media/file", "notes.txt", "text/plain"),
+                UIMessagePart.Tool("call", "ask_user", "{}", output = listOf(UIMessagePart.Text("done"))),
+                UIMessagePart.ToolCall("legacy-call", "legacy", "{}"),
+                UIMessagePart.ToolResult(
+                    "legacy-call",
+                    "legacy",
+                    kotlinx.serialization.json.JsonPrimitive("result"),
+                    kotlinx.serialization.json.JsonNull,
+                ),
+                UIMessagePart.Search,
+            ),
+        )
+
+        val snapshot = buildTavernConversationSnapshot(
+            conversation = conversation(MessageNode.of(message)),
+            userName = "User",
+            characterName = "Alice",
+            themeCssVariables = emptyMap(),
+            cardCss = null,
+            streaming = false,
+        )
+        val encoded = Json { encodeDefaults = true; classDiscriminator = "partType" }
+            .encodeToString(snapshot)
+
+        assertTrue(encoded.contains("\"memberId\":\"00000000-0000-0000-0000-000000000099\""))
+        listOf("reasoning", "text", "image", "video", "audio", "document", "tool", "tool_call", "tool_result", "search")
+            .forEach { type -> assertTrue("missing part type $type", encoded.contains("\"partType\":\"$type\"")) }
+        assertFalse(encoded.contains("\"partType\":\"status\""))
+    }
+
     @Test
     fun `committed opening snapshot disables a second script execution`() {
         val openingPart = UIMessagePart.Text(
@@ -104,6 +303,30 @@ class TavernConversationSnapshotTest {
         )
 
         assertFalse(snapshot.nodes.single().selectedMessage.parts.single().executeScripts)
+    }
+
+    @Test
+    fun `safe card permission keeps html but disables its scripts`() {
+        val html = uiMessage(
+            "00000000-0000-0000-0000-000000000011",
+            MessageRole.ASSISTANT,
+            "<script>unsafe()</script><p>visible</p>",
+            UIMessagePart.RenderMode.HTML,
+        )
+
+        val snapshot = buildTavernConversationSnapshot(
+            conversation = conversation(MessageNode.of(html)),
+            userName = "User",
+            characterName = "Alice",
+            themeCssVariables = emptyMap(),
+            cardCss = null,
+            streaming = false,
+            allowCardScripts = false,
+        )
+
+        val part = snapshot.nodes.single().selectedMessage.parts.single() as TavernConversationTextPart
+        assertFalse(part.executeScripts)
+        assertEquals("<script>unsafe()</script><p>visible</p>", part.text)
     }
 
     @Test

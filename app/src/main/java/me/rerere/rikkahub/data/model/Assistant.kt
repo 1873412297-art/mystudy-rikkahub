@@ -67,6 +67,28 @@ data class Assistant(
     val allowConversationAuthorNote: Boolean = false,   // 允许会话级作者注释覆盖助手配置
 )
 
+/**
+ * Applies the image embedded in an imported PNG character card as the character avatar.
+ * A newly imported card image is presentation data, not an implicit chat background.
+ */
+fun Assistant.withImportedTavernCardImage(imageUri: String?): Assistant {
+    if (imageUri.isNullOrBlank()) return this
+    return copy(
+        avatar = Avatar.Image(imageUri),
+        background = null,
+    )
+}
+
+/**
+ * Compatibility repair for cards imported before PNG images were stored as avatars.
+ * The old background is intentionally retained because it may have become a user choice.
+ */
+fun Assistant.migrateLegacyTavernCardAvatar(): Assistant {
+    val legacyImage = background?.takeIf(String::isNotBlank) ?: return this
+    if (tavernCardJson.isNullOrBlank() || avatar !is Avatar.Dummy) return this
+    return copy(avatar = Avatar.Image(legacyImage))
+}
+
 @Serializable
 data class QuickMessage(
     val id: Uuid = Uuid.random(),

@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.hugeicons.HugeIcons
@@ -51,10 +52,16 @@ import me.rerere.hugeicons.stroke.MinimizeScreen
 import me.rerere.hugeicons.stroke.Refresh
 import me.rerere.rikkahub.data.ai.status.StatusOption
 import me.rerere.rikkahub.data.ai.status.StatusSection
+import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.data.model.TavernCharacterCard
 import me.rerere.rikkahub.ui.components.message.MultiCharacterStatusView
 import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernContextSnapshotInput
+import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernContextSnapshot
+import me.rerere.rikkahub.ui.components.ui.UIAvatar
 import me.rerere.rikkahub.ui.pages.chat.tavern.render.TavernRenderSurface
 import me.rerere.rikkahub.ui.pages.chat.tavern.render.resolveTavernRenderPolicy
 import me.rerere.rikkahub.utils.JsonInstant
@@ -70,16 +77,35 @@ private val HudSectionAutoCollapseHeight = 200.dp
 @Composable
 fun StatusHudBar(
     conversation: Conversation,
+    assistant: Assistant,
+    isGenerating: Boolean,
     onOptionClick: (String) -> Unit,
     modifier: Modifier = Modifier,
+    tavernWorldEntries: List<Pair<String, String>>? = null,
 ) {
     val presentation = remember(conversation) { buildStatusHudPresentation(conversation) } ?: return
     val settingsStore: SettingsStore = koinInject()
     val settings by settingsStore.settingsFlow.collectAsStateWithLifecycle()
+    val activelyUpdating = presentation.isUpdating && isGenerating
     val currentMessage: JsonElement? = remember(presentation.sourceMessage) {
         runCatching {
             JsonInstant.encodeToJsonElement(UIMessage.serializer(), presentation.sourceMessage)
         }.getOrNull()
+    }
+    val tavernContextSnapshot = remember(
+        conversation,
+        assistant,
+        settings,
+        isGenerating,
+        tavernWorldEntries,
+    ) {
+        buildStatusHudRuntimeContext(
+            conversation = conversation,
+            assistant = assistant,
+            settings = settings,
+            isGenerating = isGenerating,
+            worldEntriesOverride = tavernWorldEntries,
+        )
     }
     var showSheet by rememberSaveable(conversation.id) { mutableStateOf(false) }
     var fullscreen by rememberSaveable(conversation.id) { mutableStateOf(false) }
@@ -101,11 +127,10 @@ fun StatusHudBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(
-                imageVector = HugeIcons.ChartColumn,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp),
+            UIAvatar(
+                name = assistant.name,
+                value = assistant.avatar,
+                modifier = Modifier.size(26.dp),
             )
             Text(
                 text = presentation.headerLine,
@@ -115,7 +140,7 @@ fun StatusHudBar(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            if (presentation.isUpdating) {
+            if (activelyUpdating) {
                 CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 Text(
                     text = "更新中",
@@ -124,7 +149,7 @@ fun StatusHudBar(
                 )
             } else {
                 Text(
-                    text = "已更新",
+                    text = if (presentation.isUpdating) "未完成" else "已更新",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -156,7 +181,9 @@ fun StatusHudBar(
                 StatusHudPanel(
                     presentation = presentation,
                     conversation = conversation,
+                    assistant = assistant,
                     currentMessage = currentMessage,
+                    tavernContextSnapshot = tavernContextSnapshot,
                     fullscreen = fullscreen,
                     presentationResetSignal = presentationResetSignal,
                     onToggleFullscreen = { fullscreen = !fullscreen },
@@ -173,6 +200,31 @@ fun StatusHudBar(
             }
         }
     }
+}
+
+/** Builds the same runtime context for the floating HUD that the conversation renderer receives. */
+internal fun buildStatusHudRuntimeContext(
+    conversation: Conversation,
+    assistant: Assistant,
+    settings: Settings,
+    isGenerating: Boolean,
+    worldEntriesOverride: List<Pair<String, String>>? = null,
+): JsonObject {
+    val characterCard = assistant.tavernCardJson?.let(TavernCharacterCard::fromJson)
+    val worldEntries = worldEntriesOverride ?: settings.lorebooks
+        .filter { lorebook -> conversation.lorebookIds.contains(lorebook.id) }
+        .flatMap { lorebook -> lorebook.entries.map { it.name to it.content } }
+    return buildTavernContextSnapshot(
+        TavernContextSnapshotInput(
+            conversation = conversation,
+            assistant = assistant,
+            characterCard = characterCard,
+            userName = settings.displaySetting.userNickname.ifBlank { "User" },
+            isGenerating = isGenerating,
+            variables = conversation.statusVariables,
+            worldEntries = worldEntries,
+        ),
+    )
 }
 
 internal fun resolveTavernHudSheetHostHeight(
@@ -222,7 +274,9 @@ private fun TavernHudSheetHost(
 private fun StatusHudPanel(
     presentation: StatusHudPresentation,
     conversation: Conversation,
+    assistant: Assistant,
     currentMessage: JsonElement?,
+    tavernContextSnapshot: JsonObject,
     fullscreen: Boolean,
     presentationResetSignal: Int,
     onToggleFullscreen: () -> Unit,
@@ -238,12 +292,19 @@ private fun StatusHudPanel(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = HugeIcons.ChartColumn,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+            UIAvatar(
+                name = assistant.name,
+                value = assistant.avatar,
+                modifier = Modifier.size(44.dp),
             )
             Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = assistant.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 Text(
                     text = presentation.headerLine,
                     style = MaterialTheme.typography.titleSmall,
@@ -291,6 +352,7 @@ private fun StatusHudPanel(
                 minHeightDp = 240,
                 tavernConversationId = conversation.id,
                 tavernCurrentMessage = currentMessage,
+                tavernContextSnapshot = tavernContextSnapshot,
                 ownsSendHookController = false,
                 presentationResetSignal = presentationResetSignal,
                 modifier = Modifier.fillMaxWidth().weight(1f),
@@ -314,6 +376,7 @@ private fun StatusHudPanel(
                     ),
                     tavernConversationId = conversation.id,
                     tavernCurrentMessage = currentMessage,
+                    tavernContextSnapshot = tavernContextSnapshot,
                     ownsSendHookController = false,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -324,6 +387,7 @@ private fun StatusHudPanel(
                     section = section,
                     tavernConversationId = conversation.id,
                     tavernCurrentMessage = currentMessage,
+                    tavernContextSnapshot = tavernContextSnapshot,
                 )
             }
 
@@ -340,6 +404,7 @@ private fun HudSection(
     section: StatusSection,
     tavernConversationId: kotlin.uuid.Uuid?,
     tavernCurrentMessage: JsonElement?,
+    tavernContextSnapshot: JsonObject,
 ) {
     val density = LocalDensity.current
     var expanded by remember(section.title, section.content) { mutableStateOf(true) }
@@ -383,6 +448,7 @@ private fun HudSection(
                     maxHeightDp = null,
                     tavernConversationId = tavernConversationId,
                     tavernCurrentMessage = tavernCurrentMessage,
+                    tavernContextSnapshot = tavernContextSnapshot,
                     ownsSendHookController = false,
                     modifier = Modifier
                         .fillMaxWidth()

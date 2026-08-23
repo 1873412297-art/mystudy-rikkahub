@@ -8,9 +8,12 @@ import me.rerere.rikkahub.data.model.AssistantType
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import kotlin.uuid.Uuid
 
 class TavernPresentationContractsTest {
@@ -51,20 +54,20 @@ class TavernPresentationContractsTest {
     }
 
     @Test
-    fun `falls back for group assistants`() {
+    fun `uses ST web for group assistants with a Tavern card`() {
         val decision = resolveTavernPresentation(
             assistant = tavernAssistant().copy(assistantType = AssistantType.GROUP),
             conversation = conversation(UIMessagePart.Text("Hello")),
         )
 
-        assertEquals(TavernPresentationMode.COMPOSE, decision.mode)
-        assertNotNull(decision.fallbackReason)
+        assertEquals(TavernPresentationMode.ST_WEB, decision.mode)
+        assertNull(decision.fallbackReason)
     }
 
     @Suppress("DEPRECATION")
     @Test
-    fun `falls back for every non-text message part family`() {
-        val unsupportedParts = listOf(
+    fun `keeps every message part family in ST web`() {
+        val supportedParts = listOf(
             UIMessagePart.Image("https://example.com/image.png"),
             UIMessagePart.Video("https://example.com/video.mp4"),
             UIMessagePart.Audio("https://example.com/audio.mp3"),
@@ -77,18 +80,109 @@ class TavernPresentationContractsTest {
             UIMessagePart.Tool("call", "tool", "{}"),
         )
 
-        unsupportedParts.forEach { unsupportedPart ->
+        supportedParts.forEach { supportedPart ->
             val decision = resolveTavernPresentation(
                 assistant = tavernAssistant(),
-                conversation = conversation(UIMessagePart.Text("Hello"), unsupportedPart),
+                conversation = conversation(UIMessagePart.Text("Hello"), supportedPart),
             )
 
-            assertEquals("${unsupportedPart::class.simpleName} must fall back", TavernPresentationMode.COMPOSE, decision.mode)
-            assertNotNull("${unsupportedPart::class.simpleName} must explain its fallback", decision.fallbackReason)
+            assertEquals("${supportedPart::class.simpleName} must stay in ST web", TavernPresentationMode.ST_WEB, decision.mode)
+            assertNull("${supportedPart::class.simpleName} must not explain a fallback", decision.fallbackReason)
         }
     }
 
+    @Test
+    fun `presentation resolver accepts the assistant index required by mixed groups`() {
+        val source = listOf(
+            File("src/main/java/me/rerere/rikkahub/ui/pages/chat/tavern/TavernPresentationContracts.kt"),
+            File("app/src/main/java/me/rerere/rikkahub/ui/pages/chat/tavern/TavernPresentationContracts.kt"),
+        ).first { it.exists() }.readText()
+        val chatPage = listOf(
+            File("src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt"),
+            File("app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(source.contains("assistantsById: Map<Uuid, Assistant>"))
+        assertTrue(source.contains("member.assistantId"))
+        assertTrue(chatPage.contains("assistantsById = assistantsById"))
+    }
+
+    @Test
+    fun `tavern message area has no compose compatibility escape hatch`() {
+        val sources = listOf(
+            "app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt",
+            "app/src/main/java/me/rerere/rikkahub/ui/pages/chat/tavern/TavernConversationWebView.kt",
+            "app/src/main/java/me/rerere/rikkahub/ui/pages/chat/tavern/TavernConversationBridge.kt",
+        ).map { path -> File(path).takeIf(File::exists) ?: File(path.removePrefix("app/")) }
+            .joinToString("\n") { it.readText() }
+
+        assertTrue(!sources.contains("forceComposeTavern"))
+        assertTrue(!sources.contains("onFallbackRequested"))
+        assertTrue(!sources.contains("requestFallback"))
+        assertTrue(!sources.contains("切换兼容视图"))
+        assertTrue(!sources.contains("已切换兼容视图"))
+    }
+
+    @Test
+    fun `native top bar and chat input remain mounted for Tavern conversations`() {
+        val chatPage = listOf(
+            File("src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt"),
+            File("app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt"),
+        ).first { it.exists() }.readText()
+        val topBarBlock = chatPage.substringAfter("topBar = {").substringBefore("bottomBar = {")
+        val bottomBarBlock = chatPage.substringAfter("bottomBar = {").substringBefore("floatingActionButton = {")
+
+        assertTrue(topBarBlock.contains("TopBar("))
+        assertTrue(bottomBarBlock.contains("ChatInput("))
+        assertFalse(topBarBlock.contains("immersiveTavernActive"))
+        assertFalse(bottomBarBlock.contains("immersiveTavernActive"))
+    }
+
+    @Test
+    fun `native top bar does not duplicate the inline opening selector`() {
+        val chatPage = listOf(
+            File("src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt"),
+            File("app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt"),
+        ).first { it.exists() }.readText()
+        val topBarFunction = chatPage.substringAfter("private fun TopBar(")
+
+        assertFalse(topBarFunction.contains("onOpenOpening"))
+        assertFalse(topBarFunction.contains("HugeIcons.BookOpen01"))
+        assertFalse(topBarFunction.contains("查看开场"))
+    }
+
+    @Test
+    fun `opening stage routes one shot motion from the real selected candidate`() {
+        val stage = sourceFile("TavernOpeningStage.kt")
+
+        assertTrue(stage.contains("resolveTavernOpeningSelectionDirection(selectedIndex, index, candidates.size)"))
+        assertTrue(stage.contains("TavernOpeningSelectionMotion("))
+        assertTrue(stage.contains("openingSelectionMotion = selectionMotion.takeIf { index == selectedIndex }"))
+        assertTrue(stage.contains("TavernConversationPane("))
+    }
+
+    @Test
+    fun `conversation web view dispatches each opening motion once after ready`() {
+        val webView = sourceFile("TavernConversationWebView.kt")
+
+        assertTrue(webView.contains("openingSelectionMotion: TavernOpeningSelectionMotion? = null"))
+        assertTrue(webView.contains("openingSelectionMotion = openingSelectionMotion"))
+        assertTrue(webView.contains("deliveredOpeningMotionId"))
+        assertTrue(webView.contains("renderState.status != TavernConversationRenderStatus.READY"))
+        assertTrue(webView.contains("postOpeningSelectionMotion(openingSelectionMotion.direction)"))
+        val dispatcher = webView.substringAfter("private fun WebView.postOpeningSelectionMotion")
+            .substringBefore("private fun WebView.postRuntimeContext")
+        assertTrue(dispatcher.contains("RikkahubConversationDocument.triggerOpeningTransition"))
+        assertTrue(dispatcher.contains("postEvaluate("))
+    }
+
     private fun tavernAssistant() = Assistant(tavernCardJson = "{\"name\":\"Card\"}")
+
+    private fun sourceFile(name: String): String = listOf(
+        File("src/main/java/me/rerere/rikkahub/ui/pages/chat/tavern/$name"),
+        File("app/src/main/java/me/rerere/rikkahub/ui/pages/chat/tavern/$name"),
+    ).firstOrNull { it.exists() }?.readText()
+        ?: error("$name not found in test working dir")
 
     private fun conversation(vararg parts: UIMessagePart) = Conversation(
         assistantId = Uuid.random(),

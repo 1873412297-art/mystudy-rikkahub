@@ -71,7 +71,6 @@ import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.MessageAdd01
-import me.rerere.hugeicons.stroke.BookOpen01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.ai.trace.isTavernPromptTraceEligible
@@ -89,6 +88,7 @@ import me.rerere.rikkahub.data.model.TavernCharacterCard
 import me.rerere.rikkahub.service.tavern.requiresNewConversationForGreetingChange
 import me.rerere.rikkahub.data.model.inferLegacyOpening
 import me.rerere.rikkahub.data.model.tavernOpeningRef
+import me.rerere.rikkahub.data.model.tavernCardPermissionFingerprint
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.group.GroupDirectorCommandStatus
@@ -255,6 +255,17 @@ fun ChatPage(
         }
     }
 
+    val assistantsById = remember(setting.assistants) { setting.assistants.associateBy { it.id } }
+    val usesImmersiveTavernPresentation = remember(setting, conversation, assistantsById) {
+        val assistant = setting.getAssistantById(conversation.assistantId)
+            ?: setting.getCurrentAssistant()
+        resolveTavernPresentation(
+            assistant = assistant,
+            conversation = conversation,
+            assistantsById = assistantsById,
+        ).mode == TavernPresentationMode.ST_WEB
+    }
+
     when {
         isBigScreen -> {
             PermanentNavigationDrawer(
@@ -291,6 +302,7 @@ fun ChatPage(
         else -> {
             ModalNavigationDrawer(
                 drawerState = drawerState,
+                gesturesEnabled = !usesImmersiveTavernPresentation,
                 drawerContent = {
                     ChatDrawerContent(
                         navController = navController,
@@ -349,7 +361,6 @@ private fun ChatPageContent(
     val toaster = LocalToaster.current
     val workspaceRepository: WorkspaceRepository = koinInject()
     var previewMode by rememberSaveable { mutableStateOf(false) }
-    var forceComposeTavern by rememberSaveable(conversation.id) { mutableStateOf(false) }
     var tavernActionMessageId by remember { mutableStateOf<Uuid?>(null) }
     var tavernCopyMessageId by remember { mutableStateOf<Uuid?>(null) }
     var tavernFullscreenMessageId by remember { mutableStateOf<Uuid?>(null) }
@@ -362,6 +373,7 @@ private fun ChatPageContent(
     val tavernCard = remember(assistant.tavernCardJson) {
         assistant.tavernCardJson?.let(TavernCharacterCard::fromJson)
     }
+    val hasStatusHud = remember(conversation) { buildStatusHudPresentation(conversation) != null }
     val currentOpeningMessage = remember(conversation, tavernCard) {
         conversation.currentMessages.firstOrNull { message ->
             message.parts.filterIsInstance<UIMessagePart.Text>().singleOrNull()?.tavernOpeningRef() != null ||
@@ -443,9 +455,14 @@ private fun ChatPageContent(
                 tavernFullscreenMessageId = messageId
             }
 
-            override fun onFallbackRequested() {
-                forceComposeTavern = true
+            override fun onToolApproval(toolCallId: String, approved: Boolean, reason: String) {
+                vm.handleToolApproval(toolCallId, approved, reason)
             }
+
+            override fun onToolAnswer(toolCallId: String, answer: String) {
+                vm.handleToolAnswer(toolCallId, answer)
+            }
+
         }
     }
     LaunchedEffect(vm) {
@@ -467,11 +484,41 @@ private fun ChatPageContent(
 
     TTSAutoPlay(vm = vm, setting = setting, conversation = conversation)
 
+    val assistantsById = remember(setting.assistants) { setting.assistants.associateBy { it.id } }
+    val tavernDecision = remember(assistant, conversation, assistantsById) {
+        resolveTavernPresentation(
+            assistant = assistant,
+            conversation = conversation,
+            assistantsById = assistantsById,
+        )
+    }
+    val useTavernWeb = !previewMode &&
+        tavernDecision.mode == TavernPresentationMode.ST_WEB
+    val immersiveTavernActive = !previewMode && (useTavernWeb || activeGreetingSession != null)
+    val tavernCardFingerprint = remember(assistant, setting.assistants) {
+        buildString {
+            assistant.tavernCardJson?.let(::append)
+            if (assistant.assistantType == AssistantType.GROUP) {
+                assistant.groupMembers.filter { it.enabled }.forEach { member ->
+                    setting.assistants.firstOrNull { it.id == member.assistantId }
+                        ?.tavernCardJson?.let(::append)
+                }
+            }
+        }.takeIf { it.isNotBlank() }?.let(::tavernCardPermissionFingerprint)
+    }
+    val tavernCardScriptPermission = tavernCardFingerprint?.let(setting.tavernCardScriptPermissions::get)
+    val tavernPermissionPending = immersiveTavernActive && tavernCardFingerprint != null &&
+        tavernCardScriptPermission == null
     Surface(
         color = MaterialTheme.colorScheme.background,
         modifier = Modifier.fillMaxSize()
     ) {
-        AssistantBackground(setting = setting, modifier = Modifier.hazeSource(hazeState))
+        AssistantBackground(
+            setting = setting,
+            modifier = Modifier.hazeSource(hazeState),
+            animateGradient = !useTavernWeb,
+            animateImage = useTavernWeb,
+        )
         Scaffold(
             topBar = {
                 TopBar(
@@ -481,9 +528,6 @@ private fun ChatPageContent(
                     drawerState = drawerState,
                     previewMode = previewMode,
                     tavernPromptTraceEligible = tavernPromptTraceEligible,
-                    onOpenOpening = currentOpeningMessage?.takeIf { hasUserMessage }?.let { opening ->
-                        { tavernFullscreenMessageId = opening.id }
-                    },
                     onNewChat = {
                         navigateToChatPage(navController)
                     },
@@ -642,20 +686,24 @@ private fun ChatPageContent(
                     .padding(innerPadding)
             ) {
             Column(modifier = Modifier.fillMaxSize()) {
-            val tavernDecision = remember(assistant, conversation) {
-                resolveTavernPresentation(assistant, conversation)
-            }
-            val useTavernWeb = !previewMode && !forceComposeTavern &&
-                tavernDecision.mode == TavernPresentationMode.ST_WEB
-            if (activeGreetingSession != null && !previewMode && !forceComposeTavern) {
+            if (tavernPermissionPending) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("等待选择角色卡脚本权限…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else if (activeGreetingSession != null && !previewMode) {
                 TavernOpeningStage(
                     session = activeGreetingSession,
                     conversation = conversation,
                     assistant = assistant,
                     settings = setting,
                     onCommit = vm::commitGreetingCandidate,
-                    autoCommitFirst = !setting.displaySetting.autoShowGreetingPicker,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    actions = tavernActions,
+                    onStatusOptionClick = inputState::setMessageText,
+                    allowCardScripts = tavernCardScriptPermission == true,
+                    autoCommitFirst = false,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
                 )
             } else if (useTavernWeb) {
                 TavernConversationPane(
@@ -664,34 +712,13 @@ private fun ChatPageContent(
                     settings = setting,
                     loading = loadingJob != null,
                     actions = tavernActions,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    allowCardScripts = tavernCardScriptPermission == true,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(top = if (hasStatusHud) 52.dp else 0.dp),
                 )
             } else {
-                val showTavernFallbackReason = assistant.tavernCardJson?.isNotBlank() == true &&
-                    assistant.assistantType == AssistantType.SOLO && !previewMode
-                if (showTavernFallbackReason) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = MaterialTheme.shapes.small,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
-                    ) {
-                        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) {
-                            Text(
-                                text = if (forceComposeTavern) {
-                                    "已切换兼容视图"
-                                } else {
-                                    tavernDecision.fallbackReason.orEmpty()
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                            if (forceComposeTavern && tavernDecision.mode == TavernPresentationMode.ST_WEB) {
-                                TextButton(onClick = { forceComposeTavern = false }) {
-                                    Text("重试酒馆视图")
-                                }
-                            }
-                        }
-                    }
-                }
                 ChatList(
                     innerPadding = PaddingValues(0.dp),
                     conversation = conversation,
@@ -775,14 +802,50 @@ private fun ChatPageContent(
             }
             }
             // Overlay above the message host: the HUD no longer consumes conversation layout space.
-            StatusHudBar(
-                conversation = conversation,
-                onOptionClick = inputState::setMessageText,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-            )
+            if (activeGreetingSession == null || previewMode || tavernPermissionPending) {
+                StatusHudBar(
+                    conversation = conversation,
+                    assistant = assistant,
+                    isGenerating = loadingJob != null,
+                    onOptionClick = inputState::setMessageText,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                )
+            }
         }
+        }
+
+        if (tavernPermissionPending && tavernCardFingerprint != null) {
+            AlertDialog(
+                onDismissRequest = {},
+                title = { Text("允许这张角色卡运行脚本？") },
+                text = {
+                    Text(
+                        "完整模式会允许角色卡 HTML/JavaScript 使用已开启的酒馆权限，包括网络、变量、消息和世界书操作。选择安全模式仍会显示内容，但不会执行卡片脚本。角色卡内容变化后会再次询问。",
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        vm.updateSettings(
+                            setting.copy(
+                                tavernCardScriptPermissions = setting.tavernCardScriptPermissions +
+                                    (tavernCardFingerprint to true),
+                            )
+                        )
+                    }) { Text("允许完整模式") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        vm.updateSettings(
+                            setting.copy(
+                                tavernCardScriptPermissions = setting.tavernCardScriptPermissions +
+                                    (tavernCardFingerprint to false),
+                            )
+                        )
+                    }) { Text("使用安全模式") }
+                },
+            )
         }
 
         if (showDirectorSheet && directorUiState != null) {
@@ -1187,7 +1250,6 @@ private fun TopBar(
     bigScreen: Boolean,
     previewMode: Boolean,
     tavernPromptTraceEligible: Boolean,
-    onOpenOpening: (() -> Unit)?,
     onClickMenu: () -> Unit,
     onNewChat: () -> Unit,
     onOpenTavernPromptConsole: () -> Unit,
@@ -1249,11 +1311,6 @@ private fun TopBar(
             }
         },
         actions = {
-            if (onOpenOpening != null) {
-                IconButton(onClick = onOpenOpening) {
-                    Icon(HugeIcons.BookOpen01, contentDescription = "查看开场")
-                }
-            }
             TavernPromptConsoleEntry(
                 visible = tavernPromptTraceEligible,
                 onOpen = onOpenTavernPromptConsole,

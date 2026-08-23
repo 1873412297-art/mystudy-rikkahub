@@ -40,4 +40,28 @@ class TavernRuntimeScriptTest {
         assertTrue(script.contains("requestHeaders.get"))
         assertTrue(script.contains("sendHook.register"))
     }
+
+    @Test
+    fun `script exposes TavernHelper and global chat message compatibility APIs`() {
+        val script = buildTavernRuntimeScript()
+
+        assertTrue(script.contains("messages.getChatMessages"))
+        assertTrue(script.contains("messages.setChatMessage"))
+        assertTrue(script.contains("messages.setChatMessages"))
+        assertTrue(script.contains("window.getChatMessages = api.messages.getChatMessages"))
+        assertTrue(script.contains("window.setChatMessage = api.messages.setChatMessage"))
+        assertTrue(script.contains("window.setChatMessages = api.messages.setChatMessages"))
+    }
+
+    @Test
+    fun `script exposes MVU status card compatibility globals`() {
+        val script = buildTavernRuntimeScript()
+
+        assertTrue(script.contains("window.waitGlobalInitialized"))
+        assertTrue(script.contains("window.errorCatched"))
+        assertTrue(script.contains("window.eventOn"))
+        assertTrue(script.contains("window.getAllVariables"))
+        assertTrue(script.contains("window.Mvu"))
+        assertTrue(script.contains("window._"))
+    }
 }

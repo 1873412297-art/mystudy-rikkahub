@@ -9,11 +9,13 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.ui.pages.tavern.empty
+import me.rerere.rikkahub.service.filterTavernOpeningPresetMessages
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.uuid.Uuid
 
 class TavernOpeningMetadataTest {
 
@@ -255,5 +257,41 @@ class TavernOpeningMetadataTest {
         assertEquals(orderedRef.contentFingerprint, reorderedRef.contentFingerprint)
         assertNotEquals(orderedRef.cardFingerprint, reorderedRef.cardFingerprint)
         assertNotEquals(orderedRef.cardFingerprint, differentBoundariesRef.cardFingerprint)
+    }
+
+    @Test
+    fun `legacy duplicate before a typed opening is removed safely and idempotently`() {
+        val card = TavernCharacterCard.empty().copy(firstMes = "Welcome<UpdateVariable>[]</UpdateVariable>")
+        val duplicate = UIMessage(role = MessageRole.ASSISTANT, parts = listOf(UIMessagePart.Text("Welcome")))
+        val typed = card.openingMessage(0).copy(parts = listOf(
+            UIMessagePart.Text("Welcome", UIMessagePart.RenderMode.HTML)
+                .withTavernOpening(card.openingRef(0)),
+            UIMessagePart.StatusPlaceholder("<p>Status</p>"),
+        ))
+        val user = UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("Welcome")))
+        val branched = MessageNode(messages = listOf(duplicate, typed))
+        val conversation = Conversation(
+            assistantId = Uuid.random(),
+            messageNodes = listOf(duplicate.toMessageNode(), typed.toMessageNode(), user.toMessageNode(), branched),
+        )
+
+        val repaired = conversation.withoutDuplicateLegacyOpeningCopies(card)
+
+        assertEquals(listOf(typed.id, user.id, branched.currentMessage.id), repaired.currentMessages.map { it.id })
+        assertEquals(repaired, repaired.withoutDuplicateLegacyOpeningCopies(card))
+    }
+
+    @Test
+    fun `preset filtering removes typed or exact first mes before rendering`() {
+        val card = TavernCharacterCard.empty().copy(firstMes = "Opening")
+        val exact = UIMessage.assistantHtml("Opening")
+        val typed = card.openingMessage(0)
+        val unrelated = UIMessage.assistantHtml("Opening with suffix")
+        val user = UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("Opening")))
+
+        assertEquals(
+            listOf(unrelated.id, user.id),
+            filterTavernOpeningPresetMessages(listOf(exact, typed, unrelated, user), card).map { it.id },
+        )
     }
 }

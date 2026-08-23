@@ -1,0 +1,10 @@
+{
+  "upstream": "https://github.com/SillyTavern/SillyTavern",
+  "tag": "1.18.0",
+  "commit": "51ad27fb86d39a3daca3adaa970375c9670c12df",
+  "reference_files": {
+    "public/index.html": "sha256:c3b79b7787c5dfaa4a1f90bb32917054c491eda4f2ab6f0f2f6efc8f0d796cdc",
+    "public/style.css": "sha256:cc91d34157e418dc047b2e2f6cdd3b3bdcb23c0773ed63bc278c804821eaa462"
+  },
+  "integration": "The local tavern-conversation.html reimplements the 1.18.0 chat DOM vocabulary and interaction geometry against RikkaHub's versioned host protocol. No upstream JavaScript bundle or runtime network dependency is loaded."
+}

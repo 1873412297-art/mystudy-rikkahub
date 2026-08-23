@@ -14,7 +14,9 @@ interface TavernConversationActions {
     fun onMessageLongPress(messageId: Uuid)
     fun onSelectBranch(nodeId: Uuid, index: Int)
     fun onOpenHtml(messageId: Uuid)
-    fun onFallbackRequested()
+    fun onToolApproval(toolCallId: String, approved: Boolean, reason: String)
+    fun onToolAnswer(toolCallId: String, answer: String)
+    fun onSelectGreeting(index: Int) = Unit
 }
 
 /** Narrow, validating bridge exposed only to the app-owned conversation document. */
@@ -22,8 +24,10 @@ class TavernConversationBridge(
     actionToken: String,
     private val actions: TavernConversationActions,
     private val onOpenLink: (String) -> Unit = {},
+    private val onOpenResource: (String) -> Unit = {},
     private val onDocumentReady: () -> Unit = {},
     private val dispatch: (() -> Unit) -> Unit = { it() },
+    private val revisionProvider: () -> Long = { 0L },
 ) {
     private val trustedToken = actionToken.toByteArray(StandardCharsets.UTF_8)
 
@@ -57,6 +61,14 @@ class TavernConversationBridge(
     }
 
     @JavascriptInterface
+    fun selectGreeting(actionToken: String, index: Int, count: Int, revision: Long): Boolean {
+        if (!isTrusted(actionToken) || revision != revisionProvider()) return false
+        if (count !in 1..MAX_GREETING_COUNT || index !in 0 until count) return false
+        dispatch { actions.onSelectGreeting(index) }
+        return true
+    }
+
+    @JavascriptInterface
     fun openHtml(actionToken: String, messageId: String): Boolean {
         if (!isTrusted(actionToken)) return false
         return validUuid(messageId)?.let { id ->
@@ -66,9 +78,20 @@ class TavernConversationBridge(
     }
 
     @JavascriptInterface
-    fun requestFallback(actionToken: String): Boolean {
-        if (!isTrusted(actionToken)) return false
-        dispatch(actions::onFallbackRequested)
+    fun toolApproval(actionToken: String, toolCallId: String, approved: Boolean, reason: String): Boolean {
+        if (!isTrusted(actionToken) || !isValidToolCallId(toolCallId) || reason.length > MAX_TOOL_PAYLOAD_LENGTH) {
+            return false
+        }
+        dispatch { actions.onToolApproval(toolCallId, approved, reason) }
+        return true
+    }
+
+    @JavascriptInterface
+    fun toolAnswer(actionToken: String, toolCallId: String, answer: String): Boolean {
+        if (!isTrusted(actionToken) || !isValidToolCallId(toolCallId) ||
+            answer.isBlank() || answer.length > MAX_TOOL_PAYLOAD_LENGTH
+        ) return false
+        dispatch { actions.onToolAnswer(toolCallId, answer) }
         return true
     }
 
@@ -78,6 +101,13 @@ class TavernConversationBridge(
         val url = rawUrl.trim()
         if (!isAllowedTavernConversationLink(url)) return false
         dispatch { onOpenLink(url) }
+        return true
+    }
+
+    @JavascriptInterface
+    fun openResource(actionToken: String, rawUrl: String, userGesture: Boolean): Boolean {
+        if (!isTrusted(actionToken) || !userGesture || !rawUrl.startsWith(TAVERN_RESOURCE_ORIGIN)) return false
+        dispatch { onOpenResource(rawUrl) }
         return true
     }
 
@@ -91,9 +121,13 @@ class TavernConversationBridge(
         return runCatching { Uuid.parse(value) }.getOrNull()
     }
 
+    private fun isValidToolCallId(value: String): Boolean = value.isNotBlank() && value.length <= MAX_IDENTIFIER_LENGTH
+
     companion object {
         const val MAX_BRANCH_INDEX = 4096
+        const val MAX_GREETING_COUNT = 4096
         private const val MAX_IDENTIFIER_LENGTH = 64
+        private const val MAX_TOOL_PAYLOAD_LENGTH = 65_536
     }
 }
 
@@ -138,6 +172,20 @@ internal fun shouldAllowTavernSubresource(rawUrl: String, networkAllowed: Boolea
     }
 }
 
+internal enum class TavernSubresourceRoute { LOCAL, BLOCKED, REMOTE_MEDIA, WEBVIEW }
+
+internal fun routeTavernSubresource(
+    rawUrl: String,
+    accept: String?,
+    isLocalResource: Boolean,
+    networkAllowed: Boolean,
+): TavernSubresourceRoute = when {
+    isLocalResource -> TavernSubresourceRoute.LOCAL
+    !shouldAllowTavernSubresource(rawUrl, networkAllowed) -> TavernSubresourceRoute.BLOCKED
+    isLikelyTavernImageRequest(rawUrl, accept) -> TavernSubresourceRoute.REMOTE_MEDIA
+    else -> TavernSubresourceRoute.WEBVIEW
+}
+
 internal class TavernSendHookControllerBinding(
     private val store: TavernSendHookStore,
     private val controller: TavernRuntimeController,
@@ -161,6 +209,7 @@ data class TavernConversationRenderState(
     val generation: Int,
     val status: TavernConversationRenderStatus,
     val reason: String? = null,
+    val automaticRetryCount: Int = 0,
 ) {
     fun onReady(generation: Int): TavernConversationRenderState =
         if (generation == this.generation && status == TavernConversationRenderStatus.LOADING) {
@@ -176,10 +225,28 @@ data class TavernConversationRenderState(
             this
         }
 
-    fun retry(): TavernConversationRenderState = TavernConversationRenderState(
+    fun nextAutomaticRetryDelayMillis(): Long? = when {
+        status != TavernConversationRenderStatus.FAILED -> null
+        automaticRetryCount == 0 -> 250L
+        automaticRetryCount == 1 -> 1_000L
+        else -> null
+    }
+
+    fun automaticRetry(): TavernConversationRenderState? =
+        nextAutomaticRetryDelayMillis()?.let {
+            TavernConversationRenderState(
+                generation = generation + 1,
+                status = TavernConversationRenderStatus.LOADING,
+                automaticRetryCount = automaticRetryCount + 1,
+            )
+        }
+
+    fun manualRetry(): TavernConversationRenderState = TavernConversationRenderState(
         generation = generation + 1,
         status = TavernConversationRenderStatus.LOADING,
     )
+
+    fun retry(): TavernConversationRenderState = manualRetry()
 
     companion object {
         fun initial() = TavernConversationRenderState(0, TavernConversationRenderStatus.LOADING)

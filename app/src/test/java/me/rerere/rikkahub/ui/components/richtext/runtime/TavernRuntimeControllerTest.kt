@@ -19,6 +19,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import me.rerere.rikkahub.data.model.TavernRuntimePermissions
 import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernChatMessageGateway
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernChatMutationResult
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernChatQueryOptions
 
 class TavernRuntimeControllerTest {
     private val controller = TavernRuntimeController()
@@ -41,6 +44,92 @@ class TavernRuntimeControllerTest {
 
         assertFalse(response.ok)
         assertEquals("UNSUPPORTED", response.error!!.code)
+    }
+
+    @Test
+    fun `messages getChatMessages delegates SillyTavern query options`() {
+        var observedRange = ""
+        var observedOptions = TavernChatQueryOptions()
+        val gateway = object : TavernChatMessageGateway {
+            override fun getChatMessages(range: String, options: TavernChatQueryOptions): JsonArray {
+                observedRange = range
+                observedOptions = options
+                return JsonArray(listOf(JsonPrimitive("message")))
+            }
+
+            override fun setChatMessage(params: JsonObject) = TavernChatMutationResult.Accepted
+            override fun setChatMessages(params: JsonObject) = TavernChatMutationResult.Accepted
+        }
+        val response = TavernRuntimeController(chatMessageGateway = gateway).dispatch(
+            TavernRuntimeRequest(
+                id = "chat-query",
+                method = "messages.getChatMessages",
+                params = buildJsonObject {
+                    put("range", "-2--1")
+                    put("options", buildJsonObject {
+                        put("role", "assistant")
+                        put("hide_state", "unhidden")
+                        put("include_swipes", true)
+                    })
+                },
+            ),
+        )
+
+        assertTrue(response.ok)
+        assertEquals("message", response.result!!.jsonArray.single().jsonPrimitive.content)
+        assertEquals("-2--1", observedRange)
+        assertEquals(TavernChatQueryOptions("assistant", "unhidden", true), observedOptions)
+    }
+
+    @Test
+    fun `messages getChatMessages accepts singular include swipe used by Tavern cards`() {
+        var observedOptions = TavernChatQueryOptions()
+        val gateway = object : TavernChatMessageGateway {
+            override fun getChatMessages(range: String, options: TavernChatQueryOptions): JsonArray {
+                observedOptions = options
+                return JsonArray(emptyList())
+            }
+
+            override fun setChatMessage(params: JsonObject) = TavernChatMutationResult.Accepted
+            override fun setChatMessages(params: JsonObject) = TavernChatMutationResult.Accepted
+        }
+
+        val response = TavernRuntimeController(chatMessageGateway = gateway).dispatch(
+            TavernRuntimeRequest(
+                id = "chat-query-singular-swipe",
+                method = "messages.getChatMessages",
+                params = buildJsonObject {
+                    put("range", "0")
+                    put("options", buildJsonObject { put("include_swipe", true) })
+                },
+            ),
+        )
+
+        assertTrue(response.ok)
+        assertTrue(observedOptions.includeSwipes)
+    }
+
+    @Test
+    fun `messages setChatMessage requires message write permission`() {
+        var called = false
+        val gateway = object : TavernChatMessageGateway {
+            override fun getChatMessages(range: String, options: TavernChatQueryOptions) = JsonArray(emptyList())
+            override fun setChatMessage(params: JsonObject): TavernChatMutationResult {
+                called = true
+                return TavernChatMutationResult.Accepted
+            }
+            override fun setChatMessages(params: JsonObject) = TavernChatMutationResult.Accepted
+        }
+        val response = TavernRuntimeController(
+            permissionStore = TavernRuntimePermissionStore(
+                TavernRuntimePermissions(allowScripts = true, allowMessageWrite = false),
+            ),
+            chatMessageGateway = gateway,
+        ).dispatch(TavernRuntimeRequest("chat-write", "messages.setChatMessage", buildJsonObject {}))
+
+        assertFalse(response.ok)
+        assertEquals("PERMISSION_DENIED", response.error!!.code)
+        assertFalse(called)
     }
 
     @Test

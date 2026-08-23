@@ -48,6 +48,7 @@ import me.rerere.rikkahub.data.model.TavernRuntimePermissions
 import me.rerere.rikkahub.data.model.Tag
 import me.rerere.rikkahub.data.model.resolveVisibleQuickMessages
 import me.rerere.rikkahub.data.model.sanitizeQuickMessageRefs
+import me.rerere.rikkahub.data.model.migrateLegacyTavernCardAvatar
 import me.rerere.rikkahub.data.sync.s3.S3Config
 import me.rerere.rikkahub.ui.theme.CustomTheme
 import me.rerere.rikkahub.ui.theme.PresetThemes
@@ -153,6 +154,7 @@ class SettingsStore(
         val TAVERN_PERMISSION_COMPAT_MIGRATED = booleanPreferencesKey("tavern_permission_compat_migrated_v1")
         val TAVERN_GLOBAL_VARIABLES = stringPreferencesKey("tavern_global_variables")
         val TAVERN_RENDER_PREFERENCES = stringPreferencesKey("tavern_render_preferences")
+        val TAVERN_CARD_SCRIPT_PERMISSIONS = stringPreferencesKey("tavern_card_script_permissions")
 
         // 备份提醒
         val BACKUP_REMINDER_CONFIG = stringPreferencesKey("backup_reminder_config")
@@ -256,6 +258,9 @@ class SettingsStore(
                         JsonInstant.decodeFromString<TavernRenderPreferences>(it).normalized()
                     }.getOrNull()
                 } ?: TavernRenderPreferences(),
+                tavernCardScriptPermissions = preferences[TAVERN_CARD_SCRIPT_PERMISSIONS]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: emptyMap(),
                 webServerEnabled = preferences[WEB_SERVER_ENABLED] == true,
                 webServerPort = preferences[WEB_SERVER_PORT] ?: 8080,
                 webServerJwtEnabled = preferences[WEB_SERVER_JWT_ENABLED] == true,
@@ -327,7 +332,7 @@ class SettingsStore(
                     }
                 },
                 assistants = settings.assistants.distinctBy { it.id }.map { assistant ->
-                    assistant.copy(
+                    assistant.migrateLegacyTavernCardAvatar().copy(
                         // 过滤掉不存在的 MCP 服务器 ID
                         mcpServers = assistant.mcpServers.filter { serverId ->
                             serverId in validMcpServerIds
@@ -428,6 +433,8 @@ class SettingsStore(
             preferences[TAVERN_GLOBAL_VARIABLES] = JsonInstant.encodeToString(settings.tavernGlobalVariables)
             preferences[TAVERN_RENDER_PREFERENCES] =
                 JsonInstant.encodeToString(settings.tavernRenderPreferences.normalized())
+            preferences[TAVERN_CARD_SCRIPT_PERMISSIONS] =
+                JsonInstant.encodeToString(settings.tavernCardScriptPermissions)
             preferences[WEB_SERVER_ENABLED] = settings.webServerEnabled
             preferences[WEB_SERVER_PORT] = settings.webServerPort
             preferences[WEB_SERVER_JWT_ENABLED] = settings.webServerJwtEnabled
@@ -591,6 +598,8 @@ data class Settings(
     val runtimePermissions: TavernRuntimePermissions = TavernRuntimePermissions(),
     val tavernGlobalVariables: JsonObject = JsonObject(emptyMap()),
     val tavernRenderPreferences: TavernRenderPreferences = TavernRenderPreferences(),
+    /** SHA-256 character-card fingerprint to explicit full-script approval (false = remembered safe mode). */
+    val tavernCardScriptPermissions: Map<String, Boolean> = emptyMap(),
     val webServerEnabled: Boolean = false,
     val webServerPort: Int = 8080,
     val webServerJwtEnabled: Boolean = false,

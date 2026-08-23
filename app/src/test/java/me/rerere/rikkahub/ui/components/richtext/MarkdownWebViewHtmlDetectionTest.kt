@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.components.richtext
 
 import me.rerere.rikkahub.ui.pages.chat.tavern.render.buildTavernViewportAdapterScript
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -48,10 +49,57 @@ class MarkdownWebViewHtmlDetectionTest {
     }
 
     @Test
+    fun `raw tavern document receives compatibility runtime before card scripts`() {
+        val html = buildSandboxHostHtml(
+            userHtml = "<html><head></head><body><script>\$(init)</script></body></html>",
+            bgHex = "#000000",
+            textHex = "#ffffff",
+        )
+
+        val shim = html.indexOf("window.$")
+        val cardScript = html.indexOf("<script>\$(init)</script>")
+        assertTrue(shim >= 0)
+        assertTrue(cardScript > shim)
+    }
+
+    @Test
+    fun `tavern image requests use host media loader`() {
+        assertEquals(
+            MarkdownSubresourceRoute.REMOTE_MEDIA,
+            routeMarkdownSubresource(
+                rawUrl = "https://cards.example/portrait.png",
+                accept = "image/avif,image/webp,*/*",
+                networkAllowed = true,
+                tavernScoped = true,
+            ),
+        )
+        assertEquals(
+            MarkdownSubresourceRoute.BLOCKED,
+            routeMarkdownSubresource(
+                rawUrl = "https://cards.example/portrait.png",
+                accept = "image/*",
+                networkAllowed = false,
+                tavernScoped = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `raw html host repairs interactive overlays after delayed viewport layout`() {
+        val script = buildIframeInjectScript()
+
+        assertTrue(script.contains("tavernViewportAdapter"))
+        assertTrue(script.contains("rikkahubOverlayRepaired"))
+        assertTrue(script.contains("MutationObserver"))
+        assertTrue(script.contains("visualViewport"))
+        assertTrue(script.contains("maxHeight"))
+        assertTrue(script.contains("overflowY"))
+    }
+
+    @Test
     fun `raw html host uses the shared viewport adapter`() {
         val script = buildIframeInjectScript()
 
         assertTrue(script.contains(buildTavernViewportAdapterScript()))
-        assertTrue(script.contains("rikkahubOverlayRepaired"))
     }
 }

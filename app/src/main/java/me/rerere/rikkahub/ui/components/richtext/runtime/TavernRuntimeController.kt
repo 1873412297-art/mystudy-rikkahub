@@ -15,6 +15,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -23,6 +24,9 @@ import kotlinx.serialization.json.put
 import me.rerere.rikkahub.data.ai.slash.MacroExpandContext
 import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
 import me.rerere.rikkahub.data.ai.status.TavernHostEvent
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernChatMessageGateway
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernChatMutationResult
+import me.rerere.rikkahub.ui.pages.chat.tavern.TavernChatQueryOptions
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.uuid.Uuid
@@ -51,6 +55,7 @@ internal class TavernRuntimeController(
     private val headerSource: (() -> List<Pair<String, String>>)? = null,
     private val registrationObserver: TavernRuntimeRegistrationObserver = TavernRuntimeRegistrationObserver.NONE,
     private val currentMessageWriter: ((JsonElement) -> Unit)? = null,
+    private val chatMessageGateway: TavernChatMessageGateway? = null,
 ) {
     // dispatch 在 WebView JavaBridge 线程上读，setContext/setCurrentMessage 在宿主线程上写
     @Volatile
@@ -161,6 +166,9 @@ internal class TavernRuntimeController(
                 "world.deleteEntry" -> deleteWorldEntry(request)
                 "messages.getCurrent" -> getCurrentMessage(request)
                 "messages.updateCurrent" -> updateCurrentMessage(request)
+                "messages.getChatMessages" -> getChatMessages(request)
+                "messages.setChatMessage" -> setChatMessage(request)
+                "messages.setChatMessages" -> setChatMessages(request)
                 "macros.register" -> registerMacro(request)
                 "macros.remove" -> removeMacro(request)
                 "macros.list" -> listMacros(request)
@@ -361,6 +369,68 @@ internal class TavernRuntimeController(
         currentMessage = request.params["patch"] ?: JsonNull
         currentMessageWriter?.invoke(currentMessage)
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
+    }
+
+    private fun getChatMessages(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        val gateway = chatMessageGateway ?: return TavernRuntimeResponse.error(
+            request.id,
+            "UNSUPPORTED_METHOD",
+            "The current renderer does not expose a chat message snapshot",
+        )
+        val range = request.params.getString("range")
+            ?: return badRequest(request, "messages.getChatMessages requires params.range")
+        val options = request.params["options"] as? JsonObject ?: JsonObject(emptyMap())
+        val role = options.getString("role") ?: "all"
+        val hideState = options.getString("hide_state") ?: "all"
+        if (role !in setOf("all", "system", "assistant", "user")) {
+            return badRequest(request, "Unsupported role '$role'")
+        }
+        if (hideState !in setOf("all", "hidden", "unhidden")) {
+            return badRequest(request, "Unsupported hide_state '$hideState'")
+        }
+        val includeSwipes = (options["include_swipes"] as? JsonPrimitive)?.booleanOrNull
+            ?: (options["include_swipe"] as? JsonPrimitive)?.booleanOrNull
+            ?: false
+        return TavernRuntimeResponse.success(
+            request.id,
+            gateway.getChatMessages(range, TavernChatQueryOptions(role, hideState, includeSwipes)),
+        )
+    }
+
+    private fun setChatMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowMessageWrite) {
+            return permissionDenied(request, "Message write access is disabled for this script")
+        }
+        val gateway = chatMessageGateway ?: return TavernRuntimeResponse.error(
+            request.id,
+            "UNSUPPORTED_METHOD",
+            "The current renderer does not expose message mutation",
+        )
+        return mutationResponse(request, gateway.setChatMessage(request.params))
+    }
+
+    private fun setChatMessages(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowMessageWrite) {
+            return permissionDenied(request, "Message write access is disabled for this script")
+        }
+        val gateway = chatMessageGateway ?: return TavernRuntimeResponse.error(
+            request.id,
+            "UNSUPPORTED_METHOD",
+            "The current renderer does not expose message mutation",
+        )
+        return mutationResponse(request, gateway.setChatMessages(request.params))
+    }
+
+    private fun mutationResponse(
+        request: TavernRuntimeRequest,
+        result: TavernChatMutationResult,
+    ): TavernRuntimeResponse = when (result) {
+        TavernChatMutationResult.Accepted -> TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
+        is TavernChatMutationResult.Rejected -> TavernRuntimeResponse.error(
+            request.id,
+            result.code,
+            result.message,
+        )
     }
 
     private fun badRequest(request: TavernRuntimeRequest, message: String): TavernRuntimeResponse {

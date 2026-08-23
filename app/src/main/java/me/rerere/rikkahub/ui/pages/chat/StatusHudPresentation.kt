@@ -1,13 +1,17 @@
 package me.rerere.rikkahub.ui.pages.chat
 
 import java.security.MessageDigest
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.common.http.jsonObjectOrNull
 import me.rerere.rikkahub.data.ai.status.StatusBlockExtractor
 import me.rerere.rikkahub.data.ai.status.StatusOption
 import me.rerere.rikkahub.data.ai.status.StatusSection
 import me.rerere.rikkahub.data.model.Conversation
+import me.rerere.rikkahub.utils.jsonPrimitiveOrNull
 
 data class StatusHudPage(
     val name: String,
@@ -47,7 +51,7 @@ fun buildStatusHudPresentation(conversation: Conversation): StatusHudPresentatio
             }
         }
         return StatusHudPresentation(
-            headerLine = extraction.headerLine ?: "状态栏",
+            headerLine = resolveStatusHudHeaderLine(conversation.statusVariables, extraction.headerLine),
             sections = extraction.sections,
             pages = pages,
             options = extraction.options,
@@ -58,6 +62,20 @@ fun buildStatusHudPresentation(conversation: Conversation): StatusHudPresentatio
         )
     }
     return null
+}
+
+internal fun resolveStatusHudHeaderLine(
+    statusVariables: JsonObject,
+    extractedHeader: String?,
+): String {
+    val root = statusVariables["stat_data"]?.jsonObjectOrNull ?: statusVariables
+    val world = root["世界"]?.jsonObjectOrNull
+    val time = world?.get("当前时间")?.jsonPrimitiveOrNull?.contentOrNull?.trim().orEmpty()
+    val location = world?.get("当前地点")?.jsonPrimitiveOrNull?.contentOrNull?.trim().orEmpty()
+    return listOf(time, location)
+        .filter(String::isNotBlank)
+        .joinToString(" · ")
+        .ifBlank { extractedHeader?.takeIf(String::isNotBlank) ?: "状态栏" }
 }
 
 /** HUD choices are drafts: prefill first, then close the panel. There is deliberately no send callback. */

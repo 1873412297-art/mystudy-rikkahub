@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -79,6 +80,7 @@ import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScrip
 import me.rerere.rikkahub.utils.JsonInstant
 import org.json.JSONObject
 import org.koin.compose.koinInject
+import okhttp3.OkHttpClient
 import java.io.ByteArrayInputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.uuid.Uuid
@@ -100,9 +102,17 @@ internal fun TavernConversationPane(
     runtimeTargetValidator: ((Uuid) -> Unit)? = null,
     currentMessageWriter: ((Uuid, JsonElement) -> Unit)? = null,
     chatVariablesWriter: ((Uuid, JsonObject) -> Unit)? = null,
+    openingSwipe: TavernOpeningSwipe? = null,
+    openingSelectionMotion: TavernOpeningSelectionMotion? = null,
+    revision: Long = 0,
+    allowCardScripts: Boolean = true,
     onRenderStatus: (TavernConversationRenderStatus) -> Unit = {},
+    onStaticFallback: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val resourceRegistry = remember(conversation.id) { TavernConversationResourceRegistry(context.applicationContext) }
+    DisposableEffect(resourceRegistry) { onDispose(resourceRegistry::clear) }
     val statusVariableStore: StatusVariableStore = koinInject()
     val persistedVariables by statusVariableStore.getState(conversation.id).collectAsState()
     val candidateOverlay = candidateRuntime?.overlayFlow?.collectAsState()?.value
@@ -111,7 +121,7 @@ internal fun TavernConversationPane(
     val card = remember(assistant.tavernCardJson) {
         assistant.tavernCardJson?.let { runCatching { TavernCharacterCard.fromJson(it) }.getOrNull() }
     }
-    val userName = settings.displaySetting.userNickname.ifBlank { "User" }
+    val userName = settings.displaySetting.userNickname.ifBlank { "你" }
     val characterName = card?.name?.ifBlank { assistant.name } ?: assistant.name.ifBlank { "Assistant" }
     val themeVariables = mapOf(
         "--rikkahub-bg" to "transparent",
@@ -121,6 +131,12 @@ internal fun TavernConversationPane(
         "--rikkahub-text-secondary" to hex(colorScheme.onSurfaceVariant),
         "--rikkahub-border" to hex(colorScheme.outlineVariant),
         "--rikkahub-accent" to hex(colorScheme.primary),
+        "--SmartThemeBodyColor" to hex(colorScheme.onSurface),
+        "--SmartThemeEmColor" to hex(colorScheme.onSurfaceVariant),
+        "--SmartThemeQuoteColor" to hex(colorScheme.tertiary),
+        "--SmartThemeUnderlineColor" to hex(colorScheme.secondary),
+        "--SmartThemeBlurTintColor" to hex(colorScheme.surface),
+        "--SmartThemeChatTintColor" to hex(colorScheme.surface),
     )
     val visibleConversation = remember(conversation, visibleMessageId) {
         if (visibleMessageId == null) {
@@ -133,7 +149,29 @@ internal fun TavernConversationPane(
             )
         }
     }
-    val snapshot = remember(visibleConversation, userName, characterName, themeVariables, assistant, loading) {
+    val members = remember(assistant, settings.assistants) {
+        buildTavernConversationMembers(assistant, settings.assistants.associateBy { it.id })
+    }
+    val characterAvatar = remember(assistant.avatar, resourceRegistry) {
+        when (val avatar = assistant.avatar) {
+            is me.rerere.rikkahub.data.model.Avatar.Image ->
+                resourceRegistry.map(avatar.url, "image/*") to null
+            is me.rerere.rikkahub.data.model.Avatar.Emoji -> null to avatar.content
+            me.rerere.rikkahub.data.model.Avatar.Dummy -> null to null
+        }
+    }
+    val userAvatar = remember(settings.displaySetting.userAvatar, resourceRegistry) {
+        when (val avatar = settings.displaySetting.userAvatar) {
+            is me.rerere.rikkahub.data.model.Avatar.Image ->
+                resourceRegistry.map(avatar.url, "image/*") to null
+            is me.rerere.rikkahub.data.model.Avatar.Emoji -> null to avatar.content
+            me.rerere.rikkahub.data.model.Avatar.Dummy -> null to null
+        }
+    }
+    val snapshot = remember(
+        visibleConversation, userName, characterName, themeVariables, assistant, members, loading, resourceRegistry,
+        characterAvatar, userAvatar, openingSwipe, revision, allowCardScripts,
+    ) {
         buildTavernConversationSnapshot(
             conversation = visibleConversation,
             userName = userName,
@@ -141,6 +179,15 @@ internal fun TavernConversationPane(
             themeCssVariables = themeVariables,
             cardCss = TavernCardStyleResolver.resolve(assistant)?.css,
             streaming = loading,
+            members = members,
+            characterAvatarUrl = characterAvatar.first,
+            characterAvatarEmoji = characterAvatar.second,
+            userAvatarUrl = userAvatar.first,
+            userAvatarEmoji = userAvatar.second,
+            openingSwipe = openingSwipe,
+            revision = revision,
+            allowCardScripts = allowCardScripts,
+            resourceUrlMapper = resourceRegistry::map,
         )
     }
     val worldEntries = remember(settings.lorebooks, conversation.lorebookIds, candidateOverlay) {
@@ -188,7 +235,10 @@ internal fun TavernConversationPane(
         runtimeTargetValidator = runtimeTargetValidator,
         currentMessageWriter = currentMessageWriter,
         chatVariablesWriter = chatVariablesWriter,
+        openingSelectionMotion = openingSelectionMotion,
         onRenderStatus = onRenderStatus,
+        onStaticFallback = onStaticFallback,
+        resourceRegistry = resourceRegistry,
         modifier = modifier,
     )
 }
@@ -206,7 +256,10 @@ internal fun TavernConversationWebView(
     runtimeTargetValidator: ((Uuid) -> Unit)? = null,
     currentMessageWriter: ((Uuid, JsonElement) -> Unit)? = null,
     chatVariablesWriter: ((Uuid, JsonObject) -> Unit)? = null,
+    openingSelectionMotion: TavernOpeningSelectionMotion? = null,
     onRenderStatus: (TavernConversationRenderStatus) -> Unit = {},
+    onStaticFallback: () -> Unit = {},
+    resourceRegistry: TavernConversationResourceRegistry? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -215,6 +268,7 @@ internal fun TavernConversationWebView(
     val hostEventBus: TavernHostEventBus = koinInject()
     val scriptRegistry: TavernScriptRegistry = koinInject()
     val sendHookStore: TavernSendHookStore = koinInject()
+    val httpClient: OkHttpClient = koinInject()
     val appSettings by settingsStore.settingsFlow.collectAsState()
     val runtimeScope = rememberCoroutineScope()
     val conversationUuid = remember(snapshot.conversationId) {
@@ -226,12 +280,23 @@ internal fun TavernConversationWebView(
     val latestRuntimeTargetValidator by rememberUpdatedState(runtimeTargetValidator)
     val latestCurrentMessageWriter by rememberUpdatedState(currentMessageWriter)
     val latestChatVariablesWriter by rememberUpdatedState(chatVariablesWriter)
+    val latestSnapshot by rememberUpdatedState(snapshot)
+    val latestActions by rememberUpdatedState(actions)
+    val messageGateway = remember(snapshot.conversationId, runtimeScope) {
+        TavernConversationMessageGateway(
+            snapshotProvider = { latestSnapshot },
+            dispatchGreeting = { index, _, _ ->
+                runtimeScope.launch { latestActions.onSelectGreeting(index) }
+            },
+        )
+    }
     val runtimeController = remember(
         snapshot.conversationId,
         runtimeBindings,
         ownsSendHookController,
         runtimeTargetValidator != null,
         chatVariablesWriter != null,
+        messageGateway,
     ) {
         val baseVariableGateway = runtimeBindings?.variableGateway
             ?: StatusStoreTavernVariableGateway(
@@ -271,6 +336,7 @@ internal fun TavernConversationWebView(
                     }
                     Unit
                 },
+            chatMessageGateway = messageGateway,
         )
     }
     val sendHookBinding = remember(sendHookStore, runtimeController, ownsSendHookController) {
@@ -281,12 +347,17 @@ internal fun TavernConversationWebView(
             conversationId = conversationUuid,
         )
     }
-    val latestSnapshot by rememberUpdatedState(snapshot)
     val latestContext by rememberUpdatedState(contextSnapshot)
     val latestCurrentMessage by rememberUpdatedState(currentMessage)
     val webViewRef = remember { mutableStateOf<WebView?>(null) }
     val networkAllowed = remember { AtomicBoolean(appSettings.runtimePermissions.allowNetwork) }
+    val remoteMediaLoader = remember(context.applicationContext, httpClient) {
+        TavernRemoteMediaLoader.create(context.applicationContext.cacheDir, httpClient)
+    }
+    DisposableEffect(remoteMediaLoader) { onDispose(remoteMediaLoader::close) }
     var renderState by remember(snapshot.conversationId) { mutableStateOf(TavernConversationRenderState.initial()) }
+    var staticFallback by remember(snapshot.conversationId) { mutableStateOf(false) }
+    var deliveredOpeningMotionId by remember(snapshot.conversationId) { mutableStateOf<Long?>(null) }
 
     SideEffect {
         permissionStore.update(appSettings.runtimePermissions)
@@ -329,15 +400,36 @@ internal fun TavernConversationWebView(
         runtimeController.setCurrentMessage(currentMessage ?: JsonNull)
         runtimeController.setContext(contextSnapshot)
     }
+    LaunchedEffect(openingSelectionMotion, renderState.status) {
+        openingSelectionMotion ?: return@LaunchedEffect
+        if (renderState.status != TavernConversationRenderStatus.READY ||
+            deliveredOpeningMotionId == openingSelectionMotion.id
+        ) {
+            return@LaunchedEffect
+        }
+        val webView = webViewRef.value ?: return@LaunchedEffect
+        webView.postOpeningSelectionMotion(openingSelectionMotion.direction)
+        deliveredOpeningMotionId = openingSelectionMotion.id
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
+        LaunchedEffect(
+            renderState.generation,
+            renderState.status,
+            renderState.automaticRetryCount,
+        ) {
+            val delayMillis = renderState.nextAutomaticRetryDelayMillis() ?: return@LaunchedEffect
+            delay(delayMillis)
+            renderState.automaticRetry()?.let { renderState = it }
+        }
         if (renderState.status != TavernConversationRenderStatus.FAILED) {
             key(renderState.generation) {
                 val generation = renderState.generation
-                var renderedSnapshot by remember(generation) { mutableStateOf(snapshot) }
+                val documentSnapshot = if (staticFallback) snapshot.withCardScriptsDisabled() else snapshot
+                var renderedSnapshot by remember(generation) { mutableStateOf(documentSnapshot) }
                 val actionToken = remember(generation) { java.util.UUID.randomUUID().toString() }
                 val initialDocument = remember(generation, snapshot.conversationId, actionToken) {
-                    buildRuntimeConversationDocument(context, snapshot, actionToken)
+                    buildRuntimeConversationDocument(context, documentSnapshot, actionToken)
                 }
                 AndroidView(
                     factory = { ctx ->
@@ -356,17 +448,24 @@ internal fun TavernConversationWebView(
                                 actionToken = actionToken,
                                 actions = actions,
                                 onOpenLink = { openExternalLink(ctx, it) },
+                                onOpenResource = { rawUrl ->
+                                    resourceRegistry?.originalUri(rawUrl)?.let { uri -> openResource(ctx, uri) }
+                                },
                                 onDocumentReady = {
                                     runtimeController.setCurrentMessage(latestCurrentMessage ?: JsonNull)
                                     runtimeController.setContext(latestContext)
                                     webView.postRuntimeContext(latestContext)
-                                    val patches = diffTavernSnapshots(renderedSnapshot, latestSnapshot)
+                                    val nextSnapshot = if (staticFallback) {
+                                        latestSnapshot.withCardScriptsDisabled()
+                                    } else latestSnapshot
+                                    val patches = diffTavernSnapshots(renderedSnapshot, nextSnapshot)
                                     if (patches.isNotEmpty()) webView.postConversationPatches(patches)
-                                    renderedSnapshot = latestSnapshot
+                                    renderedSnapshot = nextSnapshot
                                     renderState = renderState.onReady(generation)
                                     onRenderStatus(TavernConversationRenderStatus.READY)
                                 },
                                 dispatch = { callback -> webView.post(callback) },
+                                revisionProvider = { latestSnapshot.revision },
                             )
                             addJavascriptInterface(actionBridge, "TavernConversationBridge")
                             addJavascriptInterface(
@@ -384,6 +483,8 @@ internal fun TavernConversationWebView(
                             )
                             webViewClient = secureClient(
                                 networkAllowed = networkAllowed,
+                                resourceRegistry = resourceRegistry,
+                                remoteMediaLoader = remoteMediaLoader,
                                 onFailure = { reason ->
                                     renderState = renderState.onFailure(generation, reason)
                                     onRenderStatus(TavernConversationRenderStatus.FAILED)
@@ -421,10 +522,11 @@ internal fun TavernConversationWebView(
                         }
                     },
                     update = { webView ->
-                        if (renderState.status == TavernConversationRenderStatus.READY && renderedSnapshot != snapshot) {
-                            val patches = diffTavernSnapshots(renderedSnapshot, snapshot)
+                        val nextSnapshot = if (staticFallback) snapshot.withCardScriptsDisabled() else snapshot
+                        if (renderState.status == TavernConversationRenderStatus.READY && renderedSnapshot != nextSnapshot) {
+                            val patches = diffTavernSnapshots(renderedSnapshot, nextSnapshot)
                             if (patches.isNotEmpty()) webView.postConversationPatches(patches)
-                            renderedSnapshot = snapshot
+                            renderedSnapshot = nextSnapshot
                         }
                     },
                     onRelease = { webView ->
@@ -443,11 +545,15 @@ internal fun TavernConversationWebView(
             TavernConversationRenderStatus.LOADING -> CircularProgressIndicator(
                 modifier = Modifier.align(Alignment.Center),
             )
-            TavernConversationRenderStatus.FAILED -> StaticConversationFallback(
+            TavernConversationRenderStatus.FAILED -> TavernConversationErrorPage(
                 snapshot = snapshot,
                 reason = renderState.reason.orEmpty(),
-                onRetry = { renderState = renderState.retry() },
-                onCompose = actions::onFallbackRequested,
+                onRetry = { renderState = renderState.manualRetry() },
+                onUseStatic = {
+                    staticFallback = true
+                    onStaticFallback()
+                    renderState = renderState.manualRetry()
+                },
                 modifier = Modifier.fillMaxSize(),
             )
             TavernConversationRenderStatus.READY -> Unit
@@ -456,11 +562,11 @@ internal fun TavernConversationWebView(
 }
 
 @Composable
-private fun StaticConversationFallback(
+private fun TavernConversationErrorPage(
     snapshot: TavernConversationSnapshot,
     reason: String,
     onRetry: () -> Unit,
-    onCompose: () -> Unit,
+    onUseStatic: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(modifier = modifier, color = MaterialTheme.colorScheme.surface) {
@@ -474,7 +580,7 @@ private fun StaticConversationFallback(
                 Text(node.selectedMessage.parts.joinToString("\n\n") { it.text })
             }
             TextButton(onClick = onRetry) { Text("重试酒馆视图") }
-            TextButton(onClick = onCompose) { Text("切换兼容视图") }
+            TextButton(onClick = onUseStatic) { Text("忽略脚本并使用静态内容") }
         }
     }
 }
@@ -508,8 +614,10 @@ private fun WebSettings.applySecureConversationSettings() {
     allowUniversalAccessFromFileURLs = false
 }
 
-private fun secureClient(
+internal fun secureClient(
     networkAllowed: AtomicBoolean,
+    resourceRegistry: TavernConversationResourceRegistry?,
+    remoteMediaLoader: TavernRemoteMediaLoader,
     onFailure: (String) -> Unit,
     onOpenExternal: (Uri) -> Unit,
 ): WebViewClient = object : WebViewClient() {
@@ -521,10 +629,25 @@ private fun secureClient(
 
     override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
         val uri = request?.url ?: return blockedResponse()
-        if (!shouldAllowTavernSubresource(uri.toString(), networkAllowed.get())) {
-            return blockedResponse()
+        val rawUrl = uri.toString()
+        val localResponse = resourceRegistry?.intercept(rawUrl)
+        return when (
+            routeTavernSubresource(
+                rawUrl = rawUrl,
+                accept = request.requestHeaders.entries
+                    .firstOrNull { it.key.equals("Accept", ignoreCase = true) }
+                    ?.value,
+                isLocalResource = localResponse != null,
+                networkAllowed = networkAllowed.get(),
+            )
+        ) {
+            TavernSubresourceRoute.LOCAL -> localResponse ?: blockedResponse()
+            TavernSubresourceRoute.BLOCKED -> blockedResponse()
+            TavernSubresourceRoute.REMOTE_MEDIA ->
+                remoteMediaLoader.intercept(rawUrl, request.requestHeaders)
+                    ?: super.shouldInterceptRequest(view, request)
+            TavernSubresourceRoute.WEBVIEW -> super.shouldInterceptRequest(view, request)
         }
-        return null
     }
 
     override fun onReceivedError(
@@ -541,7 +664,7 @@ private fun secureClient(
     }
 }
 
-private fun blockedResponse() = WebResourceResponse(
+internal fun blockedResponse() = WebResourceResponse(
     "text/plain",
     "UTF-8",
     403,
@@ -559,10 +682,29 @@ private fun openExternalLink(context: android.content.Context, rawUrl: String) {
     }
 }
 
+private fun openResource(context: android.content.Context, uri: Uri) {
+    val mime = context.contentResolver.getType(uri) ?: "*/*"
+    runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, mime)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION),
+        )
+    }
+}
+
 private fun WebView.postConversationPatches(patches: List<TavernConversationPatch>) {
     val json = hostJson.encodeToString(ListSerializer(TavernConversationPatch.serializer()), patches)
     val quoted = JSONObject.quote(json)
     postEvaluate("window.RikkahubConversationDocument&&window.RikkahubConversationDocument.applyPatches($quoted);")
+}
+
+private fun WebView.postOpeningSelectionMotion(direction: Int) {
+    if (direction != -1 && direction != 1) return
+    postEvaluate(
+        "window.RikkahubConversationDocument&&" +
+            "window.RikkahubConversationDocument.triggerOpeningTransition($direction);",
+    )
 }
 
 private fun WebView.postRuntimeContext(context: JsonObject) {

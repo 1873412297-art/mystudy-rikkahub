@@ -4,6 +4,7 @@ import java.util.Base64
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.rerere.ai.ui.UIMessage
@@ -20,6 +21,7 @@ import me.rerere.rikkahub.ui.pages.tavern.empty
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -275,6 +277,113 @@ class TavernGreetingSessionTest {
             assertEquals(64, ref?.contentFingerprint?.length)
             assertEquals(session.candidates.first().openingRef.cardFingerprint, ref?.cardFingerprint)
         }
+    }
+
+    @Test
+    fun `opening status directives become state and web parts instead of visible html`() {
+        val directiveCard = TavernCharacterCard.empty().copy(
+            name = "Aster",
+            firstMes = """
+                A quiet opening paragraph.
+
+                <UpdateVariable><JSONPatch>
+                [
+                  {"op":"replace","path":"/world/time","value":"midnight"},
+                  {"op":"replace","path":"/A/hp","value":10},
+                  {"op":"replace","path":"/A/mp","value":8},
+                  {"op":"replace","path":"/B/hp","value":7},
+                  {"op":"replace","path":"/B/mp","value":6}
+                ]
+                </JSONPatch></UpdateVariable>
+                <StatusPlaceHolderImpl/>
+            """.trimIndent(),
+        )
+
+        val candidate = greetingSession(card = directiveCard).candidates.single().overlay()
+        val text = candidate.messages.single().parts[0] as UIMessagePart.Text
+
+        assertEquals("A quiet opening paragraph.", text.text.trim())
+        assertEquals(UIMessagePart.RenderMode.MARKDOWN, text.renderMode)
+        assertTrue(text.tavernOpeningRef() != null)
+        assertEquals(
+            JsonPrimitive("midnight"),
+            (candidate.chatVariables["world"] as JsonObject)["time"],
+        )
+        val status = candidate.messages.single().parts[1] as UIMessagePart.StatusPlaceholder
+        assertEquals(listOf("A", "B"), status.characterPages.map { it.name })
+        assertFalse(candidate.messages.single().toText().contains("JSONPatch"))
+        assertNotNull(candidate.messages.single().finishedAt)
+    }
+
+    @Test
+    fun `opening status patch with trailing comma is applied and omitted from the message body`() {
+        val trailingCommaCard = TavernCharacterCard.empty().copy(
+            name = "Aster",
+            firstMes = """
+                A quiet opening paragraph.
+
+                <UpdateVariable><JSONPatch>
+                [
+                  {"op":"replace","path":"/world/time","value":"afternoon"},
+                ]
+                </JSONPatch></UpdateVariable>
+                <StatusPlaceHolderImpl/>
+            """.trimIndent(),
+        )
+
+        val candidate = greetingSession(card = trailingCommaCard).candidates.single().overlay()
+        val text = candidate.messages.single().parts.filterIsInstance<UIMessagePart.Text>().single()
+
+        assertEquals("A quiet opening paragraph.", text.text.trim())
+        assertEquals(
+            JsonPrimitive("afternoon"),
+            (candidate.chatVariables["world"] as JsonObject)["time"],
+        )
+    }
+
+    @Test
+    fun `malformed opening status directive never becomes visible message text`() {
+        val malformedCard = TavernCharacterCard.empty().copy(
+            name = "Aster",
+            firstMes = """
+                Visible opening.
+                <UpdateVariable><JSONPatch>[this is not json]</JSONPatch></UpdateVariable>
+                <StatusPlaceHolderImpl/>
+            """.trimIndent(),
+        )
+
+        val message = greetingSession(card = malformedCard).candidates.single().overlay().messages.single()
+        val text = message.parts.filterIsInstance<UIMessagePart.Text>().single()
+
+        assertEquals("Visible opening.", text.text.trim())
+        assertEquals(1, message.parts.filterIsInstance<UIMessagePart.StatusPlaceholder>().size)
+    }
+
+    @Test
+    fun `opening status placeholder preserves the card rich image template`() {
+        val richTemplate = "<html><img src=\"https://example.com/aster.png\"><script>init()</script></html>"
+        val richCard = TavernCharacterCard.empty().copy(
+            name = "Aster",
+            firstMes = "Opening\n<StatusPlaceHolderImpl/>",
+            extensions = buildJsonObject {
+                put("regex_scripts", buildJsonArray {
+                    add(buildJsonObject {
+                        put("scriptName", "状态栏")
+                        put("findRegex", "<StatusPlaceHolderImpl/>")
+                        put("replaceString", richTemplate)
+                        put("disabled", false)
+                        put("markdownOnly", true)
+                        put("promptOnly", false)
+                    })
+                })
+            },
+        )
+
+        val status = greetingSession(card = richCard).candidates.single().overlay()
+            .messages.single().parts.filterIsInstance<UIMessagePart.StatusPlaceholder>().single()
+
+        assertEquals(richTemplate, status.htmlContent)
+        assertTrue(status.characterPages.isEmpty())
     }
 
     @Test

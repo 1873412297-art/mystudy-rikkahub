@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.ui.pages.chat.tavern
 
 import android.app.Activity
+import android.content.Intent
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
@@ -17,7 +18,6 @@ import androidx.test.uiautomator.Until
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -35,6 +35,7 @@ import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeSmokeActiv
 import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScript
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -46,6 +47,43 @@ import kotlin.uuid.Uuid
 class TavernImmersiveRuntimeInstrumentedTest {
     @get:Rule
     val activityRule = ActivityScenarioRule(TavernConversationRecoveryActivity::class.java)
+
+    @Test
+    fun visualOpeningCardTapUpdatesNativeCounterContentAndSwipeEvent() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val device = UiDevice.getInstance(instrumentation)
+        val intent = Intent(instrumentation.targetContext, TavernConversationRecoveryActivity::class.java)
+            .putExtra(TavernConversationRecoveryActivity.EXTRA_RICH_OPENING_FIXTURE, true)
+
+        ActivityScenario.launch<TavernConversationRecoveryActivity>(intent).use { scenario ->
+            dismissNotificationPermissionDialog(device)
+            val activity = currentActivity(scenario)
+            assertTrue("rich opening WebView never became ready", awaitCondition(45_000) {
+                TavernConversationRenderStatus.READY in activity.renderStatuses
+            })
+            assertTrue(
+                "visual opening card 3 was not exposed through WebView accessibility",
+                device.wait(Until.hasObject(By.textContains("Choose Three")), 20_000),
+            )
+            val thirdCard = requireNotNull(device.findObject(By.textContains("Choose Three")))
+            thirdCard.click()
+
+            assertTrue("authoritative opening index did not change", awaitCondition(15_000) {
+                activity.richOpeningSelectedIndex.get() == 2
+            })
+            assertEquals(listOf(2), activity.richOpeningSelections.toList())
+            assertTrue("MESSAGE_SWIPED was not observed on the host event bus", awaitCondition(10_000) {
+                activity.richOpeningSwipeEvents.get() == 1
+            })
+            assertTrue("native opening counter did not update", device.wait(Until.hasObject(By.text("3 / 3")), 15_000))
+            assertTrue("selected opening content did not rerender", device.wait(
+                Until.hasObject(By.textContains("Opening 3")),
+                15_000,
+            ))
+            assertFalse(device.hasObject(By.textContains("{user}")))
+            assertTrue(device.hasObject(By.textContains("Welcome, Device User")))
+        }
+    }
 
     @Test
     fun fullHtmlRuntimeRetainsMacroVariableContextAndActionsAcrossReload() {
@@ -65,8 +103,7 @@ class TavernImmersiveRuntimeInstrumentedTest {
         val longPressResult = AtomicReference<Uuid>()
         val branchResult = AtomicReference<Pair<Uuid, Int>>()
         val openHtmlResult = AtomicReference<Uuid>()
-        val fallbackCount = AtomicInteger(0)
-        val actionLatch = CountDownLatch(4)
+        val actionLatch = CountDownLatch(3)
         val webViewRef = AtomicReference<WebView>()
 
         val controller = TavernRuntimeController(
@@ -146,11 +183,8 @@ class TavernImmersiveRuntimeInstrumentedTest {
                 openHtmlResult.set(messageId)
                 actionLatch.countDown()
             }
-
-            override fun onFallbackRequested() {
-                fallbackCount.incrementAndGet()
-                actionLatch.countDown()
-            }
+            override fun onToolApproval(toolCallId: String, approved: Boolean, reason: String) = Unit
+            override fun onToolAnswer(toolCallId: String, answer: String) = Unit
         }
         val runtimeScenario = ActivityScenario.launch(TavernRuntimeSmokeActivity::class.java)
         val secureSettings = AtomicReference<Pair<Boolean, Boolean>>()
@@ -262,8 +296,7 @@ class TavernImmersiveRuntimeInstrumentedTest {
                     "(function(){var b=window.TavernConversationBridge;" +
                         "b.longPress('$actionToken','$messageId');" +
                         "b.selectBranch('$actionToken','$nodeId',1);" +
-                        "b.openHtml('$actionToken','$messageId');" +
-                        "b.requestFallback('$actionToken');})();",
+                        "b.openHtml('$actionToken','$messageId');})();",
                     null,
                 )
             }
@@ -271,7 +304,6 @@ class TavernImmersiveRuntimeInstrumentedTest {
             assertEquals(messageId, longPressResult.get())
             assertEquals(nodeId to 1, branchResult.get())
             assertEquals(messageId, openHtmlResult.get())
-            assertEquals(1, fallbackCount.get())
         } finally {
             controller.cancelHostEventCollection()
             runCatching {
@@ -292,7 +324,7 @@ class TavernImmersiveRuntimeInstrumentedTest {
     }
 
     @Test
-    fun realConversationHostShowsStaticFallbackRetriesAndCanSwitchToCompose() {
+    fun realConversationHostAutomaticallyRetriesTwiceThenShowsStOnlyErrorPage() {
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         dismissNotificationPermissionDialog(device)
         val activity = currentActivity(activityRule.scenario)
@@ -310,18 +342,7 @@ class TavernImmersiveRuntimeInstrumentedTest {
             "host did not enter FAILED state: ${activity.renderStatuses}",
             awaitCondition(10_000) { TavernConversationRenderStatus.FAILED in activity.renderStatuses },
         )
-        device.waitForIdle()
-        assertTrue(
-            "static fallback did not preserve source text in ${device.currentPackageName}",
-            device.wait(
-                Until.hasObject(By.textContains(TavernConversationRecoveryActivity.FALLBACK_TEXT)),
-                15_000,
-            ),
-        )
-        val retry = device.wait(Until.findObject(By.text("重试酒馆视图")), 15_000)
-        assertTrue("retry control missing", retry != null)
-        retry.click()
-        assertTrue("retried conversation WebView never became ready", awaitCondition(45_000) {
+        assertTrue("first automatic retry never became ready", awaitCondition(45_000) {
             activity.renderStatuses.count { it == TavernConversationRenderStatus.READY } >= 2
         })
 
@@ -335,11 +356,25 @@ class TavernImmersiveRuntimeInstrumentedTest {
             startMainFrameFailureProbe(current, retriedWebView.get(), secondFailure)
         }
         assertTrue("second main-frame failure probe timed out", secondFailure.await(15, TimeUnit.SECONDS))
-        val composeFallback = device.wait(Until.findObject(By.text("切换兼容视图")), 15_000)
-        assertTrue("Compose fallback control missing", composeFallback != null)
-        composeFallback.click()
-        assertTrue("Compose fallback callback was not dispatched", awaitCondition(10_000) {
-            activity.fallbackCount.get() == 1
+        assertTrue("second automatic retry never became ready", awaitCondition(45_000) {
+            activity.renderStatuses.count { it == TavernConversationRenderStatus.READY } >= 3
+        })
+        val finalWebView = AtomicReference<WebView>()
+        val thirdFailure = CountDownLatch(1)
+        activityRule.scenario.onActivity { current ->
+            finalWebView.set(requireNotNull(findWebView(current.findViewById(android.R.id.content))))
+            startMainFrameFailureProbe(current, finalWebView.get(), thirdFailure)
+        }
+        assertTrue("third main-frame failure probe timed out", thirdFailure.await(15, TimeUnit.SECONDS))
+        assertTrue(
+            "terminal ST error page did not preserve source text",
+            device.wait(Until.hasObject(By.textContains(TavernConversationRecoveryActivity.FALLBACK_TEXT)), 15_000),
+        )
+        assertTrue(device.hasObject(By.text("重试酒馆视图")))
+        assertFalse(device.hasObject(By.text("切换兼容视图")))
+        device.findObject(By.text("重试酒馆视图")).click()
+        assertTrue("manual retry did not reset the recovery budget", awaitCondition(45_000) {
+            activity.renderStatuses.count { it == TavernConversationRenderStatus.READY } >= 4
         })
     }
 

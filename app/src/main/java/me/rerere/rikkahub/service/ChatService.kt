@@ -112,6 +112,7 @@ import me.rerere.rikkahub.data.model.openingRef
 import me.rerere.rikkahub.data.model.tavernOpeningRuntimeState
 import me.rerere.rikkahub.data.model.tavernOpeningRef
 import me.rerere.rikkahub.data.model.withTavernOpening
+import me.rerere.rikkahub.data.model.withoutDuplicateLegacyOpeningCopies
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
@@ -257,6 +258,16 @@ private fun Conversation.withoutOpeningMessages(): Conversation = copy(
         }
     },
 )
+
+internal fun filterTavernOpeningPresetMessages(
+    messages: List<UIMessage>,
+    card: TavernCharacterCard,
+): List<UIMessage> = messages.filterNot { message ->
+    if (message.role != MessageRole.ASSISTANT) return@filterNot false
+    val textParts = message.parts.filterIsInstance<UIMessagePart.Text>()
+    textParts.any { it.tavernOpeningRef() != null } ||
+        (textParts.size == 1 && textParts.single().text == card.firstMes)
+}
 
 internal fun backgroundTextGenerationParams(
     model: Model,
@@ -587,7 +598,9 @@ class ChatService(
                 renderedConversation
             }
             val card = assistant.tavernCardJson?.let(TavernCharacterCard::fromJson)
-            val annotatedConversation = card?.let { cleanedConversation.withLegacyOpeningMetadata(it) }
+            val annotatedConversation = card?.let {
+                cleanedConversation.withLegacyOpeningMetadata(it).withoutDuplicateLegacyOpeningCopies(it)
+            }
                 ?: cleanedConversation
             updateConversation(conversationId, annotatedConversation)
             restoreCommittedOpeningRuntime(conversationId, annotatedConversation, settings)
@@ -609,11 +622,14 @@ class ChatService(
             // 新建对话, 并添加预设消息
             val currentSettings = settingsStore.settingsFlowRaw.first()
             val assistant = currentSettings.getCurrentAssistant()
+            val card = assistant.tavernCardJson?.let(TavernCharacterCard::fromJson)
             statusVariableStore.init(conversationId, JsonObject(emptyMap()))
             val presetMessages = renderPresetMessages(
                 conversationId = conversationId,
                 settings = currentSettings,
                 assistant = assistant,
+                messages = card?.let { filterTavernOpeningPresetMessages(assistant.presetMessages, it) }
+                    ?: assistant.presetMessages,
             )
             var newConversation = Conversation.ofId(
                 id = conversationId,
@@ -621,7 +637,6 @@ class ChatService(
                 newConversation = true
             ).updateCurrentMessages(presetMessages)
                 .copy(statusVariables = statusVariableStore.getValue(conversationId))
-            val card = assistant.tavernCardJson?.let(TavernCharacterCard::fromJson)
             if (card != null && card.allGreetings().isNotEmpty()) {
                 newConversation = newConversation.withLegacyOpeningMetadata(card).withoutOpeningMessages()
             }

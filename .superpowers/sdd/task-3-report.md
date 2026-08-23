@@ -163,3 +163,52 @@ Full JVM/build command:
 ```
 
 Result: `BUILD SUCCESSFUL`; 98 JVM test classes / 706 tests / 0 failures / 0 errors / 0 skipped. Debug APK assembly succeeded.
+
+## Adaptive viewport adapter addendum (2026-08-23)
+
+### Scope
+
+- Added a pure `ViewportRepairDecision` policy which repairs only visible fixed-overlay children with an invalid or
+  effectively zero computed `max-height` and more than 8 px of actual clipping. Card-provided usable max heights,
+  hidden overlays, non-fixed content, and non-clipped panels are preserved.
+- Added one generated JavaScript viewport adapter. Its mutation/resize callbacks only schedule a coalesced animation
+  frame; style and marker writes are conditional, and the observer attribute filter excludes the adapter marker.
+- `MarkdownWebView` embeds the generator output directly. The static `tavern-conversation.html` asset exposes a
+  `{{VIEWPORT_ADAPTER}}` build placeholder which `TavernConversationDocument` replaces with the same generator output
+  before the parent document renders frames or reports bridge readiness.
+- Existing height reporting, document-ready delivery, and link interception remain separate from viewport repair.
+
+### RED
+
+Command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "*TavernViewportAdapterTest" --no-daemon
+```
+
+Observed expected compilation failure for the absent `ViewportRepairDecision`, `decideViewportRepair(...)`, and
+`buildTavernViewportAdapterScript()` contracts.
+
+### Focused GREEN
+
+Command:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests "*TavernViewportAdapterTest" --tests "*MarkdownWebViewHtmlDetectionTest" --tests "*TavernConversationDocumentTest" --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL`.
+
+### Commit and staging boundary
+
+- Commit: `57a4f241` (`fix: unify Tavern viewport adaptation`).
+- The two new adapter files were staged as complete files. `TavernConversationDocument.kt` was clean before the task,
+  so its focused placeholder-replacement change was staged directly. This report is intentionally left uncommitted.
+- `MarkdownWebView.kt`, `tavern-conversation.html`, `MarkdownWebViewHtmlDetectionTest.kt`, and
+  `TavernConversationDocumentTest.kt` already contained user WIP. Their Task 3 changes are patch-staged against `HEAD`;
+  existing remote-media, touch, opening-animation, bridge, permission, and unrelated test hunks remain unstaged.
+
+### Concerns
+
+- Verification is JVM document/contract coverage only. This task does not claim physical-device visual acceptance of a
+  third-party card overlay.

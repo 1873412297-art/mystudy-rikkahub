@@ -114,7 +114,7 @@ fun TavernCardViewerPage(
                         val mime = context.contentResolver.getType(uri)
                         if (mime == "image/png") {
                             val json = ImageUtils.getTavernCharacterMeta(context, uri).getOrThrow()
-                            json to TavernCharacterCard.fromJson(json)
+                            json to parseTavernCardForViewer(json, cardUri)
                         } else {
                             val json = context.contentResolver.openInputStream(uri)?.bufferedReader()
                                 .use { it?.readText() } ?: error("Cannot read file")
@@ -341,6 +341,11 @@ fun TavernCardViewerPage(
         }
     }
 }
+
+internal fun parseTavernCardForViewer(
+    json: String,
+    sourceImageUri: String?,
+): TavernCharacterCard? = TavernCharacterCard.fromJson(json, sourceImageUri = sourceImageUri)
 
 @Composable
 private fun TavernCardContent(

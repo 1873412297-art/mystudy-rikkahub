@@ -48,7 +48,7 @@
 - Consumes: `PlaceholderTransformer.expandVisualMacros(text, userName, charName)`.
 - Produces: `resolveTavernDisplayText(text: String, userName: String, characterName: String): String`.
 
-- [ ] **Step 1: Write failing snapshot tests**
+- [x] **Step 1: Write failing snapshot tests**
 
 Add tests proving all four name macros resolve case-insensitively, blank nicknames become `你`, raw HTML is resolved for display, and the source `Conversation` remains unchanged:
 
@@ -85,7 +85,7 @@ fun `snapshot uses Chinese fallback for blank user nickname`() {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and verify failure**
+- [x] **Step 2: Run the focused tests and verify failure**
 
 Run:
 
@@ -95,7 +95,7 @@ Run:
 
 Expected: the new tests fail because snapshot text is currently copied verbatim and the pane uses `User` as fallback.
 
-- [ ] **Step 3: Add the resolver and route every displayed text part through it**
+- [x] **Step 3: Add the resolver and route every displayed text part through it**
 
 Create the resolver:
 
@@ -117,7 +117,7 @@ Pass `userName` and `characterName` into `toTavernConversationParts`, resolve `U
 val userName = settings.displaySetting.userNickname.ifBlank { "你" }
 ```
 
-- [ ] **Step 4: Run focused tests and verify pass**
+- [x] **Step 4: Run focused tests and verify pass**
 
 Run the Task 1 Gradle command again. Expected: all `TavernConversationSnapshotTest` tests pass.
 
@@ -142,7 +142,7 @@ git commit -m "fix: resolve Tavern display names in conversation"
 - Consumes: `snapshot.themeCssVariables` and Markdown text parts.
 - Produces: `wrapSillyTavernQuotes(markdown: string): string` in the app-owned document.
 
-- [ ] **Step 1: Add failing document contract tests**
+- [x] **Step 1: Add failing document contract tests**
 
 Assert the document contains a quote preprocessor, all six quote families, protected code/style handling, and the theme variable/rule:
 
@@ -159,7 +159,7 @@ assertTrue(template.indexOf("wrapSillyTavernQuotes") < template.indexOf("markdow
 Add an instrumentation case that renders prose plus each quote family, fenced code, inline code, and an HTML attribute;
 assert only dialogue produces six `<q>` elements and computed dialogue color differs from prose.
 
-- [ ] **Step 2: Run focused JVM and instrumentation tests to establish red state**
+- [x] **Step 2: Run focused JVM and instrumentation tests to establish red state**
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest --tests "*TavernConversationDocumentTest"
@@ -168,7 +168,7 @@ assert only dialogue produces six `<q>` elements and computed dialogue color dif
 
 Expected: quote contract and rendered-color assertions fail.
 
-- [ ] **Step 3: Port the SillyTavern quote transform before Markdown parsing**
+- [x] **Step 3: Port the SillyTavern quote transform before Markdown parsing**
 
 Implement a scanner that temporarily protects fenced code, inline code, `<style>...</style>`, and HTML tags with indexed
 sentinels, applies the six non-greedy quote-pair replacements to remaining text, then restores protected segments. The
@@ -181,7 +181,7 @@ var rendered = markdown.render(source);
 
 Do not re-wrap text already inside `<q>` and do not run this transform on raw HTML parts.
 
-- [ ] **Step 4: Add SillyTavern theme aliases and CSS precedence**
+- [x] **Step 4: Add SillyTavern theme aliases and CSS precedence**
 
 Supply these keys from the Material theme:
 
@@ -222,7 +222,7 @@ git commit -m "feat: match SillyTavern dialogue theme colors"
 - Produces: `TavernChatMessageGateway.get(range: String, options: JsonObject): TavernRuntimeResponsePayload` and immutable
   `TavernOpeningSwipe.swipes: List<String>`.
 
-- [ ] **Step 1: Write failing range and swipe-shape tests**
+- [x] **Step 1: Write failing range and swipe-shape tests**
 
 Cover `0`, `0-2`, `-1`, reversed ranges, out-of-range clamping, role/hide filters, `include_swipes=false`, and
 `include_swipes=true`. The opening assertion must require:
@@ -234,7 +234,7 @@ assertEquals("<article>第二幕</article>", first["swipes"]!!.jsonArray[1].json
 assertEquals("assistant", first["role"]!!.jsonPrimitive.content)
 ```
 
-- [ ] **Step 2: Run the new gateway tests and verify failure**
+- [x] **Step 2: Run the new gateway tests and verify failure**
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest --tests "*TavernChatMessageGatewayTest" --tests "*TavernConversationSnapshotTest"
@@ -242,7 +242,7 @@ assertEquals("assistant", first["role"]!!.jsonPrimitive.content)
 
 Expected: compilation fails because the gateway and `swipes` field do not exist.
 
-- [ ] **Step 3: Implement the immutable query model**
+- [x] **Step 3: Implement the immutable query model**
 
 Define:
 
@@ -268,7 +268,7 @@ internal sealed interface TavernChatMutationResult {
 Use zero-based visible indices and normalize negative indices from the end. Serialize each selected node into the exact
 fields `message_id`, `name`, `role`, `is_hidden`, `message`, `data`, and `extra`; add swipe fields only when requested.
 
-- [ ] **Step 4: Expose prepared opening texts without adding a second state machine**
+- [x] **Step 4: Expose prepared opening texts without adding a second state machine**
 
 Extend `TavernOpeningSwipe` with `swipes: List<String> = emptyList()` and validate `swipes.isEmpty() || swipes.size == count`.
 In `TavernOpeningStage`, pass:
@@ -314,7 +314,7 @@ Expected: both focused test classes pass.
 - Produces: runtime methods `messages.getChatMessages`, `messages.setChatMessage`, and `messages.setChatMessages` plus
   global/TavernHelper JS aliases.
 
-- [ ] **Step 1: Write failing controller and mutation tests**
+- [x] **Step 1: Write failing controller and mutation tests**
 
 Assert:
 
@@ -380,13 +380,13 @@ private fun snapshotWithOpenings(texts: List<String>, selectedIndex: Int, revisi
 Also cover stale revision, mismatched message text/swipe index, invalid refresh value, non-opening role change, payload over
 64 KiB, disabled `allowMessageWrite`, and an index outside the greeting count.
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest --tests "*TavernChatMessageGatewayTest" --tests "*TavernConversationBridgeTest" --tests "*TavernRuntimeControllerTest" --tests "*TavernRuntimeScriptApiTest"
 ```
 
-- [ ] **Step 3: Wire validated mutations to the existing greeting action**
+- [x] **Step 3: Wire validated mutations to the existing greeting action**
 
 Build the gateway with providers so it never holds stale Compose state:
 
@@ -405,7 +405,7 @@ The gateway accepts an opening selection only when `message_id == 0`, `swipe_id`
 swipe, refresh is one of the documented SillyTavern values, and revision matches the latest snapshot. `setChatMessages`
 normalizes and validates every entry before dispatching any mutation so a partial batch cannot be applied.
 
-- [ ] **Step 4: Add runtime controller dispatch and JavaScript compatibility facade**
+- [x] **Step 4: Add runtime controller dispatch and JavaScript compatibility facade**
 
 Publish these mappings:
 
@@ -455,7 +455,7 @@ git commit -m "feat: support TavernHelper visual greeting selection"
   and iframe height messages.
 - Produces: stable linked-image/local-image loading and bounded `ResizeObserver` updates.
 
-- [ ] **Step 1: Write failing resource-policy and WebView tests**
+- [x] **Step 1: Write failing resource-policy and WebView tests**
 
 Require these outcomes:
 
@@ -471,14 +471,14 @@ In the instrumentation fixture render one HTTPS image from a local test server, 
 resource, and one broken image. Assert the first three complete with positive natural dimensions, the broken image gains
 `data-rikkahub-media-error`, the iframe remains mounted, and its height changes after a delayed accordion expansion.
 
-- [ ] **Step 2: Run focused tests and verify the new assertions fail**
+- [x] **Step 2: Run focused tests and verify the new assertions fail**
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest --tests "*TavernConversationResourcesTest" --tests "*TavernConversationDocumentTest"
 .\gradlew.bat :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=me.rerere.rikkahub.ui.pages.chat.tavern.TavernImmersiveRuntimeInstrumentedTest
 ```
 
-- [ ] **Step 3: Harden iframe resource and resize behavior**
+- [x] **Step 3: Harden iframe resource and resize behavior**
 
 Inside the injected iframe bootstrap:
 
@@ -521,7 +521,7 @@ git commit -m "feat: harden Tavern rich media frames"
 - Produces: a sanitized debug fixture matching the reference card's technical behavior without embedding its narrative
   content in the repository.
 
-- [ ] **Step 1: Add a sanitized rich-card fixture**
+- [x] **Step 1: Add a sanitized rich-card fixture**
 
 The fixture must include a responsive opening grid, remote/local portraits, CSS transitions, a theme toggle, and this
 same compatibility call pattern used by the reference card:
@@ -536,14 +536,14 @@ async function switchToOpening(index) {
 }
 ```
 
-- [ ] **Step 2: Add an instrumentation scenario that taps a visual card**
+- [x] **Step 2: Add an instrumentation scenario that taps a visual card**
 
 Assert, in order: `{user}` is replaced in the iframe; three visual opening cards are present; tapping card 3 changes
 the authoritative selected greeting to index 2; native counter becomes `3 / 3`; iframe content changes to swipe 3;
 `MESSAGE_SWIPED` fires; dialogue `<q>` uses the quote theme color; portrait image is complete; animation/accordion
 changes iframe height; scroll and back/re-entry do not duplicate callbacks or crash.
 
-- [ ] **Step 3: Run the end-to-end instrumentation class repeatedly**
+- [x] **Step 3: Run the end-to-end instrumentation class repeatedly**
 
 ```powershell
 1..3 | ForEach-Object {
@@ -573,7 +573,7 @@ git commit -m "test: cover rich Tavern visual opening cards"
 - Consumes: all prior tasks and the user's three cards already available in the local SillyTavern/RikkaHub environment.
 - Produces: current build/test/device evidence for every objective requirement.
 
-- [ ] **Step 1: Verify repository ownership and focused diffs**
+- [x] **Step 1: Verify repository ownership and focused diffs**
 
 ```powershell
 if (Get-Process opencode -ErrorAction SilentlyContinue) { throw 'opencode.exe owns the checkout' }
@@ -583,7 +583,7 @@ git diff --check
 
 Inspect every in-scope diff and confirm unrelated user edits remain untouched.
 
-- [ ] **Step 2: Run full JVM, compile, lint for touched modules, and assemble**
+- [x] **Step 2: Run full JVM, compile, lint for touched modules, and assemble**
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest :app:compileDebugKotlin :app:lintDebug :app:assembleDebug
@@ -591,7 +591,7 @@ Inspect every in-scope diff and confirm unrelated user edits remain untouched.
 
 Expected: `BUILD SUCCESSFUL`, zero unit-test failures, and no new lint errors in modified files.
 
-- [ ] **Step 3: Select the correct arm64 APK from output metadata and install it**
+- [x] **Step 3: Select the correct arm64 APK from output metadata and install it**
 
 Read `app/build/outputs/apk/debug/output-metadata.json`, select the `arm64-v8a` element, confirm the connected device ABI,
 then install and launch:
@@ -617,7 +617,7 @@ Using the three supplied cards, capture screenshots and log evidence for:
 6. Disable scripts and network separately: static fallback remains readable and remote media fails locally without taking
    down the conversation document.
 
-- [ ] **Step 5: Check runtime health**
+- [x] **Step 5: Check runtime health**
 
 ```powershell
 adb logcat -d | Select-String -Pattern 'FATAL EXCEPTION|AndroidRuntime|chromium.*crash|RenderProcessGone|OutOfMemoryError'
@@ -640,3 +640,43 @@ git commit -m "docs: record Tavern web compatibility verification"
 
 Do not claim completion if any real card image, selector interaction, quote color, or native UI regression remains
 unverified.
+
+## Verification Results (2026-08-22)
+
+- Repository ownership: `opencode.exe` was absent before edits/builds. The dirty `private-main` worktree was preserved;
+  implementation files overlap earlier uncommitted Tavern work, so task commits were intentionally not created.
+- Focused TDD: the real-card `include_swipe: true` compatibility case failed first, then passed after accepting both
+  `include_swipe` and `include_swipes` without relaxing message-write permission checks.
+- Full local verification: `:app:testDebugUnitTest :app:compileDebugKotlin :app:assembleDebug` completed with
+  `BUILD SUCCESSFUL`; parsed result XML contains 117 suites / 839 tests / 0 failures / 0 errors.
+- Lint status: the combined `lintDebug` run is not globally green because the existing checkout reports 113 errors,
+  309 warnings, and 4 hints (including the Windows `local.properties` separator and pre-existing `ChatPage` findings).
+  Filtering the touched Tavern files found warnings only and no new Tavern-related lint errors.
+- APK/device: installed
+  `app/build/outputs/apk/debug/app-arm64-v8a-debug.apk` (SHA-256
+  `856ED213E9A0A1063B0536A7E8552ED8814D4FF7D8CB7C6B12FDBAFD23FDE4B9`) successfully on
+  `XHD0223523008702` / Huawei MNA-AL00 / `arm64-v8a`. Installed package is `me.rerere.rikkahub.debug`, version
+  `2.4.5` (`versionCode=172`), with `RouteActivity` resumed.
+- Instrumentation: the rich visual-opening scenario passed three consecutive physical-device runs. It verified the
+  rendered `{user}` value, card-3 selection, authoritative native counter/content update, exactly one
+  `MESSAGE_SWIPED`, quote color, image completion, delayed resize, and no WebView crash.
+- Real cards imported and exercised: `慈脂佛母` (5 openings), `道家仙子美母` (9 openings), and the PNG card
+  `明明我才是主人公，为什么身边的女主都是你的炮友啊！？` (rich overview plus 5 openings). The rich PNG card
+  rendered its animated/themeable HTML overview and original avatar while retaining RikkaHub's native composer.
+- Real linked media: the rich card's `https://files.catbox.moe/...` portraits were requested by WebView. The device's
+  direct network returned Chromium `net::ERR_CONNECTION_CLOSED`; with the test machine's existing proxy temporarily
+  applied, the original HTTPS portraits loaded at `naturalWidth=832` and were visibly rendered. The device proxy was
+  restored to its original `null` value afterward. This distinguishes host/network reachability from app policy.
+- Real visual selector: the card's script uses `getChatMessages('0', { include_swipe: true })`. A physical tap on
+  `OPENING · 03` changed the native message to the matching 朝雾花冷 scene and the native counter to `4 / 6` because
+  this card counts the rich overview itself as swipe 0. Dialogue quotes remained visibly distinct purple.
+- Runtime health: no matches for `FATAL EXCEPTION`, Chromium crash, `RenderProcessGone`, or `OutOfMemoryError` after
+  install and real-card interaction; the debug `RouteActivity` remained resumed.
+- Evidence: `verification-screenshots/tavern-web-compat/cizhi-render.png`,
+  `cizhi-opening2-counter.png`, `protagonist-render.png`, `protagonist-linked-image-proxy-waited.png`,
+  `protagonist-opening3-fixed-selected.png`, and `protagonist-opening3-native-counter.png`.
+- Remaining non-core acceptance item: the fullscreen affordance is present and its bridge contract is unit-tested, but
+  opening it from an uncommitted greeting preview does not currently produce the fullscreen dialog because that preview
+  message is not yet in the persisted conversation tree. The requested macro, rich opening, linked-media, quote-color,
+  animation, native-counter, and native-composer outcomes are all verified; Task 7 Step 4 remains unchecked solely for
+  this fullscreen-preview limitation.

@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class MarkdownWebViewSecurityTest {
     @Test
@@ -27,6 +28,20 @@ class MarkdownWebViewSecurityTest {
     }
 
     @Test
+    fun `bounded rich card keeps horizontal drag so its own carousel receives touch end`() {
+        assertTrue(
+            shouldMarkdownWebViewCaptureHorizontalDrag(
+                mode = MarkdownWebViewVerticalScrollMode.INTERNAL,
+            ),
+        )
+        assertFalse(
+            shouldMarkdownWebViewCaptureHorizontalDrag(
+                mode = MarkdownWebViewVerticalScrollMode.PARENT,
+            ),
+        )
+    }
+
+    @Test
     fun `parent scroll mode keeps a chat list continuous even when a message overflows`() {
         assertFalse(
             shouldMarkdownWebViewCaptureVerticalDrag(
@@ -46,6 +61,13 @@ class MarkdownWebViewSecurityTest {
                 atBottom = false,
             ),
         )
+    }
+
+    @Test
+    fun `fixed height rich card keeps small touch movement inside the webview`() {
+        val source = markdownWebViewSource()
+
+        assertTrue(source.contains("hasOverflow = hasOverflow || fixedHeight"))
     }
 
     @Test
@@ -103,4 +125,10 @@ class MarkdownWebViewSecurityTest {
         assertTrue(shouldAllowMarkdownSubresource("https://example.com/image.png", true, true))
         assertTrue(shouldAllowMarkdownSubresource("https://example.com/image.png", false, false))
     }
+
+    private fun markdownWebViewSource(): String = listOf(
+        File("src/main/java/me/rerere/rikkahub/ui/components/richtext/MarkdownWebView.kt"),
+        File("app/src/main/java/me/rerere/rikkahub/ui/components/richtext/MarkdownWebView.kt"),
+    ).firstOrNull { it.exists() }?.readText()
+        ?: error("MarkdownWebView.kt not found in test working dir")
 }

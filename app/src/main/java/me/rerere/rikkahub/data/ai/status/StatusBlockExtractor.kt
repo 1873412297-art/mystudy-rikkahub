@@ -1,5 +1,16 @@
 package me.rerere.rikkahub.data.ai.status
 
+import me.rerere.ai.ui.UIMessagePart
+
+/** Returns an immutable message-body display copy while keeping status data exclusively in the HUD source. */
+fun UIMessagePart.withoutInlineStatus(): UIMessagePart? = when (this) {
+    is UIMessagePart.Text -> StatusBlockExtractor.extract(text).cleanedText
+        .takeIf(String::isNotBlank)
+        ?.let { copy(text = it) }
+    is UIMessagePart.StatusPlaceholder -> null
+    else -> this
+}
+
 /**
  * 状态区域中的一个分节（对应 `<details><summary>T</summary>body</details>`，
  * 或未被 details 包裹的剩余成段文字——此时 [title] 为空串）。

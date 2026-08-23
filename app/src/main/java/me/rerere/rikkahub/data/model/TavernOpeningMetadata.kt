@@ -138,6 +138,44 @@ fun TavernCharacterCard.openingMessage(greetingIndex: Int): UIMessage {
     )
 }
 
+/**
+ * Removes only an unbranched, unmarked assistant copy that precedes a typed opening from the
+ * current card and has exactly the same visible text. This is intentionally conservative so
+ * user messages, branches and merely similar model output are never rewritten.
+ */
+fun Conversation.withoutDuplicateLegacyOpeningCopies(card: TavernCharacterCard): Conversation {
+    val typedOpenings = messageNodes.mapIndexedNotNull { index, node ->
+        if (node.messages.size != 1) return@mapIndexedNotNull null
+        val message = node.currentMessage
+        val ref = message.parts.filterIsInstance<UIMessagePart.Text>()
+            .mapNotNull(UIMessagePart.Text::tavernOpeningRef)
+            .firstOrNull() ?: return@mapIndexedNotNull null
+        val currentRef = runCatching { card.openingRef(ref.greetingIndex) }.getOrNull()
+            ?: return@mapIndexedNotNull null
+        if (currentRef.cardFingerprint != ref.cardFingerprint) return@mapIndexedNotNull null
+        index to message.visibleOpeningBody()
+    }
+    if (typedOpenings.isEmpty()) return this
+
+    val kept = messageNodes.filterIndexed { index, node ->
+        if (node.messages.size != 1) return@filterIndexed true
+        val message = node.currentMessage
+        if (message.role != MessageRole.ASSISTANT) return@filterIndexed true
+        if (message.parts.any { it is UIMessagePart.Text && it.tavernOpeningRef() != null }) {
+            return@filterIndexed true
+        }
+        val body = message.visibleOpeningBody()
+        typedOpenings.none { (typedIndex, typedBody) -> index < typedIndex && body.isNotBlank() && body == typedBody }
+    }
+    return if (kept.size == messageNodes.size) this else copy(messageNodes = kept)
+}
+
+private fun UIMessage.visibleOpeningBody(): String = parts.filterIsInstance<UIMessagePart.Text>()
+    .joinToString("") { it.text }
+    .replace(OPENING_UPDATE_VARIABLE_REGEX, "")
+    .replace(OPENING_STATUS_PLACEHOLDER_REGEX, "")
+    .trim()
+
 private fun JsonObject.stringAt(key: String): String? =
     (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
@@ -161,3 +199,11 @@ private const val OPENING_CONTENT_FINGERPRINT_KEY = "contentFingerprint"
 private const val OPENING_CARD_FINGERPRINT_KEY = "cardFingerprint"
 private const val OPENING_RUNTIME_EXECUTED_KEY = "runtimeExecuted"
 private const val OPENING_RUNTIME_STATE_KEY = "runtimeState"
+private val OPENING_UPDATE_VARIABLE_REGEX = Regex(
+    "<UpdateVariable\\b[^>]*>.*?</UpdateVariable>",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+)
+private val OPENING_STATUS_PLACEHOLDER_REGEX = Regex(
+    "<StatusPlaceHolderImpl\\s*/?>",
+    RegexOption.IGNORE_CASE,
+)
