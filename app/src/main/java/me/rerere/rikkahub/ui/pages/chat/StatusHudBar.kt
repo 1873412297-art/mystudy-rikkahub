@@ -3,11 +3,13 @@ package me.rerere.rikkahub.ui.pages.chat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -18,6 +20,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetValue
@@ -37,6 +40,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.serialization.json.JsonElement
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -44,12 +48,20 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ArrowDown01
 import me.rerere.hugeicons.stroke.ArrowUp01
 import me.rerere.hugeicons.stroke.ChartColumn
+import me.rerere.hugeicons.stroke.FullScreen
+import me.rerere.hugeicons.stroke.MinimizeScreen
+import me.rerere.hugeicons.stroke.Refresh
 import me.rerere.rikkahub.data.ai.status.StatusOption
 import me.rerere.rikkahub.data.ai.status.StatusSection
+import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.ui.components.message.MultiCharacterStatusView
 import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
+import me.rerere.rikkahub.ui.pages.chat.tavern.render.TavernRenderPolicy
+import me.rerere.rikkahub.ui.pages.chat.tavern.render.TavernRenderSurface
+import me.rerere.rikkahub.ui.pages.chat.tavern.render.resolveTavernRenderPolicy
 import me.rerere.rikkahub.utils.JsonInstant
+import org.koin.compose.koinInject
 
 /** A section taller than this starts collapsed so the panel remains easy to scan. */
 private val HudSectionAutoCollapseHeight = 200.dp
@@ -65,12 +77,16 @@ fun StatusHudBar(
     modifier: Modifier = Modifier,
 ) {
     val presentation = remember(conversation) { buildStatusHudPresentation(conversation) } ?: return
+    val settingsStore: SettingsStore = koinInject()
+    val settings by settingsStore.settingsFlow.collectAsStateWithLifecycle()
     val currentMessage: JsonElement? = remember(presentation.sourceMessage) {
         runCatching {
             JsonInstant.encodeToJsonElement(UIMessage.serializer(), presentation.sourceMessage)
         }.getOrNull()
     }
     var showSheet by rememberSaveable(conversation.id) { mutableStateOf(false) }
+    var fullscreen by rememberSaveable(conversation.id) { mutableStateOf(false) }
+    var presentationResetSignal by rememberSaveable(conversation.id) { mutableStateOf(0) }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -134,21 +150,35 @@ fun StatusHudBar(
             onDismissRequest = { showSheet = false },
             sheetState = sheetState,
         ) {
-            StatusHudPanel(
-                presentation = presentation,
-                conversation = conversation,
-                currentMessage = currentMessage,
-                onOptionClick = { optionText ->
-                    selectStatusHudOption(
-                        optionText = optionText,
-                        onPrefill = onOptionClick,
-                        onDismiss = { showSheet = false },
-                    )
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.9f),
-            )
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val availableHeightDp = maxHeight.value.toInt()
+                val policy = resolveTavernRenderPolicy(
+                    surface = TavernRenderSurface.HUD,
+                    availableHeightDp = availableHeightDp,
+                    persistedHudFraction = settings.tavernRenderPreferences.hudFraction,
+                    fullscreen = fullscreen,
+                )
+                StatusHudPanel(
+                    presentation = presentation,
+                    conversation = conversation,
+                    currentMessage = currentMessage,
+                    policy = policy,
+                    fullscreen = fullscreen,
+                    presentationResetSignal = presentationResetSignal,
+                    onToggleFullscreen = { fullscreen = !fullscreen },
+                    onRestorePresentation = { presentationResetSignal += 1 },
+                    onOptionClick = { optionText ->
+                        selectStatusHudOption(
+                            optionText = optionText,
+                            onPrefill = onOptionClick,
+                            onDismiss = { showSheet = false },
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(policy.panelFraction),
+                )
+            }
         }
     }
 }
@@ -158,6 +188,11 @@ private fun StatusHudPanel(
     presentation: StatusHudPresentation,
     conversation: Conversation,
     currentMessage: JsonElement?,
+    policy: TavernRenderPolicy,
+    fullscreen: Boolean,
+    presentationResetSignal: Int,
+    onToggleFullscreen: () -> Unit,
+    onRestorePresentation: () -> Unit,
     onOptionClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -188,28 +223,53 @@ private fun StatusHudPanel(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            presentation.htmlContent?.takeIf { it.isNotBlank() }?.let { html ->
-                MarkdownWebView(
-                    content = html,
-                    isRawHtml = true,
-                    maxHeightDp = 360,
-                    tavernConversationId = conversation.id,
-                    tavernCurrentMessage = currentMessage,
-                    ownsSendHookController = false,
-                    modifier = Modifier.fillMaxWidth(),
+            IconButton(onClick = onRestorePresentation) {
+                Icon(
+                    imageVector = HugeIcons.Refresh,
+                    contentDescription = "恢复角色卡显示默认设置",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-
+            IconButton(onClick = onToggleFullscreen) {
+                if (fullscreen) {
+                    Icon(
+                        imageVector = HugeIcons.MinimizeScreen,
+                        contentDescription = "退出状态栏全屏",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Icon(
+                        imageVector = HugeIcons.FullScreen,
+                        contentDescription = "全屏显示状态栏",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+        val richHtml = presentation.htmlContent?.takeIf { it.isNotBlank() }
+        if (richHtml != null) {
+            MarkdownWebView(
+                content = richHtml,
+                isRawHtml = true,
+                maxHeightDp = null,
+                fixedHeight = true,
+                minHeightDp = 240,
+                tavernConversationId = conversation.id,
+                tavernCurrentMessage = currentMessage,
+                ownsSendHookController = false,
+                presentationResetSignal = presentationResetSignal,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
             if (presentation.pages.isNotEmpty()) {
                 MultiCharacterStatusView(
                     part = UIMessagePart.StatusPlaceholder(
@@ -235,6 +295,7 @@ private fun StatusHudPanel(
 
             if (presentation.options.isNotEmpty()) {
                 HudOptionsRow(presentation.options, onOptionClick)
+            }
             }
         }
     }
@@ -285,7 +346,7 @@ private fun HudSection(
                 MarkdownWebView(
                     content = section.content,
                     isRawHtml = true,
-                    maxHeightDp = 360,
+                    maxHeightDp = null,
                     tavernConversationId = tavernConversationId,
                     tavernCurrentMessage = tavernCurrentMessage,
                     ownsSendHookController = false,

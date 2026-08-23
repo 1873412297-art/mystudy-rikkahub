@@ -204,6 +204,11 @@ internal fun MarkdownWebView(
      */
     fixedHeight: Boolean = false,
     /**
+     * Monotonic signal used by the HUD to clear only this synthetic Tavern document's
+     * local/session presentation state and reload it with stale callbacks invalidated.
+     */
+    presentationResetSignal: Int = 0,
+    /**
      * 酒馆脚本运行时上下文：消息所属会话 ID 与当前消息 JSON。
      * 传入后 variables.* 走真实持久化链路（chat → StatusVariableStore / global → Settings），
      * messages.getCurrent 返回该消息，脚本可经 events.subscribe 接收宿主事件（th:<name> DOM 事件）。
@@ -372,6 +377,29 @@ internal fun MarkdownWebView(
     val networkAllowed = remember { AtomicBoolean(appSettings.runtimePermissions.allowNetwork) }
     SideEffect { networkAllowed.set(appSettings.runtimePermissions.allowNetwork) }
     var renderState by remember { mutableStateOf(MarkdownWebViewRenderState.initial(content)) }
+    val lastPresentationResetSignal = remember { mutableStateOf(presentationResetSignal) }
+    LaunchedEffect(presentationResetSignal, tavernConversationId) {
+        if (presentationResetSignal == lastPresentationResetSignal.value) return@LaunchedEffect
+        lastPresentationResetSignal.value = presentationResetSignal
+        if (tavernConversationId == null) return@LaunchedEffect
+        val webView = tavernWebViewRef.value ?: return@LaunchedEffect
+
+        // Advance first so document-ready/error callbacks from the old page cannot win the race.
+        renderState = renderState.retry()
+        webView.evaluateJavascript(
+            """
+            try {
+              localStorage.clear();
+              sessionStorage.clear();
+              document.dispatchEvent(new CustomEvent('th:reset_presentation'));
+              location.reload();
+            } catch (error) {
+              document.dispatchEvent(new CustomEvent('th:reset_presentation_failed'));
+            }
+            """.trimIndent(),
+            null,
+        )
+    }
     LaunchedEffect(content) {
         if (renderState.rawContent != content) renderState = renderState.withRawContent(content)
     }

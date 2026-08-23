@@ -43,6 +43,7 @@ import me.rerere.rikkahub.data.model.InjectionPosition
 import me.rerere.rikkahub.data.model.Lorebook
 import me.rerere.rikkahub.data.model.PromptInjection
 import me.rerere.rikkahub.data.model.QuickMessage
+import me.rerere.rikkahub.data.model.TavernRenderPreferences
 import me.rerere.rikkahub.data.model.TavernRuntimePermissions
 import me.rerere.rikkahub.data.model.Tag
 import me.rerere.rikkahub.data.model.resolveVisibleQuickMessages
@@ -151,6 +152,7 @@ class SettingsStore(
         val TAVERN_RUNTIME_PERMISSIONS = stringPreferencesKey("tavern_runtime_permissions")
         val TAVERN_PERMISSION_COMPAT_MIGRATED = booleanPreferencesKey("tavern_permission_compat_migrated_v1")
         val TAVERN_GLOBAL_VARIABLES = stringPreferencesKey("tavern_global_variables")
+        val TAVERN_RENDER_PREFERENCES = stringPreferencesKey("tavern_render_preferences")
 
         // 备份提醒
         val BACKUP_REMINDER_CONFIG = stringPreferencesKey("backup_reminder_config")
@@ -249,6 +251,11 @@ class SettingsStore(
                 tavernGlobalVariables = preferences[TAVERN_GLOBAL_VARIABLES]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: JsonObject(emptyMap()),
+                tavernRenderPreferences = preferences[TAVERN_RENDER_PREFERENCES]?.let {
+                    runCatching {
+                        JsonInstant.decodeFromString<TavernRenderPreferences>(it).normalized()
+                    }.getOrNull()
+                } ?: TavernRenderPreferences(),
                 webServerEnabled = preferences[WEB_SERVER_ENABLED] == true,
                 webServerPort = preferences[WEB_SERVER_PORT] ?: 8080,
                 webServerJwtEnabled = preferences[WEB_SERVER_JWT_ENABLED] == true,
@@ -419,6 +426,8 @@ class SettingsStore(
             preferences[QUICK_MESSAGES] = JsonInstant.encodeToString(settings.quickMessages)
             preferences[TAVERN_RUNTIME_PERMISSIONS] = JsonInstant.encodeToString(settings.runtimePermissions)
             preferences[TAVERN_GLOBAL_VARIABLES] = JsonInstant.encodeToString(settings.tavernGlobalVariables)
+            preferences[TAVERN_RENDER_PREFERENCES] =
+                JsonInstant.encodeToString(settings.tavernRenderPreferences.normalized())
             preferences[WEB_SERVER_ENABLED] = settings.webServerEnabled
             preferences[WEB_SERVER_PORT] = settings.webServerPort
             preferences[WEB_SERVER_JWT_ENABLED] = settings.webServerJwtEnabled
@@ -432,6 +441,22 @@ class SettingsStore(
 
     suspend fun update(fn: (Settings) -> Settings) {
         update(fn(settingsFlow.value))
+    }
+
+    suspend fun updateTavernRenderPreferences(
+        transform: (TavernRenderPreferences) -> TavernRenderPreferences,
+    ) {
+        dataStore.edit { preferences ->
+            val current = preferences[TAVERN_RENDER_PREFERENCES]
+                ?.let {
+                    runCatching {
+                        JsonInstant.decodeFromString<TavernRenderPreferences>(it)
+                    }.getOrNull()
+                }
+                ?: TavernRenderPreferences()
+            preferences[TAVERN_RENDER_PREFERENCES] =
+                JsonInstant.encodeToString(transform(current).normalized())
+        }
     }
 
     suspend fun updateAssistant(assistantId: Uuid) {
@@ -565,6 +590,7 @@ data class Settings(
     val quickMessages: List<QuickMessage> = emptyList(),
     val runtimePermissions: TavernRuntimePermissions = TavernRuntimePermissions(),
     val tavernGlobalVariables: JsonObject = JsonObject(emptyMap()),
+    val tavernRenderPreferences: TavernRenderPreferences = TavernRenderPreferences(),
     val webServerEnabled: Boolean = false,
     val webServerPort: Int = 8080,
     val webServerJwtEnabled: Boolean = false,

@@ -86,6 +86,23 @@ class StatusHudPresentationTest {
         assertEquals(listOf("prefill:调查脚印", "dismiss"), events)
     }
 
+    @Test
+    fun `status hud gives the primary card the remaining adaptive panel height`() {
+        val source = statusHudSource()
+
+        assertTrue(source.contains("fillMaxHeight(policy.panelFraction)"))
+        assertTrue(source.contains("maxHeightDp = null"))
+        assertTrue(source.contains("contentDescription = \"全屏显示状态栏\""))
+        assertTrue(source.contains("contentDescription = \"恢复角色卡显示默认设置\""))
+        assertFalse(source.contains("maxHeightDp = 360"))
+    }
+
+    private fun statusHudSource(): String = listOf(
+        java.io.File("src/main/java/me/rerere/rikkahub/ui/pages/chat/StatusHudBar.kt"),
+        java.io.File("app/src/main/java/me/rerere/rikkahub/ui/pages/chat/StatusHudBar.kt"),
+    ).firstOrNull { it.exists() }?.readText()
+        ?: error("StatusHudBar.kt not found in test working dir")
+
     private fun assistantStatus(id: String, header: String, option: String) = UIMessage(
         id = uuid(id),
         role = MessageRole.ASSISTANT,
