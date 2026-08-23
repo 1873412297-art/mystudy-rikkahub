@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.pages.chat.tavern
 
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.ui.pages.chat.tavern.render.buildTavernViewportAdapterScript
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -259,6 +260,26 @@ class TavernConversationDocumentTest {
         assertTrue(template.contains("script,iframe,frame,frameset,object,embed,form"))
         assertTrue(template.contains("['src', 'srcset', 'poster', 'data', 'action', 'formaction']"))
         assertTrue(template.contains("embeddedResource"))
+    }
+
+    @Test
+    fun `conversation document injects the shared viewport adapter before bridge ready`() {
+        val document = buildTavernConversationDocument(
+            initial = emptySnapshot(),
+            template = template,
+            vendorScripts = "",
+            vendorStyles = "",
+        )
+        val adapter = buildTavernViewportAdapterScript()
+
+        assertTrue(template.contains("{{VIEWPORT_ADAPTER}}"))
+        assertTrue(document.contains(adapter))
+        assertTrue(document.contains("rikkahubOverlayRepaired"))
+        assertTrue(
+            document.indexOf("const tavernViewportAdapter") <
+                document.indexOf("TavernConversationBridge.ready"),
+        )
+        assertFalse(document.contains("{{VIEWPORT_ADAPTER}}"))
     }
 
     private fun assertNoExternalCdn(value: String) {

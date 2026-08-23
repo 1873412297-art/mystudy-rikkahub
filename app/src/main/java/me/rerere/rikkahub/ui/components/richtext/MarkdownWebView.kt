@@ -74,6 +74,7 @@ import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScrip
 import me.rerere.rikkahub.ui.components.richtext.st.StableDomSegment
 import me.rerere.rikkahub.ui.components.richtext.st.StableSegmentSnapshot
 import me.rerere.rikkahub.ui.pages.chat.tavern.TavernSendHookControllerBinding
+import me.rerere.rikkahub.ui.pages.chat.tavern.render.buildTavernViewportAdapterScript
 import org.json.JSONObject
 import org.koin.compose.koinInject
 
@@ -1270,8 +1271,9 @@ $injectTag
  * 注入脚本：测量高度 → RikkahubBridge.reportHeight()，链接拦截 → RikkahubBridge.openLink()。
  * 直接调 native bridge（不再 postMessage），因为没有 iframe 隔离层了。
  */
-private fun buildIframeInjectScript(): String = """
+internal fun buildIframeInjectScript(): String = """
 (function(){
+${buildTavernViewportAdapterScript()}
   var didReportReady=false;
   function reportReady(){
     if(didReportReady)return;

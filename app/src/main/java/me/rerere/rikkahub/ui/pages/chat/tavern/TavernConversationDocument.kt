@@ -3,6 +3,7 @@ package me.rerere.rikkahub.ui.pages.chat.tavern
 import android.content.Context
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import me.rerere.rikkahub.ui.pages.chat.tavern.render.buildTavernViewportAdapterScript
 
 private val conversationJson = Json {
     encodeDefaults = true
@@ -60,6 +61,7 @@ internal fun buildTavernConversationDocument(
         "VENDOR_STYLES" to vendorStyles,
         "RUNTIME_LIB" to runtimeMarkup,
         "ACTION_TOKEN" to conversationJson.encodeToString(actionToken).replace("<", "\\u003c"),
+        "VIEWPORT_ADAPTER" to buildTavernViewportAdapterScript(),
     )
     return DOCUMENT_PLACEHOLDER.replace(template) { match ->
         replacements[match.groupValues[1]] ?: match.value

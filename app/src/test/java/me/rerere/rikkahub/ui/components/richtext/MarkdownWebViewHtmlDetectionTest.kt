@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.components.richtext
 
+import me.rerere.rikkahub.ui.pages.chat.tavern.render.buildTavernViewportAdapterScript
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -44,5 +45,13 @@ class MarkdownWebViewHtmlDetectionTest {
         """.trimIndent()
 
         assertTrue(looksLikeHtml(content))
+    }
+
+    @Test
+    fun `raw html host uses the shared viewport adapter`() {
+        val script = buildIframeInjectScript()
+
+        assertTrue(script.contains(buildTavernViewportAdapterScript()))
+        assertTrue(script.contains("rikkahubOverlayRepaired"))
     }
 }
