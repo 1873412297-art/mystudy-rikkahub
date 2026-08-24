@@ -486,6 +486,7 @@ class TavernConversationDocumentTest {
         ).firstOrNull { it.isDirectory } ?: error("vendor directory not found")
         val names = vendorDir.list().orEmpty().toSet()
 
+        assertTrue("showdown.min.js" in names)
         assertTrue("markdown-it.min.js" in names)
         assertTrue("dompurify.min.js" in names)
         assertTrue("highlight.js.min.js" in names)

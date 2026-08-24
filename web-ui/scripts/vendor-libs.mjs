@@ -8,6 +8,7 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const OUT = path.join(root, "..", "app", "src", "main", "assets", "html", "vendor");
 
 const libs = [
+  { entry: "showdown", global: "showdown" },
   { entry: "markdown-it", global: "MarkdownIt" },
   { entry: "dompurify", global: "DOMPurify" },
   { entry: "highlight.js", global: "hljs" },
