@@ -267,6 +267,11 @@ private fun ScriptList(
                 )
                 assistantId?.let {
                     FilterChip(
+                        selected = selectedScope.type == TavernHelperScopeType.CHARACTER,
+                        onClick = { onScope(TavernHelperScope(TavernHelperScopeType.CHARACTER, it)) },
+                        label = { Text("角色卡") },
+                    )
+                    FilterChip(
                         selected = selectedScope.type == TavernHelperScopeType.ASSISTANT,
                         onClick = { onScope(TavernHelperScope(TavernHelperScopeType.ASSISTANT, it)) },
                         label = { Text("助手/预设") },

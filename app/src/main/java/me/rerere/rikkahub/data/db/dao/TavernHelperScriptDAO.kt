@@ -18,6 +18,11 @@ interface TavernHelperScriptDAO {
     )
     fun observeScope(scope: String, scopeId: String): Flow<List<TavernHelperScriptEntity>>
 
+    @Query(
+        "SELECT * FROM tavern_helper_script WHERE scope = :scope AND scope_id = :scopeId AND tombstone = 0",
+    )
+    suspend fun getScope(scope: String, scopeId: String): List<TavernHelperScriptEntity>
+
     @Query("SELECT * FROM tavern_helper_script WHERE tombstone = 0 ORDER BY scope, scope_id, sort_order")
     fun observeAll(): Flow<List<TavernHelperScriptEntity>>
 
@@ -44,6 +49,12 @@ interface TavernHelperScriptDAO {
 
     @Query("UPDATE tavern_helper_script SET tombstone = 1, enabled = 0, updated_at = :updatedAt WHERE id = :id OR parent_id = :id")
     suspend fun markDeleted(id: String, updatedAt: Long)
+
+    @Query(
+        "UPDATE tavern_helper_script SET tombstone = 1, enabled = 0, updated_at = :updatedAt " +
+            "WHERE scope = :scope AND scope_id = :scopeId",
+    )
+    suspend fun markScopeDeleted(scope: String, scopeId: String, updatedAt: Long)
 
     @Query("SELECT * FROM tavern_helper_script WHERE tombstone = 1")
     suspend fun getTombstones(): List<TavernHelperScriptEntity>

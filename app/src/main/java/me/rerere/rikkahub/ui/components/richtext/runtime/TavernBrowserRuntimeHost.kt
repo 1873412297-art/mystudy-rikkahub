@@ -64,9 +64,15 @@ internal fun rememberTavernBrowserScripts(assistantId: String?): List<TavernHelp
     val assistant by assistantFlow
         ?.collectAsStateWithLifecycle(initialValue = emptyList())
         ?: remember { androidx.compose.runtime.mutableStateOf(emptyList()) }
+    val characterFlow = remember(repository, assistantId) {
+        assistantId?.let { repository.observe(TavernHelperScope(TavernHelperScopeType.CHARACTER, it)) }
+    }
+    val character by characterFlow
+        ?.collectAsStateWithLifecycle(initialValue = emptyList())
+        ?: remember { androidx.compose.runtime.mutableStateOf(emptyList()) }
 
-    return remember(global, assistant) {
-        (flattenEnabled(global) + flattenEnabled(assistant)).take(MAX_BROWSER_SESSIONS)
+    return remember(global, assistant, character) {
+        (flattenEnabled(global) + flattenEnabled(assistant) + flattenEnabled(character)).take(MAX_BROWSER_SESSIONS)
     }
 }
 

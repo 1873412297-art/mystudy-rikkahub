@@ -42,6 +42,7 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptRepository
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.AssistantRegex
@@ -79,6 +80,7 @@ private fun SillyTavernImporter(
     val context = LocalContext.current
     val filesManager: FilesManager = koinInject()
     val settingsStore: SettingsStore = koinInject()
+    val tavernHelperRepository: TavernHelperScriptRepository = koinInject()
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
     var isLoading by remember { mutableStateOf(false) }
@@ -98,6 +100,7 @@ private fun SillyTavernImporter(
                             toaster = toaster,
                             filesManager = filesManager,
                             settingsStore = settingsStore,
+                            tavernHelperRepository = tavernHelperRepository,
                         )
                     }.onFailure { exception ->
                         exception.printStackTrace()
@@ -125,6 +128,7 @@ private fun SillyTavernImporter(
                             toaster = toaster,
                             filesManager = filesManager,
                             settingsStore = settingsStore,
+                            tavernHelperRepository = tavernHelperRepository,
                         )
                     }.onFailure { exception ->
                         exception.printStackTrace()
@@ -690,6 +694,7 @@ private suspend fun importAssistantFromUri(
     toaster: ToasterState,
     filesManager: FilesManager,
     settingsStore: SettingsStore,
+    tavernHelperRepository: TavernHelperScriptRepository,
 ) {
     try {
         val mime = withContext(Dispatchers.IO) { filesManager.getFileMimeType(uri) }
@@ -760,6 +765,15 @@ private suspend fun importAssistantFromUri(
                     R.string.assistant_importer_imported_regexes,
                     extras.regexes.size
                 )
+            )
+        }
+
+        runCatching {
+            tavernHelperRepository.importCharacterCard(finalAssistant.id.toString(), jsonString)
+        }.onFailure { error ->
+            toaster.show(
+                message = "角色卡已导入，但酒馆助手脚本读取失败：${error.message ?: "格式无效"}",
+                type = ToastType.Warning,
             )
         }
 
