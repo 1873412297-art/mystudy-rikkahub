@@ -350,7 +350,7 @@ class TavernConversationDocumentTest {
         assertTrue(template.contains("opening-swipe-nav"))
         assertTrue(openingCss.contains(".mes.opening-swipe .opening-swipe-nav"))
         assertTrue(openingCss.contains("position: sticky"))
-        assertTrue(openingCss.contains("top: 0"))
+        assertTrue(openingCss.contains("top: -12px"))
         assertTrue(openingCss.contains("background: var(--rikkahub-surface)"))
         assertTrue(openingCss.contains("min-width: 44px"))
         assertFalse(openingCss.contains("position: fixed"))
