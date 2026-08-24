@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -54,6 +55,7 @@ import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScopeType
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScript
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptFolder
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptNode
+import me.rerere.rikkahub.data.ai.tavernhelper.searchTavernHelperNodes
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.EmptyState
 import me.rerere.rikkahub.ui.theme.CustomColors
@@ -73,6 +75,10 @@ internal fun TavernHelperPage(
     val render = appSettings.tavernHelperRenderSettings
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showAdd by rememberSaveable { mutableStateOf(false) }
+    var showAddFolder by rememberSaveable { mutableStateOf(false) }
+    var search by rememberSaveable { mutableStateOf("") }
+    var editing by remember { mutableStateOf<TavernHelperScript?>(null) }
+    var pendingExportJson by remember { mutableStateOf<String?>(null) }
     var confirmScripts by rememberSaveable { mutableStateOf(false) }
     var pendingEnable by remember { mutableStateOf<TavernHelperScriptNode?>(null) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
@@ -83,6 +89,16 @@ internal fun TavernHelperPage(
                     ?: error("无法读取文件")
             }.onSuccess(vm::importJson).onFailure { vm.error.value = it.message }
         }
+    }
+    val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val json = pendingExportJson
+        if (uri != null && json != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(json) }
+                    ?: error("无法写入文件")
+            }.onFailure { vm.error.value = it.message }
+        }
+        pendingExportJson = null
     }
 
     Scaffold(
@@ -130,10 +146,21 @@ internal fun TavernHelperPage(
                 onScope = vm::selectScope,
                 onImport = { importer.launch(arrayOf("application/json", "text/json", "text/plain")) },
                 onAdd = { showAdd = true },
+                onAddFolder = { showAddFolder = true },
+                search = search,
+                onSearch = { search = it },
                 onEnabled = { node, enabled ->
                     if (enabled) pendingEnable = node else vm.setEnabled(node, false)
                 },
                 onDelete = vm::delete,
+                onEdit = { editing = it },
+                onDuplicate = vm::duplicate,
+                onExport = { node ->
+                    pendingExportJson = vm.exportJson(node)
+                    val prefix = if (node is TavernHelperScriptFolder) "酒馆助手脚本文件夹" else "酒馆助手脚本"
+                    val safeName = node.name.ifBlank { "未命名" }.replace(Regex("[\\/:*?\"<>|]"), "_")
+                    exporter.launch("$prefix-$safeName.json")
+                },
             )
         }
     }
@@ -143,6 +170,22 @@ internal fun TavernHelperPage(
             vm.addScript(name, source)
             showAdd = false
         }
+    }
+    if (showAddFolder) {
+        NameDialog("新增脚本文件夹", "文件夹名称", onDismiss = { showAddFolder = false }) { name ->
+            vm.addFolder(name)
+            showAddFolder = false
+        }
+    }
+    editing?.let { script ->
+        EditScriptDialog(
+            script = script,
+            onDismiss = { editing = null },
+            onConfirm = {
+                vm.updateScript(it)
+                editing = null
+            },
+        )
     }
     if (confirmScripts) {
         AlertDialog(
@@ -250,16 +293,23 @@ private fun ScriptList(
     onScope: (TavernHelperScope) -> Unit,
     onImport: () -> Unit,
     onAdd: () -> Unit,
+    onAddFolder: () -> Unit,
+    search: String,
+    onSearch: (String) -> Unit,
     onEnabled: (TavernHelperScriptNode, Boolean) -> Unit,
     onDelete: (TavernHelperScriptNode) -> Unit,
+    onEdit: (TavernHelperScript) -> Unit,
+    onDuplicate: (TavernHelperScriptNode) -> Unit,
+    onExport: (TavernHelperScriptNode) -> Unit,
 ) {
+    val searchResult = remember(scripts, search) { searchTavernHelperNodes(scripts, search) }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = selectedScope.type == TavernHelperScopeType.GLOBAL,
                     onClick = { onScope(TavernHelperScope(TavernHelperScopeType.GLOBAL)) },
@@ -280,16 +330,27 @@ private fun ScriptList(
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = search,
+                onValueChange = onSearch,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("搜索名称、说明或源码；支持 /正则/i") },
+                supportingText = searchResult.error?.let { message -> ({ Text(message, color = MaterialTheme.colorScheme.error) }) },
+                singleLine = true,
+            )
+        }
+        item {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onAdd) { Icon(HugeIcons.Add01, null); Text("新增脚本") }
+                TextButton(onClick = onAddFolder) { Icon(HugeIcons.Folder01, null); Text("新增文件夹") }
                 TextButton(onClick = onImport) { Icon(HugeIcons.FileImport, null); Text("导入 JSON") }
             }
         }
-        if (scripts.isEmpty()) {
+        if (searchResult.nodes.isEmpty()) {
             item { EmptyState(icon = HugeIcons.Puzzle, title = "暂无脚本", hint = "新增或导入脚本后会显示在这里") }
         }
-        items(scripts, key = { it.id }) { node ->
-            ScriptNodeCard(node, onEnabled, onDelete)
+        items(searchResult.nodes, key = { it.id }) { node ->
+            ScriptNodeCard(node, onEnabled, onDelete, onEdit, onDuplicate, onExport)
         }
     }
 }
@@ -299,6 +360,9 @@ private fun ScriptNodeCard(
     node: TavernHelperScriptNode,
     onEnabled: (TavernHelperScriptNode, Boolean) -> Unit,
     onDelete: (TavernHelperScriptNode) -> Unit,
+    onEdit: (TavernHelperScript) -> Unit,
+    onDuplicate: (TavernHelperScriptNode) -> Unit,
+    onExport: (TavernHelperScriptNode) -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         ListItem(
@@ -318,12 +382,85 @@ private fun ScriptNodeCard(
                     headlineContent = { Text(child.name.ifBlank { "未命名脚本" }) },
                     trailingContent = { Switch(child.enabled, onCheckedChange = { onEnabled(child, it) }) },
                 )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = { onEdit(child) }) { Text("编辑") }
+                    TextButton(onClick = { onDuplicate(child) }) { Text("复制") }
+                    TextButton(onClick = { onExport(child) }) { Text("导出") }
+                    IconButton(onClick = { onDelete(child) }) { Icon(HugeIcons.Delete01, "删除") }
+                }
             }
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            if (node is TavernHelperScript) {
+                TextButton(onClick = { onEdit(node) }) { Text("编辑") }
+            }
+            TextButton(onClick = { onDuplicate(node) }) { Text("复制") }
+            TextButton(onClick = { onExport(node) }) { Text("导出") }
             IconButton(onClick = { onDelete(node) }) { Icon(HugeIcons.Delete01, "删除") }
         }
     }
+}
+
+@Composable
+private fun NameDialog(
+    title: String,
+    label: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { OutlinedTextField(name, { name = it }, label = { Text(label) }, singleLine = true) },
+        confirmButton = { Button(enabled = name.isNotBlank(), onClick = { onConfirm(name.trim()) }) { Text("保存") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun EditScriptDialog(
+    script: TavernHelperScript,
+    onDismiss: () -> Unit,
+    onConfirm: (TavernHelperScript) -> Unit,
+) {
+    var name by remember(script.id) { mutableStateOf(script.name) }
+    var info by remember(script.id) { mutableStateOf(script.info) }
+    var source by remember(script.id) { mutableStateOf(script.content) }
+    var includeData by remember(script.id) { mutableStateOf(script.exportWith.data) }
+    var includeButtons by remember(script.id) { mutableStateOf(script.exportWith.button) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("编辑酒馆脚本") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("名称") }, singleLine = true)
+                OutlinedTextField(info, { info = it }, label = { Text("说明") }, singleLine = true)
+                OutlinedTextField(
+                    source,
+                    { source = it },
+                    label = { Text("JavaScript 源码") },
+                    minLines = 10,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                )
+                SettingSwitch("导出时包含数据", "关闭时导出的 data 为空", includeData) { includeData = it }
+                SettingSwitch("导出时包含按钮", "关闭时导出的按钮列表为空", includeButtons) { includeButtons = it }
+            }
+        },
+        confirmButton = {
+            Button(enabled = name.isNotBlank(), onClick = {
+                onConfirm(
+                    script.copy(
+                        name = name.trim(),
+                        info = info,
+                        content = source,
+                        exportWith = script.exportWith.copy(data = includeData, button = includeButtons),
+                    ),
+                )
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable

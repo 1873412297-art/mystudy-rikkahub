@@ -16,6 +16,8 @@ import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScopeType
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScript
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptNode
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptRepository
+import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptFolder
+import me.rerere.rikkahub.data.ai.tavernhelper.stripOuterScriptFence
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.TavernHelperRenderSettings
@@ -48,7 +50,7 @@ internal class TavernHelperVM(
             id = UUID.randomUUID().toString(),
             name = name,
             enabled = false,
-            content = content,
+            content = stripOuterScriptFence(content),
             info = "",
             button = TavernHelperButtonConfig(true, emptyList(), JsonObject(emptyMap())),
             data = JsonObject(emptyMap()),
@@ -60,6 +62,51 @@ internal class TavernHelperVM(
                 .onFailure { error.value = it.message ?: "保存失败" }
         }
     }
+
+    fun addFolder(name: String) {
+        val folder = TavernHelperScriptFolder(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            enabled = false,
+            icon = "fa-solid fa-folder",
+            color = "",
+            scripts = emptyList(),
+            compatExtras = JsonObject(emptyMap()),
+        )
+        viewModelScope.launch {
+            runCatching { repository.save(scope.value, folder, scripts.value.size) }
+                .onFailure { error.value = it.message ?: "保存失败" }
+        }
+    }
+
+    fun updateScript(updated: TavernHelperScript) {
+        val rootIndex = scripts.value.indexOfFirst { root ->
+            root.id == updated.id || (root is TavernHelperScriptFolder && root.scripts.any { it.id == updated.id })
+        }
+        if (rootIndex < 0) return
+        val root = when (val current = scripts.value[rootIndex]) {
+            is TavernHelperScript -> updated.copy(content = stripOuterScriptFence(updated.content))
+            is TavernHelperScriptFolder -> current.copy(
+                scripts = current.scripts.map {
+                    if (it.id == updated.id) updated.copy(content = stripOuterScriptFence(updated.content)) else it
+                },
+            )
+        }
+        viewModelScope.launch {
+            runCatching { repository.save(scope.value, root, rootIndex) }
+                .onFailure { error.value = it.message ?: "保存失败" }
+        }
+    }
+
+    fun duplicate(node: TavernHelperScriptNode) {
+        val copy = node.duplicateWithNewIds()
+        viewModelScope.launch {
+            runCatching { repository.save(scope.value, copy, scripts.value.size) }
+                .onFailure { error.value = it.message ?: "复制失败" }
+        }
+    }
+
+    fun exportJson(node: TavernHelperScriptNode): String = repository.encodeExport(node)
 
     fun setEnabled(node: TavernHelperScriptNode, enabled: Boolean) {
         viewModelScope.launch {
@@ -85,5 +132,15 @@ internal class TavernHelperVM(
 
     fun clearError() {
         error.value = null
+    }
+
+    private fun TavernHelperScriptNode.duplicateWithNewIds(): TavernHelperScriptNode = when (this) {
+        is TavernHelperScript -> copy(id = UUID.randomUUID().toString(), name = "$name 副本", enabled = false)
+        is TavernHelperScriptFolder -> copy(
+            id = UUID.randomUUID().toString(),
+            name = "$name 副本",
+            enabled = false,
+            scripts = scripts.map { it.copy(id = UUID.randomUUID().toString(), enabled = false) },
+        )
     }
 }

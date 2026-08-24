@@ -29,6 +29,9 @@ interface TavernHelperScriptDAO {
     @Query("SELECT * FROM tavern_helper_script WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): TavernHelperScriptEntity?
 
+    @Query("SELECT * FROM tavern_helper_script WHERE parent_id = :parentId AND tombstone = 0")
+    suspend fun getChildren(parentId: String): List<TavernHelperScriptEntity>
+
     @Query("SELECT id FROM tavern_helper_script")
     suspend fun getAllIds(): List<String>
 

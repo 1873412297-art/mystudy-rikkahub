@@ -35,8 +35,13 @@ internal class TavernHelperScriptRepository(
     }
 
     suspend fun save(scope: TavernHelperScope, node: TavernHelperScriptNode, topLevelOrder: Int) {
-        dao.upsertAll(mapper.toEntities(node, scope, topLevelOrder))
+        val entities = mapper.toEntities(node, scope, topLevelOrder)
+        val incomingIds = entities.mapTo(mutableSetOf()) { it.id }
+        dao.getChildren(node.id).filterNot { it.id in incomingIds }.forEach { dao.markDeleted(it.id, now()) }
+        dao.upsertAll(entities)
     }
+
+    fun encodeExport(node: TavernHelperScriptNode): String = codec.encodeExport(node)
 
     suspend fun setEnabled(id: String, enabled: Boolean) {
         dao.setEnabled(id, enabled, now())
