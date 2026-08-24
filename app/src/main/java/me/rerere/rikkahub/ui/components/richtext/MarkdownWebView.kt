@@ -72,6 +72,7 @@ internal fun MarkdownWebView(
     applyTavernFrontendPolicy: Boolean = false,
     onWebViewCreated: (WebView) -> Unit = {},
     onWebViewDisposed: (WebView) -> Unit = {},
+    additionalJavascriptInterface: Pair<String, Any>? = null,
     /**
      * 高度上限（dp）：超过此高度的内容会触发 WebView 内部纵向滚动，
      * 而不是把外层 Compose 容器撑到无限高。
@@ -205,6 +206,9 @@ internal fun MarkdownWebView(
             onWebViewDisposed(webView)
             runCatching { webView.removeJavascriptInterface("RikkahubBridge") }
             runCatching { webView.removeJavascriptInterface("TavernRuntimeBridge") }
+            additionalJavascriptInterface?.first?.let { name ->
+                runCatching { webView.removeJavascriptInterface(name) }
+            }
             runCatching { webView.stopLoading() }
             runCatching { webView.destroy() }
             tavernWebViewRef.value = null
@@ -378,6 +382,9 @@ internal fun MarkdownWebView(
                         }
                     )
                     addJavascriptInterface(tavernBridge, "TavernRuntimeBridge")
+                    additionalJavascriptInterface?.let { (name, value) ->
+                        addJavascriptInterface(value, name)
+                    }
 
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(

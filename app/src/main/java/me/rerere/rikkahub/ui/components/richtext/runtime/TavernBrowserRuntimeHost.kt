@@ -81,10 +81,14 @@ internal fun TavernBrowserRuntimeHost(
     scripts: List<TavernHelperScript>,
     conversationId: String,
 ) {
+    val repository: TavernHelperScriptRepository = koinInject()
     val conversationUuid = remember(conversationId) { runCatching { Uuid.parse(conversationId) }.getOrNull() }
     Box(modifier = Modifier.size(1.dp)) {
         scripts.forEach { script ->
             key(script.id, script.content.hashCode()) {
+                val scriptBridge = remember(script.id, repository) {
+                    TavernBrowserScriptBridge(script.id, repository)
+                }
                 MarkdownWebView(
                     content = buildTavernBrowserSessionHtml(script),
                     modifier = Modifier.size(1.dp),
@@ -94,6 +98,7 @@ internal fun TavernBrowserRuntimeHost(
                     tavernConversationId = conversationUuid,
                     onWebViewCreated = { TavernBrowserSessionRegistry.register(script.id, it) },
                     onWebViewDisposed = { TavernBrowserSessionRegistry.unregister(script.id, it) },
+                    additionalJavascriptInterface = "RikkahubScriptBridge" to scriptBridge,
                 )
             }
         }

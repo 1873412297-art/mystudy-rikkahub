@@ -33,6 +33,14 @@ class TavernBrowserSessionHtmlTest {
         assertFalse(html.contains("</script><script>escape()"))
         assertTrue(html.contains("getScriptId"))
         assertTrue(html.contains("getButtonEvent"))
+        assertTrue(html.contains("getIframeName"))
+        assertTrue(html.contains("replaceScriptButtons"))
+        assertTrue(html.contains("updateVariablesWith"))
+        assertTrue(html.contains("SCRIPT_LOADED"))
+        assertTrue(html.contains("SCRIPT_UNLOADING"))
+        assertTrue(html.contains("window.TavernHelper"))
+        assertTrue(html.contains("RikkahubScriptBridge.replaceData"))
+        assertTrue(html.contains("RikkahubScriptBridge.replaceButtons"))
         assertTrue(html.contains("script-id"))
     }
 }
