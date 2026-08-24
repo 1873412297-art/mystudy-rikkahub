@@ -133,6 +133,8 @@
       var state = window.__RIKKAHUB_TAVERN_CONVERSATION__;
       var showdownConverter = null;
       var markdown = null;
+      var escapedMathDollarToken = '\uE000rikkahub-dollar-' + Math.random().toString(36).slice(2) + '\uE001';
+      var escapedMathBackslashToken = '\uE000rikkahub-slash-' + Math.random().toString(36).slice(2) + '\uE001';
       var appliedThemeVariables = [];
       var runtimeBrokerSequence = 0;
       var runtimeBrokerPrefix = createRuntimeBrokerPrefix();
@@ -298,8 +300,121 @@
         } catch (_) {}
       }
 
+      function isWhitespace(value) {
+        return !value || /\s/.test(value);
+      }
+
+      function isEscapedMathDelimiter(source, index) {
+        var slashes = 0;
+        for (var cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) slashes += 1;
+        return slashes % 2 === 1;
+      }
+
+      function protectEscapedMathDollars(source) {
+        var protectedSource = '';
+        for (var index = 0; index < source.length;) {
+          if (source[index] !== '\\') {
+            protectedSource += source[index++];
+            continue;
+          }
+          var runStart = index;
+          while (index < source.length && source[index] === '\\') index += 1;
+          var slashCount = index - runStart;
+          if (index < source.length && source[index] === '$') {
+            protectedSource += escapedMathBackslashToken.repeat(Math.floor(slashCount / 2));
+            protectedSource += slashCount % 2 === 1 ? escapedMathDollarToken : '$';
+            index += 1;
+          } else {
+            protectedSource += source.slice(runStart, index);
+          }
+        }
+        return protectedSource;
+      }
+
+      function restoreEscapedMathDollars(scope) {
+        if (!scope) return;
+        var walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+        var nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        nodes.forEach(function (node) {
+          if ((node.nodeValue || '').indexOf(escapedMathDollarToken) >= 0) {
+            node.nodeValue = node.nodeValue.split(escapedMathDollarToken).join('$');
+          }
+          if ((node.nodeValue || '').indexOf(escapedMathBackslashToken) >= 0) {
+            node.nodeValue = node.nodeValue.split(escapedMathBackslashToken).join('\\');
+          }
+        });
+      }
+
+      function findInlineMathClose(source, opening) {
+        for (var index = opening + 1; index < source.length; index += 1) {
+          var current = source[index];
+          if (current === '\r' || current === '\n') return -1;
+          if (current !== '$' || isEscapedMathDelimiter(source, index)) continue;
+          if (source[index + 1] === '$') continue;
+          var previous = source[index - 1] || '';
+          var after = source[index + 1] || '';
+          if (isWhitespace(previous) || /[0-9]/.test(after)) continue;
+          return index;
+        }
+        return -1;
+      }
+
+      function findDisplayMathClose(source, opening) {
+        for (var index = opening + 2; index < source.length - 1; index += 1) {
+          if (source[index] === '$' && source[index + 1] === '$' &&
+              !isEscapedMathDelimiter(source, index)) return index;
+        }
+        return -1;
+      }
+
+      function findBackslashMathClose(source, opening, marker) {
+        for (var index = opening + 2; index < source.length - 1; index += 1) {
+          if (source[index] === '\\' && source[index + 1] === marker &&
+              !isEscapedMathDelimiter(source, index)) return index;
+        }
+        return -1;
+      }
+
+      function findNextMathSpan(source, from) {
+        for (var index = from; index < source.length; index += 1) {
+          if (source[index] === '$' && !isEscapedMathDelimiter(source, index)) {
+            if (source[index + 1] === '$') {
+              var displayClose = findDisplayMathClose(source, index);
+              if (displayClose >= 0 && source.slice(index + 2, displayClose).trim()) {
+                return { start:index, end:displayClose + 2,
+                  expression:source.slice(index + 2, displayClose), display:true };
+              }
+              index += 1;
+              continue;
+            }
+            var next = source[index + 1] || '';
+            if (isWhitespace(next)) continue;
+            var inlineClose = findInlineMathClose(source, index);
+            if (inlineClose >= 0) {
+              return { start:index, end:inlineClose + 1,
+                expression:source.slice(index + 1, inlineClose), display:false };
+            }
+          }
+          if (source[index] === '\\' && !isEscapedMathDelimiter(source, index) &&
+              (source[index + 1] === '(' || source[index + 1] === '[')) {
+            var marker = source[index + 1] === '(' ? ')' : ']';
+            var backslashClose = findBackslashMathClose(source, index, marker);
+            if (backslashClose >= 0 && source.slice(index + 2, backslashClose).trim()) {
+              return { start:index, end:backslashClose + 2,
+                expression:source.slice(index + 2, backslashClose), display:marker === ']' };
+            }
+          }
+        }
+        return null;
+      }
+
       function runKatexEnhancements(scope) {
-        if (!scope || !window.katex || typeof window.katex.render !== 'function') return;
+        if (!scope) return;
+        if (!window.katex || typeof window.katex.render !== 'function') {
+          restoreEscapedMathDollars(scope);
+          return;
+        }
         var walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
         var textNodes = [];
         while (walker.nextNode()) {
@@ -310,34 +425,32 @@
         }
         textNodes.forEach(function (textNode) {
           var source = textNode.nodeValue || '';
-          var pattern = /(\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\$([^$\r\n]+?)\$|\\\(([\s\S]+?)\\\))/g;
           var fragment = document.createDocumentFragment();
           var cursor = 0;
           var changed = false;
-          var match;
-          while ((match = pattern.exec(source)) !== null) {
-            if (match.index > cursor) fragment.appendChild(document.createTextNode(source.slice(cursor, match.index)));
-            var displayMode = match[2] !== undefined || match[3] !== undefined;
-            var expression = match[2] || match[3] || match[4] || match[5] || '';
-            var container = document.createElement(displayMode ? 'div' : 'span');
+          var span;
+          while ((span = findNextMathSpan(source, cursor)) !== null) {
+            if (span.start > cursor) fragment.appendChild(document.createTextNode(source.slice(cursor, span.start)));
+            var container = document.createElement(span.display ? 'div' : 'span');
             try {
-              window.katex.render(expression, container, {
-                displayMode: displayMode,
-                throwOnError: false,
+              window.katex.render(span.expression, container, {
+                displayMode: span.display,
+                throwOnError: true,
                 strict: 'ignore',
                 trust: false
               });
             } catch (_) {
-              container.textContent = match[0];
+              container.textContent = source.slice(span.start, span.end);
             }
             fragment.appendChild(container);
-            cursor = pattern.lastIndex;
+            cursor = span.end;
             changed = true;
           }
           if (!changed) return;
           if (cursor < source.length) fragment.appendChild(document.createTextNode(source.slice(cursor)));
           textNode.replaceWith(fragment);
         });
+        restoreEscapedMathDollars(scope);
       }
 
       function applyDocumentStyle(snapshot) {
@@ -405,7 +518,7 @@
         fallback.dataset.renderMode = 'markdown';
         fallback.textContent = part.text;
         if (!window.DOMPurify) return fallback;
-        var source = wrapSillyTavernQuotes(part.text);
+        var source = protectEscapedMathDollars(wrapSillyTavernQuotes(part.text));
         var rendered = null;
         if (showdownConverter) {
           try { rendered = showdownConverter.makeHtml(source); } catch (_) {}

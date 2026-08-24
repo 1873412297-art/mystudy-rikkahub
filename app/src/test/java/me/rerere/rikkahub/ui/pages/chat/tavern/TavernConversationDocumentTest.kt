@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import me.rerere.rikkahub.ui.pages.chat.tavern.render.buildTavernViewportAdapterScript
+import me.rerere.rikkahub.ui.components.richtext.inlineKatexFontSources
 
 class TavernConversationDocumentTest {
 
@@ -239,6 +240,48 @@ class TavernConversationDocumentTest {
     }
 
     @Test
+    fun `katex enhancement uses delimiter semantics instead of a broad dollar regex`() {
+        val enhancement = template.substringAfter("function isWhitespace(value)")
+            .substringBefore("function applyDocumentStyle")
+
+        assertTrue(enhancement.contains("function isEscapedMathDelimiter"))
+        assertTrue(enhancement.contains("function findInlineMathClose"))
+        assertTrue(enhancement.contains("function protectEscapedMathDollars"))
+        assertTrue(enhancement.contains("function restoreEscapedMathDollars"))
+        assertTrue(enhancement.contains("isWhitespace(next)"))
+        assertTrue(enhancement.contains("/[0-9]/.test(after)"))
+        assertTrue(enhancement.contains("throwOnError: true"))
+        assertFalse(enhancement.contains("\\$([^$\\r\\n]+?)\\$"))
+    }
+
+    @Test
+    fun `generated Tavern document inlines every bundled katex font`() {
+        val vendorDir = listOf(
+            File("src/main/assets/html/vendor"),
+            File("app/src/main/assets/html/vendor"),
+        ).firstOrNull { it.isDirectory } ?: error("vendor directory not found")
+        val fontData = File(vendorDir, "katex-fonts.b64").readLines()
+            .filter { it.isNotBlank() }
+            .associate { it.substringBefore('=') to it.substringAfter('=') }
+        val katexCss = inlineKatexFontSources(File(vendorDir, "katex.min.css").readText(), fontData::get)
+        val document = buildTavernConversationDocument(
+            initial = emptySnapshot(),
+            template = template,
+            vendorScripts = "",
+            vendorStyles = "<style>$katexCss</style>",
+        )
+        val loaderSource = listOf(
+            File("src/main/java/me/rerere/rikkahub/ui/pages/chat/tavern/TavernConversationDocument.kt"),
+            File("app/src/main/java/me/rerere/rikkahub/ui/pages/chat/tavern/TavernConversationDocument.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(loaderSource.contains("loadBundledKatexFontData("))
+        assertTrue(loaderSource.contains("inlineKatexFontSources(css, fonts::get)"))
+        assertFalse(document.contains("url(fonts/"))
+        assertTrue(document.contains("url(data:font/woff2;base64,"))
+    }
+
+    @Test
     fun `template applies SillyTavern quote semantics before markdown rendering`() {
         assertTrue(template.contains("function wrapSillyTavernQuotes"))
         assertTrue(template.contains("protectQuotedMarkup"))
@@ -249,7 +292,7 @@ class TavernConversationDocumentTest {
         assertTrue(template.contains(".mes q::after"))
         listOf("ASCII_DOUBLE", "CURLY_DOUBLE", "GUILLEMET", "CJK_CORNER", "CJK_WHITE_CORNER", "FULLWIDTH_DOUBLE")
             .forEach { marker -> assertTrue("missing quote family $marker", template.contains(marker)) }
-        assertTrue(template.contains("var source = wrapSillyTavernQuotes(part.text)"))
+        assertTrue(template.contains("var source = protectEscapedMathDollars(wrapSillyTavernQuotes(part.text))"))
         assertTrue(template.contains("markdown.render(source)"))
     }
 

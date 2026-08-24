@@ -576,6 +576,72 @@ class TavernConversationDocumentInstrumentedTest {
     }
 
     @Test
+    fun katexKeepsPricesAndEscapedDollarsWhileRenderingValidBundledFontFormulae() {
+        val dollar = '$'
+        val markdown = """
+            <span id="prices">Costs ${dollar}5 and ${dollar}10</span>
+
+            <span id="escaped">Escaped \${dollar}5 and \${dollar}10</span>
+
+            <span id="even-escaped">Even \\${dollar}x^2${dollar}</span>
+
+            <span id="constraints">Keep ${dollar} x${dollar}, ${dollar}x ${dollar}, and ${dollar}x${dollar}2</span>
+
+            Inline ${dollar}x^2${dollar}
+
+            ${dollar}${dollar}\sum_{i=1}^{n} \frac{1}{i^2}${dollar}${dollar}
+        """.trimIndent()
+        val html = buildTavernConversationDocument(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+            snapshot(nodes = listOf(node("n1", 0, 1, message("m1", markdown)))),
+        )
+
+        val result = withVisibleWebView(html) { view ->
+            awaitJson(view, 30) {
+                """
+                (function(){
+                  var formulae=document.querySelectorAll('.mes_text .katex');
+                  var complex=document.querySelector('.mes_text .katex-display .katex');
+                  var rect=complex && complex.getBoundingClientRect();
+                  var fonts=Array.from(document.fonts || []);
+                  return JSON.stringify({
+                    ready:document.fonts.status === 'loaded' && formulae.length >= 3 && !!complex,
+                    prices:document.getElementById('prices') && document.getElementById('prices').textContent,
+                    escaped:document.getElementById('escaped') && document.getElementById('escaped').textContent,
+                    constraints:document.getElementById('constraints') &&
+                      document.getElementById('constraints').textContent,
+                    formulae:formulae.length,
+                    evenEscaped:!!document.querySelector('#even-escaped .katex'),
+                    inline:formulae.length > document.querySelectorAll('.katex-display .katex').length,
+                    display:!!complex,
+                    mainFontLoaded:fonts.some(function(font){
+                      return font.family.indexOf('KaTeX_Main') >= 0 && font.status === 'loaded';
+                    }),
+                    sizeFontLoaded:fonts.some(function(font){
+                      return font.family.indexOf('KaTeX_Size') >= 0 && font.status === 'loaded';
+                    }),
+                    width:rect ? rect.width : 0,
+                    height:rect ? rect.height : 0
+                  });
+                })();
+                """.trimIndent()
+            }
+        }
+
+        assertEquals("Costs ${dollar}5 and ${dollar}10", result.getString("prices"))
+        assertEquals("Escaped ${dollar}5 and ${dollar}10", result.getString("escaped"))
+        assertEquals("Keep ${dollar} x${dollar}, ${dollar}x ${dollar}, and ${dollar}x${dollar}2", result.getString("constraints"))
+        assertEquals(3, result.getInt("formulae"))
+        assertTrue(result.getBoolean("evenEscaped"))
+        assertTrue(result.getBoolean("inline"))
+        assertTrue(result.getBoolean("display"))
+        assertTrue(result.getBoolean("mainFontLoaded"))
+        assertTrue(result.getBoolean("sizeFontLoaded"))
+        assertTrue(result.getDouble("width") > 0.0)
+        assertTrue(result.getDouble("height") > 0.0)
+    }
+
+    @Test
     fun markdownItTakesOverWhenShowdownRenderingThrows() {
         val html = buildTavernConversationDocument(
             context = InstrumentationRegistry.getInstrumentation().targetContext,
