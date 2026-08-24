@@ -1,0 +1,15 @@
+{
+  "source": "Huawei XHD0223523008702 Chrome DevTools, visible Tavern opening",
+  "opening": {
+    "index": 2,
+    "count": 4,
+    "ready": false,
+    "failed": false
+  },
+  "leaked": false,
+  "details": 3,
+  "code": 4,
+  "headings": 1,
+  "forbidden": 0,
+  "textLength": 966
+}
