@@ -27,6 +27,12 @@ interface TavernHelperScriptDAO {
     @Query("SELECT id FROM tavern_helper_script")
     suspend fun getAllIds(): List<String>
 
+    @Query(
+        "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM tavern_helper_script " +
+            "WHERE scope = :scope AND scope_id = :scopeId AND parent_id IS NULL AND tombstone = 0",
+    )
+    suspend fun nextTopLevelOrder(scope: String, scopeId: String): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: TavernHelperScriptEntity)
 

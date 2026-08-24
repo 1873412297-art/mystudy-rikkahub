@@ -91,6 +91,7 @@ import me.rerere.rikkahub.ui.pages.debug.DebugPage
 import me.rerere.rikkahub.ui.pages.extensions.ExtensionsPage
 import me.rerere.rikkahub.ui.pages.extensions.PromptPage
 import me.rerere.rikkahub.ui.pages.extensions.QuickMessagesPage
+import me.rerere.rikkahub.ui.pages.extensions.tavernhelper.TavernHelperPage
 import me.rerere.rikkahub.ui.pages.extensions.skills.SkillDetailPage
 import me.rerere.rikkahub.ui.pages.extensions.skills.SkillsPage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspacePage
@@ -542,6 +543,10 @@ class RouteActivity : ComponentActivity() {
                                 QuickMessagesPage()
                             }
 
+                            entry<Screen.TavernHelper> { key ->
+                                TavernHelperPage(assistantId = key.assistantId)
+                            }
+
                             entry<Screen.Prompts> {
                                 PromptPage()
                             }
@@ -774,6 +779,12 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object QuickMessages : Screen
+
+    @Serializable
+    data class TavernHelper(
+        val assistantId: String? = null,
+        val conversationId: String? = null,
+    ) : Screen
 
     @Serializable
     data object Prompts : Screen

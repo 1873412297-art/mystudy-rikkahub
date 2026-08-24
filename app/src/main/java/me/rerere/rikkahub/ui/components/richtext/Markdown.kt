@@ -291,8 +291,24 @@ fun MarkdownBlock(
     /** 请求头数据源（透传 MarkdownWebView，requestHeaders.get RPC 按需拉取） */
     tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
 ) {
+    val frontendRenderingEnabled = LocalSettings.current.tavernHelperRenderSettings.enabled
     val normalizedContent = remember(content) { normalizeRichTextContent(content) }
-    val segments = remember(normalizedContent) { parseRichTextSegments(normalizedContent) }
+    val rawSegments = remember(normalizedContent) { parseRichTextSegments(normalizedContent) }
+    val segments = remember(rawSegments, frontendRenderingEnabled) {
+        if (frontendRenderingEnabled) {
+            rawSegments
+        } else {
+            rawSegments.map { segment ->
+                if (segment.kind == RichTextSegment.Kind.FRONTEND_HTML ||
+                    segment.kind == RichTextSegment.Kind.HTML_DOCUMENT
+                ) {
+                    RichTextSegment(RichTextSegment.Kind.MARKDOWN, segment.raw.asHtmlCodeFence())
+                } else {
+                    segment
+                }
+            }
+        }
+    }
     if (segments.size > 1 || segments.firstOrNull()?.kind != RichTextSegment.Kind.MARKDOWN) {
         val rendererMode = remember(normalizedContent) { chooseRendererMode(normalizedContent) }
         if (ENABLE_STABLE_DOM_RENDERER && rendererMode == RichTextRendererMode.STABLE_DOM) {
@@ -380,6 +396,7 @@ fun MarkdownBlock(
                     RichTextSegment.Kind.FRONTEND_HTML -> MarkdownWebView(
                         content = segment.raw,
                         isRawHtml = true,
+                        applyTavernFrontendPolicy = true,
                         tavernConversationId = tavernConversationId,
                         tavernCurrentMessage = tavernCurrentMessage,
                         tavernContextSnapshot = tavernContextSnapshot,
@@ -392,11 +409,15 @@ fun MarkdownBlock(
         return
     }
 
-    var (data, setData) = remember(normalizedContent) { mutableStateOf(parseMarkdown(normalizedContent)) }
+    val displayContent = segments.singleOrNull()
+        ?.takeIf { it.kind == RichTextSegment.Kind.MARKDOWN }
+        ?.raw
+        ?: normalizedContent
+    var (data, setData) = remember(displayContent) { mutableStateOf(parseMarkdown(displayContent)) }
 
     // 监听内容变化，重新解析AST树
     // 这里在后台线程解析AST树, 防止频繁更新的时候掉帧
-    val updatedContent by rememberUpdatedState(content)
+    val updatedContent by rememberUpdatedState(displayContent)
     LaunchedEffect(Unit) {
         snapshotFlow { updatedContent }
             .distinctUntilChanged()
@@ -406,14 +427,14 @@ fun MarkdownBlock(
             .collect { setData(it) }
     }
 
-    val intent = analyzeRichTextContent(content)
-    val hasStatusBlock = intent.hasStatusBlock || intent.hasJsonPatch || intent.isRawHtmlDocument
+    val hasStatusBlock = segments.any { it.kind != RichTextSegment.Kind.MARKDOWN }
 
     if (hasStatusBlock) {
         MarkdownWebView(
-            content = normalizedContent,
+            content = displayContent,
             modifier = modifier,
-            isRawHtml = intent.isRawHtmlDocument,
+            isRawHtml = segments.any { it.kind == RichTextSegment.Kind.HTML_DOCUMENT },
+            applyTavernFrontendPolicy = segments.any { it.kind == RichTextSegment.Kind.HTML_DOCUMENT },
             tavernConversationId = tavernConversationId,
             tavernCurrentMessage = tavernCurrentMessage,
             tavernContextSnapshot = tavernContextSnapshot,
@@ -440,6 +461,12 @@ fun MarkdownBlock(
             }
         }
     }
+}
+
+private fun String.asHtmlCodeFence(): String {
+    val longestRun = Regex("`+").findAll(this).maxOfOrNull { it.value.length } ?: 0
+    val fence = "`".repeat(maxOf(3, longestRun + 1))
+    return "$fence html\n$this\n$fence"
 }
 
 // for debug

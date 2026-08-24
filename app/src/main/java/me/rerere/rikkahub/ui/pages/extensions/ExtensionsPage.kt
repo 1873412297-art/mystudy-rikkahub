@@ -63,6 +63,12 @@ fun ExtensionsPage() {
                         supportingContent = { Text(stringResource(R.string.extensions_page_quick_messages_desc)) },
                     )
                     item(
+                        onClick = { navController.navigate(Screen.TavernHelper()) },
+                        leadingContent = { Icon(HugeIcons.Puzzle, null) },
+                        headlineContent = { Text("酒馆助手") },
+                        supportingContent = { Text("管理消息前端渲染与酒馆脚本") },
+                    )
+                    item(
                         onClick = { navController.navigate(Screen.Prompts) },
                         leadingContent = { Icon(HugeIcons.Book03, null) },
                         headlineContent = { Text(stringResource(R.string.extensions_page_prompts)) },

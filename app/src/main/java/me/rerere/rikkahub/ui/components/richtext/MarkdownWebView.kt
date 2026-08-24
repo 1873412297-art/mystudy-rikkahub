@@ -68,6 +68,8 @@ internal fun MarkdownWebView(
     content: String,
     modifier: Modifier = Modifier,
     isRawHtml: Boolean = false,
+    /** 对消息前端应用酒馆助手的脚本与网络权限；STABLE_DOM 等宿主文档不受此开关影响。 */
+    applyTavernFrontendPolicy: Boolean = false,
     /**
      * 高度上限（dp）：超过此高度的内容会触发 WebView 内部纵向滚动，
      * 而不是把外层 Compose 容器撑到无限高。
@@ -218,10 +220,14 @@ internal fun MarkdownWebView(
     }
 
     val useIframeSandbox = isRawHtml || looksLikeHtmlDocument(content)
+    val allowFrontendScripts = !applyTavernFrontendPolicy || appSettings.tavernHelperRenderSettings.allowScripts
+    val allowFrontendNetwork = !applyTavernFrontendPolicy || appSettings.tavernHelperRenderSettings.allowNetwork
     val maxHeightPx = maxHeightDp?.let { with(density) { it.dp.toPx().toInt() } }
     // baseKey 不含 content：路径/主题/角色/卡样式变化才整文档重载
     val baseKey = listOf(
         useIframeSandbox,
+        allowFrontendScripts,
+        allowFrontendNetwork,
         fixedHeight,
         bgHex,
         textHex,
@@ -465,6 +471,7 @@ internal fun MarkdownWebView(
                         useWideViewPort = true
                         setSupportZoom(false)
                         mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                        blockNetworkLoads = !allowFrontendNetwork
                         allowFileAccess = false
                         allowContentAccess = false
                         @Suppress("DEPRECATION")
@@ -473,7 +480,7 @@ internal fun MarkdownWebView(
                         allowUniversalAccessFromFileURLs = false
                     }
                     val html = if (useIframeSandbox) {
-                        buildSandboxHostHtml(content, bgHex, textHex, fixedHeight)
+                        buildSandboxHostHtml(content, bgHex, textHex, fixedHeight, allowFrontendScripts)
                     } else {
                         buildMarkdownPreviewHtml(context, normalizeRichTextContent(content), colorScheme)
                     }
@@ -484,11 +491,12 @@ internal fun MarkdownWebView(
                 }
             },
             update = { webView ->
+                webView.settings.blockNetworkLoads = !allowFrontendNetwork
                 // baseKey（路径/主题/角色/卡样式）变了才整文档重载；
                 // 否则 contentKey 变化时：streaming 走段 diff 增量 patch，非 streaming 才重 load。
                 if (lastBaseKey.value != baseKey) {
                     val html = if (useIframeSandbox) {
-                        buildSandboxHostHtml(content, bgHex, textHex, fixedHeight)
+                        buildSandboxHostHtml(content, bgHex, textHex, fixedHeight, allowFrontendScripts)
                     } else {
                         buildMarkdownPreviewHtml(context, normalizeRichTextContent(content), colorScheme)
                     }
@@ -512,7 +520,7 @@ internal fun MarkdownWebView(
                     )
                 } else {
                     val html = if (useIframeSandbox) {
-                        buildSandboxHostHtml(content, bgHex, textHex, fixedHeight)
+                        buildSandboxHostHtml(content, bgHex, textHex, fixedHeight, allowFrontendScripts)
                     } else {
                         buildMarkdownPreviewHtml(context, normalizeRichTextContent(content), colorScheme)
                     }
@@ -821,10 +829,17 @@ internal fun stripMarkdownCodeRegions(text: String): String {
  *     不构成数据泄漏。如果未来要按卡隔离，可以在每次 load 前调
  *     WebStorage.getInstance().deleteAllData()。
  */
-private fun buildSandboxHostHtml(userHtml: String, bgHex: String, textHex: String, fixedHeight: Boolean = false): String {
-    val unwrapped = unwrapFencedHtml(userHtml)
+private fun buildSandboxHostHtml(
+    userHtml: String,
+    bgHex: String,
+    textHex: String,
+    fixedHeight: Boolean = false,
+    allowUserScripts: Boolean = true,
+): String {
+    val unwrapped = sanitizeTavernFrontendHtml(unwrapFencedHtml(userHtml), allowUserScripts)
 
-    val injectTag = "<script>${buildTavernRuntimeScript()}\n${buildIframeInjectScript()}</script>"
+    val runtimeScript = if (allowUserScripts) buildTavernRuntimeScript() else ""
+    val injectTag = "<script>$runtimeScript\n${buildIframeInjectScript()}</script>"
 
     val isCompleteDoc = unwrapped.trimStart().let {
         it.startsWith("<!DOCTYPE", ignoreCase = true) || it.startsWith("<html", ignoreCase = true)
