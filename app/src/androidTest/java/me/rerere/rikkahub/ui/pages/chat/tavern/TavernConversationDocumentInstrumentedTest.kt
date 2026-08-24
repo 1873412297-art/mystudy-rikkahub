@@ -576,6 +576,82 @@ class TavernConversationDocumentInstrumentedTest {
     }
 
     @Test
+    fun markdownItTakesOverWhenShowdownRenderingThrows() {
+        val html = buildTavernConversationDocument(
+            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            initial = snapshot(
+                nodes = listOf(node("n1", 0, 1, message("m1", "# Fallback\n\n**markdown-it**"))),
+            ),
+            runtimeScript = """
+                window.showdown.Converter = function () {
+                  return { makeHtml: function () { throw new Error('forced Showdown failure'); } };
+                };
+            """.trimIndent(),
+        )
+
+        val result = withVisibleWebView(html) { view ->
+            awaitJson(view, 30) {
+                """
+                (function(){
+                  var scope=document.querySelector('.mes_text');
+                  return JSON.stringify({
+                    ready:!!(scope && scope.querySelector('h1') && scope.querySelector('strong')),
+                    heading:scope && scope.querySelector('h1') && scope.querySelector('h1').textContent,
+                    strong:scope && scope.querySelector('strong') && scope.querySelector('strong').textContent
+                  });
+                })();
+                """.trimIndent()
+            }
+        }
+
+        assertEquals("Fallback", result.getString("heading"))
+        assertEquals("markdown-it", result.getString("strong"))
+    }
+
+    @Test
+    fun escapedTextTakesOverWhenBothMarkdownParsersAreUnavailable() {
+        val html = buildTavernConversationDocument(
+            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            initial = snapshot(
+                nodes = listOf(
+                    node(
+                        "n1",
+                        0,
+                        1,
+                        message("m1", "# Literal fallback\n\n**not bold** <script>window.fallbackPwned=true</script>"),
+                    ),
+                ),
+            ),
+            runtimeScript = "window.showdown = undefined; window.MarkdownIt = undefined;",
+        )
+
+        val result = withVisibleWebView(html) { view ->
+            awaitJson(view, 30) {
+                """
+                (function(){
+                  var fallback=document.querySelector('.mes_text [data-render-mode="markdown"]');
+                  return JSON.stringify({
+                    ready:!!fallback,
+                    text:fallback ? fallback.textContent : '',
+                    headings:document.querySelectorAll('.mes_text h1').length,
+                    strong:document.querySelectorAll('.mes_text strong').length,
+                    scripts:document.querySelectorAll('.mes_text script').length,
+                    executed:window.fallbackPwned === true
+                  });
+                })();
+                """.trimIndent()
+            }
+        }
+
+        assertTrue(result.getString("text").contains("# Literal fallback"))
+        assertTrue(result.getString("text").contains("**not bold**"))
+        assertEquals(0, result.getInt("headings"))
+        assertEquals(0, result.getInt("strong"))
+        assertEquals(0, result.getInt("scripts"))
+        assertFalse(result.getBoolean("executed"))
+    }
+
+    @Test
     fun applyPatchesMutatesNodesBranchesStreamingAndClearsStaleThemeVariables() {
         val initial = snapshot(
             nodes = listOf(node("n1", 0, 1, message("m1", "old"))),

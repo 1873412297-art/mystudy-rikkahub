@@ -134,17 +134,24 @@ class TavernImmersiveRuntimeInstrumentedTest {
                     settings.allowContentAccess = false
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView, url: String?) {
+                            pollStructuredMarkdown(view, 0)
+                        }
+
+                        private fun pollStructuredMarkdown(view: WebView, attempt: Int) {
                             view.evaluateJavascript(
                                 """
                                 (function(){
                                   var scope=document.querySelector('.mes_text');
+                                  var mermaid=scope ? scope.querySelector('.mermaid') : null;
                                   return JSON.stringify({
+                                    ready:!!(mermaid && mermaid.querySelector('svg')),
                                     text:scope ? scope.innerText : '',
                                     headings:scope ? scope.querySelectorAll('h1').length : 0,
                                     details:scope ? scope.querySelectorAll('details > summary').length : 0,
                                     code:scope ? scope.querySelectorAll('pre code').length : 0,
                                     highlighted:scope ? scope.querySelectorAll('pre code.hljs').length : 0,
                                     mermaid:scope ? scope.querySelectorAll('.mermaid').length : 0,
+                                    mermaidSvg:!!(mermaid && mermaid.querySelector('svg')),
                                     forbidden:scope ? scope.querySelectorAll('script,iframe,object,embed,form').length : -1,
                                     executed:window.__forbiddenOpeningScript === true
                                   });
@@ -152,8 +159,13 @@ class TavernImmersiveRuntimeInstrumentedTest {
                                 """.trimIndent(),
                             ) { encoded ->
                                 val decoded = JSONTokener(encoded).nextValue() as String
-                                result.set(JSONObject(decoded))
-                                completed.countDown()
+                                val rendered = JSONObject(decoded)
+                                result.set(rendered)
+                                if (rendered.optBoolean("ready")) {
+                                    completed.countDown()
+                                } else if (attempt < 180) {
+                                    view.postDelayed({ pollStructuredMarkdown(view, attempt + 1) }, 250)
+                                }
                             }
                         }
                     }
@@ -178,6 +190,7 @@ class TavernImmersiveRuntimeInstrumentedTest {
             assertEquals(2, rendered.getInt("code"))
             assertEquals(1, rendered.getInt("highlighted"))
             assertEquals(1, rendered.getInt("mermaid"))
+            assertTrue(rendered.getBoolean("mermaidSvg"))
             assertEquals(0, rendered.getInt("forbidden"))
             assertFalse(rendered.getBoolean("executed"))
         }

@@ -224,6 +224,7 @@ class TavernConversationDocumentTest {
         assertTrue(configure.contains("new window.showdown.Converter"))
         assertTrue(configure.contains("literalMidWordUnderscores: true"))
         assertTrue(configure.contains("simpleLineBreaks: true"))
+        assertTrue(configure.contains("tasklists: true"))
         assertTrue(renderer.contains("showdownConverter.makeHtml"))
         assertTrue(renderer.contains("markdown.render"))
         assertTrue(renderer.contains("window.DOMPurify.sanitize"))
@@ -232,6 +233,8 @@ class TavernConversationDocumentTest {
         assertTrue(enhancements.contains("querySelectorAll('pre code')"))
         assertTrue(enhancements.contains("window.hljs.highlightElement(code)"))
         assertTrue(enhancements.contains("language-mermaid"))
+        assertTrue(enhancements.contains("window.katex.render"))
+        assertTrue(enhancements.contains("trust: false"))
         assertTrue(template.contains("showdownConverter = configureShowdown()"))
     }
 

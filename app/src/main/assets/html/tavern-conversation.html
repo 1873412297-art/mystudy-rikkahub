@@ -206,6 +206,7 @@
             underline: true,
             simpleLineBreaks: true,
             strikethrough: true,
+            tasklists: true,
             disableForced4SpacesIndentedSublists: true
           });
         } catch (_) {
@@ -284,6 +285,7 @@
           try { window.hljs.highlightElement(code); } catch (_) {}
         });
 
+        runKatexEnhancements(scope);
         if (!window.mermaid) return;
         var mermaidNodes = scope.querySelectorAll('.mermaid:not([data-processed])');
         if (mermaidNodes.length === 0) return;
@@ -291,6 +293,48 @@
           var pending = window.mermaid.run({ nodes: mermaidNodes });
           if (pending && typeof pending.catch === 'function') pending.catch(function () {});
         } catch (_) {}
+      }
+
+      function runKatexEnhancements(scope) {
+        if (!scope || !window.katex || typeof window.katex.render !== 'function') return;
+        var walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+        var textNodes = [];
+        while (walker.nextNode()) {
+          var textNode = walker.currentNode;
+          var parent = textNode.parentElement;
+          if (!parent || parent.closest('pre,code,kbd,script,style,textarea,.katex,.mermaid')) continue;
+          if (/\$|\\\(|\\\[/.test(textNode.nodeValue || '')) textNodes.push(textNode);
+        }
+        textNodes.forEach(function (textNode) {
+          var source = textNode.nodeValue || '';
+          var pattern = /(\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\$([^$\r\n]+?)\$|\\\(([\s\S]+?)\\\))/g;
+          var fragment = document.createDocumentFragment();
+          var cursor = 0;
+          var changed = false;
+          var match;
+          while ((match = pattern.exec(source)) !== null) {
+            if (match.index > cursor) fragment.appendChild(document.createTextNode(source.slice(cursor, match.index)));
+            var displayMode = match[2] !== undefined || match[3] !== undefined;
+            var expression = match[2] || match[3] || match[4] || match[5] || '';
+            var container = document.createElement(displayMode ? 'div' : 'span');
+            try {
+              window.katex.render(expression, container, {
+                displayMode: displayMode,
+                throwOnError: false,
+                strict: 'ignore',
+                trust: false
+              });
+            } catch (_) {
+              container.textContent = match[0];
+            }
+            fragment.appendChild(container);
+            cursor = pattern.lastIndex;
+            changed = true;
+          }
+          if (!changed) return;
+          if (cursor < source.length) fragment.appendChild(document.createTextNode(source.slice(cursor)));
+          textNode.replaceWith(fragment);
+        });
       }
 
       function applyDocumentStyle(snapshot) {
