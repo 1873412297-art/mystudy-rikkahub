@@ -70,6 +70,8 @@ internal fun MarkdownWebView(
     isRawHtml: Boolean = false,
     /** 对消息前端应用酒馆助手的脚本与网络权限；STABLE_DOM 等宿主文档不受此开关影响。 */
     applyTavernFrontendPolicy: Boolean = false,
+    onWebViewCreated: (WebView) -> Unit = {},
+    onWebViewDisposed: (WebView) -> Unit = {},
     /**
      * 高度上限（dp）：超过此高度的内容会触发 WebView 内部纵向滚动，
      * 而不是把外层 Compose 容器撑到无限高。
@@ -200,6 +202,7 @@ internal fun MarkdownWebView(
     DisposableEffect(Unit) {
         onDispose {
             val webView = tavernWebViewRef.value ?: return@onDispose
+            onWebViewDisposed(webView)
             runCatching { webView.removeJavascriptInterface("RikkahubBridge") }
             runCatching { webView.removeJavascriptInterface("TavernRuntimeBridge") }
             runCatching { webView.stopLoading() }
@@ -259,6 +262,7 @@ internal fun MarkdownWebView(
                 WebView(ctx).apply {
                     val webView = this
                     tavernWebViewRef.value = this
+                    onWebViewCreated(this)
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
                     isVerticalScrollBarEnabled = false
                     isHorizontalScrollBarEnabled = false

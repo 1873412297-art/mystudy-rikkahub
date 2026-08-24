@@ -74,6 +74,7 @@ internal fun TavernHelperPage(
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showAdd by rememberSaveable { mutableStateOf(false) }
     var confirmScripts by rememberSaveable { mutableStateOf(false) }
+    var pendingEnable by remember { mutableStateOf<TavernHelperScriptNode?>(null) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -129,7 +130,9 @@ internal fun TavernHelperPage(
                 onScope = vm::selectScope,
                 onImport = { importer.launch(arrayOf("application/json", "text/json", "text/plain")) },
                 onAdd = { showAdd = true },
-                onEnabled = vm::setEnabled,
+                onEnabled = { node, enabled ->
+                    if (enabled) pendingEnable = node else vm.setEnabled(node, false)
+                },
                 onDelete = vm::delete,
             )
         }
@@ -153,6 +156,22 @@ internal fun TavernHelperPage(
                 }) { Text("我了解风险，启用") }
             },
             dismissButton = { TextButton(onClick = { confirmScripts = false }) { Text("取消") } },
+        )
+    }
+    pendingEnable?.let { node ->
+        AlertDialog(
+            onDismissRequest = { pendingEnable = null },
+            title = { Text("启用第三方脚本？") },
+            text = {
+                Text("脚本“${node.name.ifBlank { "未命名" }}”将在聊天页长期运行，并可调用已授权的酒馆 API。请只启用你信任的脚本。")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    vm.setEnabled(node, true)
+                    pendingEnable = null
+                }) { Text("信任并启用") }
+            },
+            dismissButton = { TextButton(onClick = { pendingEnable = null }) { Text("取消") } },
         )
     }
     error?.let { message ->

@@ -1,0 +1,132 @@
+package me.rerere.rikkahub.ui.components.richtext.runtime
+
+import android.webkit.WebView
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.uuid.Uuid
+import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScope
+import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScopeType
+import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScript
+import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptFolder
+import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptNode
+import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptRepository
+import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
+import org.json.JSONObject
+import org.koin.compose.koinInject
+
+internal object TavernBrowserSessionRegistry {
+    private val sessions = ConcurrentHashMap<String, WebView>()
+
+    fun register(scriptId: String, webView: WebView) {
+        sessions[scriptId] = webView
+    }
+
+    fun unregister(scriptId: String, webView: WebView) {
+        sessions.remove(scriptId, webView)
+    }
+
+    fun emitButton(scriptId: String, buttonName: String) {
+        val view = sessions[scriptId] ?: return
+        val name = JSONObject.quote(buttonName)
+        view.post {
+            view.evaluateJavascript(
+                "(function(){var n=$name;var e=window.getButtonEvent(n);" +
+                    "document.dispatchEvent(new CustomEvent('th:'+e,{detail:{name:n}}));})();",
+                null,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun rememberTavernBrowserScripts(assistantId: String?): List<TavernHelperScript> {
+    val repository: TavernHelperScriptRepository = koinInject()
+    val globalFlow = remember(repository) {
+        repository.observe(TavernHelperScope(TavernHelperScopeType.GLOBAL))
+    }
+    val global by globalFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val assistantFlow = remember(repository, assistantId) {
+        assistantId?.let { repository.observe(TavernHelperScope(TavernHelperScopeType.ASSISTANT, it)) }
+    }
+    val assistant by assistantFlow
+        ?.collectAsStateWithLifecycle(initialValue = emptyList())
+        ?: remember { androidx.compose.runtime.mutableStateOf(emptyList()) }
+
+    return remember(global, assistant) {
+        (flattenEnabled(global) + flattenEnabled(assistant)).take(MAX_BROWSER_SESSIONS)
+    }
+}
+
+@Composable
+internal fun TavernBrowserRuntimeHost(
+    scripts: List<TavernHelperScript>,
+    conversationId: String,
+) {
+    val conversationUuid = remember(conversationId) { runCatching { Uuid.parse(conversationId) }.getOrNull() }
+    Box(modifier = Modifier.size(1.dp)) {
+        scripts.forEach { script ->
+            key(script.id, script.content.hashCode()) {
+                MarkdownWebView(
+                    content = buildTavernBrowserSessionHtml(script),
+                    modifier = Modifier.size(1.dp),
+                    isRawHtml = true,
+                    fixedHeight = true,
+                    maxHeightDp = 1,
+                    tavernConversationId = conversationUuid,
+                    onWebViewCreated = { TavernBrowserSessionRegistry.register(script.id, it) },
+                    onWebViewDisposed = { TavernBrowserSessionRegistry.unregister(script.id, it) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun TavernBrowserScriptButtons(
+    scripts: List<TavernHelperScript>,
+    modifier: Modifier = Modifier,
+) {
+    val buttons = remember(scripts) {
+        scripts.flatMap { script ->
+            if (!script.button.enabled) emptyList() else script.button.buttons
+                .filter { it.visible }
+                .map { script.id to it.name }
+        }
+    }
+    if (buttons.isEmpty()) return
+    FlowRow(
+        modifier = modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        buttons.forEach { (scriptId, name) ->
+            AssistChip(
+                onClick = { TavernBrowserSessionRegistry.emitButton(scriptId, name) },
+                label = { Text(name) },
+            )
+        }
+    }
+}
+
+private fun flattenEnabled(nodes: List<TavernHelperScriptNode>): List<TavernHelperScript> = buildList {
+    nodes.forEach { node ->
+        when (node) {
+            is TavernHelperScript -> if (node.enabled) add(node)
+            is TavernHelperScriptFolder -> if (node.enabled) addAll(node.scripts.filter { it.enabled })
+        }
+    }
+}
+
+private const val MAX_BROWSER_SESSIONS = 32
