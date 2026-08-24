@@ -131,4 +131,33 @@ class TavernHelperScriptCodecTest {
         assertTrue(error is TavernHelperSchemaException)
         assertEquals("$.content", (error as TavernHelperSchemaException).path)
     }
+
+    @Test
+    fun `stored format preserves trusted enabled state and all script data`() {
+        val trusted = TavernHelperScript(
+            id = "trusted",
+            name = "已信任",
+            enabled = true,
+            content = "window.started = true",
+            info = "",
+            button = TavernHelperButtonConfig(
+                enabled = true,
+                buttons = listOf(TavernHelperButton("运行", true)),
+                compatExtras = kotlinx.serialization.json.JsonObject(emptyMap()),
+            ),
+            data = kotlinx.serialization.json.JsonObject(mapOf("count" to JsonPrimitive(3))),
+            exportWith = TavernHelperExportWith(
+                data = false,
+                button = false,
+                compatExtras = kotlinx.serialization.json.JsonObject(emptyMap()),
+            ),
+            compatExtras = kotlinx.serialization.json.JsonObject(emptyMap()),
+        )
+
+        val restored = codec.decodeStored(codec.encodeStored(trusted)) as TavernHelperScript
+
+        assertTrue(restored.enabled)
+        assertEquals(JsonPrimitive(3), restored.data["count"])
+        assertEquals("运行", restored.button.buttons.single().name)
+    }
 }

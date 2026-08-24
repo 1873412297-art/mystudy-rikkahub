@@ -69,46 +69,74 @@ internal class TavernHelperScriptCodec(
     }
 
     fun decodeImport(rawJson: String, occupiedIds: Set<String> = emptySet()): TavernHelperScriptNode {
-        val root = try {
-            Json.parseToJsonElement(rawJson) as? JsonObject
-                ?: throw TavernHelperSchemaException("$", "根节点必须是对象")
-        } catch (error: TavernHelperSchemaException) {
-            throw error
-        } catch (error: Exception) {
-            throw TavernHelperSchemaException("$", error.message ?: "JSON 无效")
-        }
+        val root = parseRoot(rawJson)
+        return decodeRoot(root, occupiedIds, preserveEnabled = false)
+    }
+
+    fun decodeStored(rawJson: String): TavernHelperScriptNode =
+        decodeRoot(parseRoot(rawJson), emptySet(), preserveEnabled = true)
+
+    fun encodeStored(node: TavernHelperScriptNode): String = when (node) {
+        is TavernHelperScript -> node.toJson(honorExportFlags = false).toString()
+        is TavernHelperScriptFolder -> node.toJson(honorExportFlags = false).toString()
+    }
+
+    private fun parseRoot(rawJson: String): JsonObject = try {
+        Json.parseToJsonElement(rawJson) as? JsonObject
+            ?: throw TavernHelperSchemaException("$", "根节点必须是对象")
+    } catch (error: TavernHelperSchemaException) {
+        throw error
+    } catch (error: Exception) {
+        throw TavernHelperSchemaException("$", error.message ?: "JSON 无效")
+    }
+
+    private fun decodeRoot(
+        root: JsonObject,
+        occupiedIds: Set<String>,
+        preserveEnabled: Boolean,
+    ): TavernHelperScriptNode {
         val type = root.string("type", "$", "script")
         return when (type) {
             "script" -> {
                 val scriptRoot = root["value"] as? JsonObject ?: root
-                decodeScript(scriptRoot, if (scriptRoot === root) "$" else "$.value", occupiedIds)
+                decodeScript(
+                    scriptRoot,
+                    if (scriptRoot === root) "$" else "$.value",
+                    occupiedIds,
+                    preserveEnabled,
+                )
             }
-            "folder" -> decodeFolder(root, "$", occupiedIds)
+            "folder" -> decodeFolder(root, "$", occupiedIds, preserveEnabled)
             else -> throw TavernHelperSchemaException("$.type", "暂不支持的类型 $type")
         }
     }
 
     fun encodeExport(node: TavernHelperScriptNode): String = when (node) {
-        is TavernHelperScript -> node.toExportJson().toString()
-        is TavernHelperScriptFolder -> node.toExportJson().toString()
+        is TavernHelperScript -> node.toJson(honorExportFlags = true).toString()
+        is TavernHelperScriptFolder -> node.toJson(honorExportFlags = true).toString()
     }
 
-    private fun decodeFolder(root: JsonObject, path: String, occupiedIds: Set<String>): TavernHelperScriptFolder {
-        root.boolean("enabled", path, false)
+    private fun decodeFolder(
+        root: JsonObject,
+        path: String,
+        occupiedIds: Set<String>,
+        preserveEnabled: Boolean,
+    ): TavernHelperScriptFolder {
+        val storedEnabled = root.boolean("enabled", path, false)
         val rawId = root.string("id", path, "")
         val id = rawId.takeIf { it.isNotBlank() && it !in occupiedIds } ?: idFactory()
         val usedIds = occupiedIds.toMutableSet().apply { add(id) }
         val scriptsField = if ("scripts" in root) "scripts" else "value"
         val scripts = root.arrayObjects(scriptsField, path).mapIndexed { index, scriptObject ->
             val scriptPath = "$path.$scriptsField[$index]"
-            val script = decodeScript(scriptObject, scriptPath, usedIds)
+            val script = decodeScript(scriptObject, scriptPath, usedIds, preserveEnabled)
             usedIds += script.id
             script
         }
         return TavernHelperScriptFolder(
             id = id,
             name = root.string("name", path, ""),
-            enabled = false,
+            enabled = storedEnabled && preserveEnabled,
             icon = root.string("icon", path, "fa-solid fa-folder"),
             color = root.string("color", path, ""),
             scripts = scripts,
@@ -116,8 +144,13 @@ internal class TavernHelperScriptCodec(
         )
     }
 
-    private fun decodeScript(root: JsonObject, path: String, occupiedIds: Set<String>): TavernHelperScript {
-        root.boolean("enabled", path, false)
+    private fun decodeScript(
+        root: JsonObject,
+        path: String,
+        occupiedIds: Set<String>,
+        preserveEnabled: Boolean = false,
+    ): TavernHelperScript {
+        val storedEnabled = root.boolean("enabled", path, false)
         val content = root.string("content", path, "")
         if (content.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES) {
             throw TavernHelperSchemaException("$path.content", "脚本源码不能超过 2MB")
@@ -139,7 +172,7 @@ internal class TavernHelperScriptCodec(
         return TavernHelperScript(
             id = id,
             name = root.string("name", path, ""),
-            enabled = false,
+            enabled = storedEnabled && preserveEnabled,
             content = content,
             info = root.string("info", path, ""),
             button = TavernHelperButtonConfig(
@@ -160,10 +193,12 @@ internal class TavernHelperScriptCodec(
     }
 }
 
-private fun TavernHelperScript.toExportJson(): JsonObject {
+private fun TavernHelperScript.toJson(honorExportFlags: Boolean): JsonObject {
+    val includeButtons = !honorExportFlags || exportWith.button
+    val includeData = !honorExportFlags || exportWith.data
     val buttonJson = JsonObject(button.compatExtras.toMutableMap().apply {
         put("enabled", JsonPrimitive(button.enabled))
-        put("buttons", JsonArray(if (exportWith.button) button.buttons.map { it.toJson() } else emptyList()))
+        put("buttons", JsonArray(if (includeButtons) button.buttons.map { it.toJson() } else emptyList()))
     })
     val exportJson = JsonObject(exportWith.compatExtras.toMutableMap().apply {
         put("data", JsonPrimitive(exportWith.data))
@@ -177,7 +212,7 @@ private fun TavernHelperScript.toExportJson(): JsonObject {
         put("content", JsonPrimitive(content))
         put("info", JsonPrimitive(info))
         put("button", buttonJson)
-        put("data", if (exportWith.data) data else JsonObject(emptyMap()))
+        put("data", if (includeData) data else JsonObject(emptyMap()))
         put("export_with", exportJson)
     })
 }
@@ -187,14 +222,14 @@ private fun TavernHelperButton.toJson(): JsonObject = JsonObject(compatExtras.to
     put("visible", JsonPrimitive(visible))
 })
 
-private fun TavernHelperScriptFolder.toExportJson(): JsonObject = JsonObject(compatExtras.toMutableMap().apply {
+private fun TavernHelperScriptFolder.toJson(honorExportFlags: Boolean): JsonObject = JsonObject(compatExtras.toMutableMap().apply {
     put("type", JsonPrimitive("folder"))
     put("enabled", JsonPrimitive(enabled))
     put("name", JsonPrimitive(name))
     put("id", JsonPrimitive(id))
     put("icon", JsonPrimitive(icon))
     put("color", JsonPrimitive(color))
-    put("scripts", JsonArray(scripts.map { it.toExportJson() }))
+    put("scripts", JsonArray(scripts.map { it.toJson(honorExportFlags) }))
 })
 
 private fun JsonObject.string(name: String, path: String, default: String): String {
