@@ -285,6 +285,19 @@ class TavernConversationDocumentTest {
     }
 
     @Test
+    fun `plain code blocks use an opaque high contrast palette without overriding hljs`() {
+        val rootStyle = template.substringAfter(":root {").substringBefore("}")
+        val preStyle = template.substringAfter(".mes_text pre {").substringBefore("}")
+
+        assertTrue(rootStyle.contains("--rikkahub-code-bg: #20242b"))
+        assertTrue(rootStyle.contains("--rikkahub-code-text: #f4f7fa"))
+        assertTrue(preStyle.contains("background: var(--rikkahub-code-bg)"))
+        assertTrue(preStyle.contains("color: var(--rikkahub-code-text)"))
+        assertFalse(preStyle.contains("rgba("))
+        assertFalse(template.contains(".mes_text pre code.hljs { color:"))
+    }
+
+    @Test
     fun `conversation document renders every ST web part in protocol order`() {
         assertTrue(template.contains("function renderPart(part, node, message, partIndex)"))
         listOf(
@@ -371,14 +384,17 @@ class TavernConversationDocumentTest {
 
     @Test
     fun `opening navigation uses a sticky toolbar without covering the message`() {
+        val rootStyle = template.substringAfter(":root {").substringBefore("}")
         val openingCss = template.substringAfter(".mes.opening-swipe {")
             .substringBefore("@keyframes opening-enter-forward")
 
+        assertTrue(rootStyle.contains("--rikkahub-sticky-bg: Canvas"))
         assertTrue(template.contains("opening-swipe-nav"))
         assertTrue(openingCss.contains(".mes.opening-swipe .opening-swipe-nav"))
         assertTrue(openingCss.contains("position: sticky"))
         assertTrue(openingCss.contains("top: 0"))
-        assertTrue(openingCss.contains("background: var(--rikkahub-surface)"))
+        assertTrue(openingCss.contains("background: var(--rikkahub-sticky-bg)"))
+        assertTrue(openingCss.contains("box-shadow: 0 1px 0 var(--rikkahub-border)"))
         assertTrue(openingCss.contains("min-width: 44px"))
         assertFalse(openingCss.contains("position: fixed"))
     }

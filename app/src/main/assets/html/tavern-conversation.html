@@ -17,6 +17,9 @@
       --rikkahub-text-secondary: inherit;
       --rikkahub-border: rgba(127, 127, 127, .25);
       --rikkahub-accent: #4a90d9;
+      --rikkahub-code-bg: #20242b;
+      --rikkahub-code-text: #f4f7fa;
+      --rikkahub-sticky-bg: Canvas;
       --SmartThemeBodyColor: var(--rikkahub-text);
       --SmartThemeEmColor: var(--rikkahub-text-secondary);
       --SmartThemeQuoteColor: var(--rikkahub-accent);
@@ -43,7 +46,7 @@
     .mes_text > * { max-width: 100%; }
     .mes_text p { margin: 0 0 8px; }
     .mes_text p:last-child { margin-bottom: 0; }
-    .mes_text pre { overflow: auto; border-radius: 8px; padding: 10px 12px; background: rgba(20, 20, 20, .75); }
+    .mes_text pre { overflow: auto; border-radius: 8px; padding: 10px 12px; color: var(--rikkahub-code-text); background: var(--rikkahub-code-bg); }
     .mes_text img { max-width: 100%; height: auto; }
     .mes_text a { color: var(--rikkahub-accent); }
     .mes_text q { color: var(--SmartThemeQuoteColor); }
@@ -78,7 +81,7 @@
     .mes.opening-swipe .mes_block { width: 100%; }
     .mes.opening-swipe .name_text { min-height: 46px; margin: 0 0 6px 60px; }
     .mes.opening-swipe .mes_text { line-height: 1.62; }
-    .mes.opening-swipe .opening-swipe-nav { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 2px 0 8px; background: var(--rikkahub-surface); }
+    .mes.opening-swipe .opening-swipe-nav { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 2px 0 8px; background: var(--rikkahub-sticky-bg); box-shadow: 0 1px 0 var(--rikkahub-border); }
     .mes.opening-swipe .swipe_left,
     .mes.opening-swipe .swipe_right { min-width: 44px; width: 44px; height: 44px; margin: 0; border: 1px solid var(--rikkahub-border); background: color-mix(in srgb, var(--rikkahub-surface) 94%, transparent); opacity: .78; transition: opacity 160ms ease, background-color 160ms ease; }
     .mes.opening-swipe .swipes-counter { min-width: 42px; min-height: 24px; border: 1px solid var(--rikkahub-border); border-radius: 999px; padding: 4px 12px; background: color-mix(in srgb, var(--rikkahub-surface) 94%, transparent); text-align: center; }

@@ -652,6 +652,78 @@ class TavernConversationDocumentInstrumentedTest {
     }
 
     @Test
+    fun plainCodeKeepsHighContrastAcrossThemesWithoutOverridingHljsPalette() {
+        val markdown = """
+            ```body1
+            hp: 100
+            ```
+
+            ```javascript
+            const hp = 100;
+            ```
+        """.trimIndent()
+        val html = buildTavernConversationDocument(
+            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            initial = snapshot(nodes = listOf(node("n1", 0, 1, message("m1", markdown)))),
+        )
+
+        val result = withVisibleWebView(html) { view ->
+            awaitJson(view, 30) {
+                """
+                (function(){
+                  function rgba(value) {
+                    var parts=String(value || '').match(/[\d.]+/g) || [];
+                    return [Number(parts[0] || 0), Number(parts[1] || 0), Number(parts[2] || 0),
+                      parts.length > 3 ? Number(parts[3]) : 1];
+                  }
+                  function luminance(color) {
+                    var channels=color.slice(0,3).map(function(value){
+                      value=value / 255;
+                      return value <= 0.03928 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+                    });
+                    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+                  }
+                  function contrast(foreground, background) {
+                    var first=luminance(foreground);
+                    var second=luminance(background);
+                    return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+                  }
+                  function sample(plain, pre) {
+                    var foreground=rgba(getComputedStyle(plain).color);
+                    var background=rgba(getComputedStyle(pre).backgroundColor);
+                    return { ratio:contrast(foreground, background), alpha:background[3] };
+                  }
+                  var plain=document.querySelector('pre code:not(.hljs)');
+                  var highlighted=document.querySelector('pre code.hljs');
+                  var pre=plain && plain.closest('pre');
+                  if (!plain || !highlighted || !pre) return JSON.stringify({ready:false});
+                  document.documentElement.style.setProperty('--rikkahub-text', '#111827');
+                  var light=sample(plain, pre);
+                  document.documentElement.style.setProperty('--rikkahub-text', '#e5e7eb');
+                  var dark=sample(plain, pre);
+                  return JSON.stringify({
+                    ready:true,
+                    lightContrast:light.ratio,
+                    darkContrast:dark.ratio,
+                    lightAlpha:light.alpha,
+                    darkAlpha:dark.alpha,
+                    highlightedColor:getComputedStyle(highlighted).color,
+                    highlightedBackground:getComputedStyle(highlighted).backgroundColor
+                  });
+                })();
+                """.trimIndent()
+            }
+        }
+
+        assertTrue(result.getDouble("lightContrast") >= 7.0)
+        assertTrue(result.getDouble("darkContrast") >= 7.0)
+        assertEquals(1.0, result.getDouble("lightAlpha"), 0.001)
+        assertEquals(1.0, result.getDouble("darkAlpha"), 0.001)
+        assertEquals("rgb(171, 178, 191)", result.getString("highlightedColor"))
+        assertEquals("rgb(40, 44, 52)", result.getString("highlightedBackground"))
+    }
+
+    @Test
     fun applyPatchesMutatesNodesBranchesStreamingAndClearsStaleThemeVariables() {
         val initial = snapshot(
             nodes = listOf(node("n1", 0, 1, message("m1", "old"))),
