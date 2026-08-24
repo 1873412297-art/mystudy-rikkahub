@@ -410,42 +410,44 @@ internal fun MarkdownWebView(
                             // 跑完后 body height 就是实际高度）。
                             // sandbox iframe 路径不依赖这次测量——iframe 内 JS 会通过 postMessage
                             // 持续上报真实高度到 RikkahubBridge.reportHeight，那条路径会更新 viewHeight。
-                            // 但首次还是测一下，给个不至于 60dp 闪一下的初值。
-                            view?.measureContentHeight { pxHeight ->
-                                val h = pxHeight + 16
-                                contentHeightPx = h
-                                if (maxHeightPx != null && h > maxHeightPx) {
-                                    viewHeight = maxHeightPx
-                                    hasOverflow = true
-                                    view.post { view.isVerticalScrollBarEnabled = true }
-                                } else {
-                                    viewHeight = h.coerceAtLeast(60)
-                                    hasOverflow = false
-                                    view.post { view.isVerticalScrollBarEnabled = false }
+                            // 前端 HTML 只能使用其注入脚本上报的真实内容高度。这里若测量 WebView
+                            // 当前视口，会把 maxHeight (通常为 600dp) 当成内容高度写回，短卡片
+                            // 随即形成“视口越高、上报越高”的自我撑高循环。
+                            if (shouldMeasurePageHeight(applyTavernFrontendPolicy)) {
+                                view?.measureContentHeight { pxHeight ->
+                                    val h = pxHeight + 16
+                                    contentHeightPx = h
+                                    if (maxHeightPx != null && h > maxHeightPx) {
+                                        viewHeight = maxHeightPx
+                                        hasOverflow = true
+                                        view.post { view.isVerticalScrollBarEnabled = true }
+                                    } else {
+                                        viewHeight = h.coerceAtLeast(60)
+                                        hasOverflow = false
+                                        view.post { view.isVerticalScrollBarEnabled = false }
+                                    }
                                 }
-                            }
-                            // 多次延迟重测兜底——markdown 异步渲染（mermaid/katex/dompurify）
-                            // 完成时间不固定。sandbox 路径走 postMessage 不依赖这里。
-                            listOf(150L, 400L, 1000L, 2500L).forEach { delay ->
-                                view?.postDelayed({
-                                    view.measureContentHeight { h2 ->
-                                        val h = h2 + 16
-                                        // 只在新高度比当前大时才更新（防止 iframe 还没载完时
-                                        // 测到一个小值把已经报上来的大值给覆盖回去）
-                                        if (h > contentHeightPx) {
-                                            contentHeightPx = h
-                                            if (maxHeightPx == null || h <= maxHeightPx) {
-                                                viewHeight = h.coerceAtLeast(60)
-                                                hasOverflow = false
-                                                view.isVerticalScrollBarEnabled = false
-                                            } else if (!hasOverflow) {
-                                                viewHeight = maxHeightPx
-                                                hasOverflow = true
-                                                view.isVerticalScrollBarEnabled = true
+                                // 多次延迟重测兜底——markdown 异步渲染（mermaid/katex/dompurify）
+                                // 完成时间不固定。前端 HTML 路径由内容桥持续上报，不走这里。
+                                listOf(150L, 400L, 1000L, 2500L).forEach { delay ->
+                                    view?.postDelayed({
+                                        view.measureContentHeight { h2 ->
+                                            val h = h2 + 16
+                                            if (h > contentHeightPx) {
+                                                contentHeightPx = h
+                                                if (maxHeightPx == null || h <= maxHeightPx) {
+                                                    viewHeight = h.coerceAtLeast(60)
+                                                    hasOverflow = false
+                                                    view.isVerticalScrollBarEnabled = false
+                                                } else if (!hasOverflow) {
+                                                    viewHeight = maxHeightPx
+                                                    hasOverflow = true
+                                                    view.isVerticalScrollBarEnabled = true
+                                                }
                                             }
                                         }
-                                    }
-                                }, delay)
+                                    }, delay)
+                                }
                             }
                             // 酒馆脚本宿主事件：消息渲染完成
                             tavernConversationId?.let { cid ->
@@ -882,11 +884,24 @@ $injectTag
  * 注入脚本：测量高度 → RikkahubBridge.reportHeight()，链接拦截 → RikkahubBridge.openLink()。
  * 直接调 native bridge（不再 postMessage），因为没有 iframe 隔离层了。
  */
-private fun buildIframeInjectScript(): String = """
+internal fun buildIframeInjectScript(): String = """
 (function(){
   function measure(){
-    var de=document.documentElement,b=document.body;
-    return Math.max(de?de.scrollHeight:0,de?de.offsetHeight:0,b?b.scrollHeight:0,b?b.offsetHeight:0);
+    var b=document.body;
+    if(!b)return 0;
+    var base=b.getBoundingClientRect(),top=base.top,maxBottom=0;
+    try{
+      var range=document.createRange();
+      range.selectNodeContents(b);
+      var rr=range.getBoundingClientRect();
+      maxBottom=Math.max(maxBottom,rr.bottom-top);
+    }catch(e){}
+    var nodes=b.querySelectorAll('*');
+    for(var i=0;i<nodes.length;i++){
+      var rect=nodes[i].getBoundingClientRect();
+      maxBottom=Math.max(maxBottom,rect.bottom-top);
+    }
+    return Math.max(1,Math.ceil(maxBottom));
   }
   var lastH=0,rafId=null;
   function tick(){
@@ -929,3 +944,6 @@ private fun buildIframeInjectScript(): String = """
 
 internal fun hex(c: androidx.compose.ui.graphics.Color) =
     String.format("#%02X%02X%02X", (c.red * 255).toInt(), (c.green * 255).toInt(), (c.blue * 255).toInt())
+
+internal fun shouldMeasurePageHeight(applyTavernFrontendPolicy: Boolean): Boolean =
+    !applyTavernFrontendPolicy
