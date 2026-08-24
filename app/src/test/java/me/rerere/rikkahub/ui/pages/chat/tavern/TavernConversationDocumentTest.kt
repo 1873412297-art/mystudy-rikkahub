@@ -287,10 +287,11 @@ class TavernConversationDocumentTest {
     @Test
     fun `plain code blocks use an opaque high contrast palette without overriding hljs`() {
         val rootStyle = template.substringAfter(":root {").substringBefore("}")
-        val preStyle = template.substringAfter(".mes_text pre {").substringBefore("}")
+        val preStyle = template.substringAfter(".mes_text pre:not(.hljs) {").substringBefore("}")
 
         assertTrue(rootStyle.contains("--rikkahub-code-bg: #20242b"))
         assertTrue(rootStyle.contains("--rikkahub-code-text: #f4f7fa"))
+        assertFalse(template.contains(".mes_text pre {"))
         assertTrue(preStyle.contains("background: var(--rikkahub-code-bg)"))
         assertTrue(preStyle.contains("color: var(--rikkahub-code-text)"))
         assertFalse(preStyle.contains("rgba("))

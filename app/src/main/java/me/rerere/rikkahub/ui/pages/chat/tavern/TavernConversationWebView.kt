@@ -126,6 +126,7 @@ internal fun TavernConversationPane(
     val themeVariables = mapOf(
         "--rikkahub-bg" to "transparent",
         "--rikkahub-surface" to hex(colorScheme.surface),
+        "--rikkahub-sticky-bg" to hex(colorScheme.surface),
         "--rikkahub-surface-variant" to hex(colorScheme.surfaceVariant),
         "--rikkahub-text" to hex(colorScheme.onSurface),
         "--rikkahub-text-secondary" to hex(colorScheme.onSurfaceVariant),

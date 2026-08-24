@@ -580,7 +580,17 @@ class TavernConversationDocumentInstrumentedTest {
         val html = buildTavernConversationDocument(
             context = InstrumentationRegistry.getInstrumentation().targetContext,
             initial = snapshot(
-                nodes = listOf(node("n1", 0, 1, message("m1", "# Fallback\n\n**markdown-it**"))),
+                nodes = listOf(
+                    node(
+                        "n1",
+                        0,
+                        1,
+                        message(
+                            "m1",
+                            "# Fallback\n\n**markdown-it**\n\n```javascript\nconst hp = 100;\n```",
+                        ),
+                    ),
+                ),
             ),
             runtimeScript = """
                 window.showdown.Converter = function () {
@@ -594,10 +604,14 @@ class TavernConversationDocumentInstrumentedTest {
                 """
                 (function(){
                   var scope=document.querySelector('.mes_text');
+                  var highlighted=scope && scope.querySelector('pre.hljs');
+                  var style=highlighted && getComputedStyle(highlighted);
                   return JSON.stringify({
-                    ready:!!(scope && scope.querySelector('h1') && scope.querySelector('strong')),
+                    ready:!!(scope && scope.querySelector('h1') && scope.querySelector('strong') && highlighted),
                     heading:scope && scope.querySelector('h1') && scope.querySelector('h1').textContent,
-                    strong:scope && scope.querySelector('strong') && scope.querySelector('strong').textContent
+                    strong:scope && scope.querySelector('strong') && scope.querySelector('strong').textContent,
+                    highlightedColor:style && style.color,
+                    highlightedBackground:style && style.backgroundColor
                   });
                 })();
                 """.trimIndent()
@@ -606,6 +620,59 @@ class TavernConversationDocumentInstrumentedTest {
 
         assertEquals("Fallback", result.getString("heading"))
         assertEquals("markdown-it", result.getString("strong"))
+        assertEquals("rgb(171, 178, 191)", result.getString("highlightedColor"))
+        assertEquals("rgb(40, 44, 52)", result.getString("highlightedBackground"))
+        assertFalse(result.getString("highlightedColor").equals("rgb(244, 247, 250)", ignoreCase = true))
+        assertFalse(result.getString("highlightedBackground").equals("rgb(32, 36, 43)", ignoreCase = true))
+    }
+
+    @Test
+    fun stickyOpeningLayerUsesExplicitOpaqueAppThemeSurfaces() {
+        fun sample(surface: String): JSONObject {
+            val initial = snapshot(
+                nodes = listOf(node("n1", 0, 1, message("m1", "opening"))),
+                theme = linkedMapOf("--rikkahub-sticky-bg" to surface),
+            ).copy(
+                openingSwipe = TavernOpeningSwipe(
+                    index = 0,
+                    count = 2,
+                    ready = true,
+                    swipes = listOf("opening", "alternate"),
+                ),
+            )
+            val html = buildTavernConversationDocument(
+                InstrumentationRegistry.getInstrumentation().targetContext,
+                initial,
+            )
+            return withVisibleWebView(html) { view ->
+                awaitJson(view, 30) {
+                    """
+                    (function(){
+                      var nav=document.querySelector('.opening-swipe-nav');
+                      var color=nav && getComputedStyle(nav).backgroundColor;
+                      var parts=String(color || '').match(/[\d.]+/g) || [];
+                      return JSON.stringify({
+                        ready:!!nav,
+                        color:color,
+                        alpha:parts.length > 3 ? Number(parts[3]) : 1,
+                        position:nav && getComputedStyle(nav).position,
+                        top:nav && getComputedStyle(nav).top
+                      });
+                    })();
+                    """.trimIndent()
+                }
+            }
+        }
+
+        val light = sample("#fff4e8")
+        val dark = sample("#171a21")
+
+        assertEquals("rgb(255, 244, 232)", light.getString("color"))
+        assertEquals("rgb(23, 26, 33)", dark.getString("color"))
+        assertEquals(1.0, light.getDouble("alpha"), 0.001)
+        assertEquals(1.0, dark.getDouble("alpha"), 0.001)
+        assertEquals("sticky", light.getString("position"))
+        assertEquals("0px", light.getString("top"))
     }
 
     @Test
