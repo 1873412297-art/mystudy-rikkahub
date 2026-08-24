@@ -84,11 +84,19 @@ internal class TavernHelperVM(
             root.id == updated.id || (root is TavernHelperScriptFolder && root.scripts.any { it.id == updated.id })
         }
         if (rootIndex < 0) return
+        val normalized = stripOuterScriptFence(updated.content)
         val root = when (val current = scripts.value[rootIndex]) {
-            is TavernHelperScript -> updated.copy(content = stripOuterScriptFence(updated.content))
+            is TavernHelperScript -> updated.copy(
+                content = normalized,
+                enabled = updated.enabled && normalized == current.content,
+            )
             is TavernHelperScriptFolder -> current.copy(
                 scripts = current.scripts.map {
-                    if (it.id == updated.id) updated.copy(content = stripOuterScriptFence(updated.content)) else it
+                    if (it.id == updated.id) {
+                        updated.copy(content = normalized, enabled = updated.enabled && normalized == it.content)
+                    } else {
+                        it
+                    }
                 },
             )
         }

@@ -33,8 +33,8 @@ internal class TavernHelperScriptRepository(
         val scopeIds = scopeEntities.mapTo(mutableSetOf()) { it.id }
         val occupiedElsewhere = dao.getAllIds().filterNotTo(mutableSetOf()) { it in scopeIds }
         val bundle = characterCodec.decode(rawCardJson, occupiedElsewhere)
-        val priorEnabled = scopeEntities.associate { it.id to it.enabled }
-        val restored = bundle.scripts.map { it.withEnabledState(priorEnabled) }
+        val priorScripts = mapper.toTrees(scopeEntities).flatMap { it.flattenScripts() }.associateBy { it.id }
+        val restored = bundle.scripts.map { it.withEnabledState(priorScripts) }
         dao.markScopeDeleted(scope.type.name, scope.id, now())
         dao.upsertAll(restored.flatMapIndexed { index, node -> mapper.toEntities(node, scope, index) })
         return bundle.copy(scripts = restored)
@@ -82,12 +82,19 @@ internal class TavernHelperScriptRepository(
         dao.markDeleted(id, now())
     }
 
-    private fun TavernHelperScriptNode.withEnabledState(prior: Map<String, Boolean>): TavernHelperScriptNode = when (this) {
-        is TavernHelperScript -> copy(enabled = prior[id] ?: false)
+    private fun TavernHelperScriptNode.withEnabledState(prior: Map<String, TavernHelperScript>): TavernHelperScriptNode = when (this) {
+        is TavernHelperScript -> copy(enabled = prior[id]?.takeIf { it.content == content }?.enabled ?: false)
         is TavernHelperScriptFolder -> copy(
-            enabled = prior[id] ?: false,
-            scripts = scripts.map { it.copy(enabled = prior[it.id] ?: false) },
+            enabled = scripts.any { script -> prior[script.id]?.takeIf { it.content == script.content }?.enabled == true },
+            scripts = scripts.map { script ->
+                script.copy(enabled = prior[script.id]?.takeIf { it.content == script.content }?.enabled ?: false)
+            },
         )
+    }
+
+    private fun TavernHelperScriptNode.flattenScripts(): List<TavernHelperScript> = when (this) {
+        is TavernHelperScript -> listOf(this)
+        is TavernHelperScriptFolder -> scripts
     }
 
     private suspend fun updateScript(scriptId: String, transform: (TavernHelperScript) -> TavernHelperScript) {
