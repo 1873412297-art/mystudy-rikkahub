@@ -376,7 +376,8 @@ fun MarkdownBlock(
                         tavernMessageRole = tavernMessageRole,
                         tavernHeaderSource = tavernHeaderSource,
                     )
-                    RichTextSegment.Kind.HTML_DOCUMENT -> MarkdownWebView(
+                    RichTextSegment.Kind.HTML_DOCUMENT,
+                    RichTextSegment.Kind.FRONTEND_HTML -> MarkdownWebView(
                         content = segment.raw,
                         isRawHtml = true,
                         tavernConversationId = tavernConversationId,
