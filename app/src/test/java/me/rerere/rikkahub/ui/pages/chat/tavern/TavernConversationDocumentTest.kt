@@ -213,6 +213,29 @@ class TavernConversationDocumentTest {
     }
 
     @Test
+    fun `immersive markdown prefers Showdown and preserves sanitized fallbacks`() {
+        val configure = template.substringAfter("function configureShowdown()")
+            .substringBefore("function configureMarkdown()")
+        val renderer = template.substringAfter("function renderMarkdownPart(part)")
+            .substringBefore("function protectQuotedMarkup")
+        val enhancements = template.substringAfter("function runMarkdownEnhancements(scope)")
+            .substringBefore("function applyDocumentStyle")
+
+        assertTrue(configure.contains("new window.showdown.Converter"))
+        assertTrue(configure.contains("literalMidWordUnderscores: true"))
+        assertTrue(configure.contains("simpleLineBreaks: true"))
+        assertTrue(renderer.contains("showdownConverter.makeHtml"))
+        assertTrue(renderer.contains("markdown.render"))
+        assertTrue(renderer.contains("window.DOMPurify.sanitize"))
+        assertTrue(renderer.contains("FORBID_TAGS"))
+        assertTrue(renderer.contains("FORBID_ATTR"))
+        assertTrue(enhancements.contains("querySelectorAll('pre code')"))
+        assertTrue(enhancements.contains("window.hljs.highlightElement(code)"))
+        assertTrue(enhancements.contains("language-mermaid"))
+        assertTrue(template.contains("showdownConverter = configureShowdown()"))
+    }
+
+    @Test
     fun `template applies SillyTavern quote semantics before markdown rendering`() {
         assertTrue(template.contains("function wrapSillyTavernQuotes"))
         assertTrue(template.contains("protectQuotedMarkup"))
@@ -223,7 +246,8 @@ class TavernConversationDocumentTest {
         assertTrue(template.contains(".mes q::after"))
         listOf("ASCII_DOUBLE", "CURLY_DOUBLE", "GUILLEMET", "CJK_CORNER", "CJK_WHITE_CORNER", "FULLWIDTH_DOUBLE")
             .forEach { marker -> assertTrue("missing quote family $marker", template.contains(marker)) }
-        assertTrue(template.contains("markdown.render(wrapSillyTavernQuotes(part.text))"))
+        assertTrue(template.contains("var source = wrapSillyTavernQuotes(part.text)"))
+        assertTrue(template.contains("markdown.render(source)"))
     }
 
     @Test

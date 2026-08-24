@@ -128,6 +128,7 @@
       var root = document.getElementById('chat');
       var rawHtmlTemplate = document.getElementById('raw-html-part-template');
       var state = window.__RIKKAHUB_TAVERN_CONVERSATION__;
+      var showdownConverter = null;
       var markdown = null;
       var appliedThemeVariables = [];
       var runtimeBrokerSequence = 0;
@@ -194,6 +195,24 @@
         }
       }
 
+      function configureShowdown() {
+        if (!window.showdown || typeof window.showdown.Converter !== 'function' || !window.DOMPurify) return null;
+        try {
+          return new window.showdown.Converter({
+            emoji: true,
+            literalMidWordUnderscores: true,
+            parseImgDimensions: true,
+            tables: true,
+            underline: true,
+            simpleLineBreaks: true,
+            strikethrough: true,
+            disableForced4SpacesIndentedSublists: true
+          });
+        } catch (_) {
+          return null;
+        }
+      }
+
       function configureMarkdown() {
         if (!window.MarkdownIt || !window.DOMPurify) return null;
         markdown = new window.MarkdownIt({
@@ -246,7 +265,26 @@
       }
 
       function runMarkdownEnhancements(scope) {
-        if (!window.mermaid || !scope) return;
+        if (!scope) return;
+        var codeNodes = Array.prototype.slice.call(scope.querySelectorAll('pre code'));
+        codeNodes.forEach(function (code) {
+          var classes = String(code.className || '');
+          if (/(?:^|\s)(?:mermaid|language-mermaid)(?:\s|$)/.test(classes)) {
+            var pre = code.closest('pre');
+            if (!pre) return;
+            var diagram = document.createElement('div');
+            diagram.className = 'mermaid';
+            diagram.textContent = code.textContent || '';
+            pre.replaceWith(diagram);
+            return;
+          }
+          if (!window.hljs || code.classList.contains('hljs')) return;
+          var languageMatch = classes.match(/(?:^|\s)language-([^\s]+)/);
+          if (languageMatch && !window.hljs.getLanguage(languageMatch[1])) return;
+          try { window.hljs.highlightElement(code); } catch (_) {}
+        });
+
+        if (!window.mermaid) return;
         var mermaidNodes = scope.querySelectorAll('.mermaid:not([data-processed])');
         if (mermaidNodes.length === 0) return;
         try {
@@ -319,8 +357,16 @@
         var fallback = document.createElement('div');
         fallback.dataset.renderMode = 'markdown';
         fallback.textContent = part.text;
-        if (!markdown || !window.DOMPurify) return fallback;
-        var rendered = markdown.render(wrapSillyTavernQuotes(part.text));
+        if (!window.DOMPurify) return fallback;
+        var source = wrapSillyTavernQuotes(part.text);
+        var rendered = null;
+        if (showdownConverter) {
+          try { rendered = showdownConverter.makeHtml(source); } catch (_) {}
+        }
+        if (rendered === null && markdown) {
+          try { rendered = markdown.render(source); } catch (_) {}
+        }
+        if (rendered === null) return fallback;
         fallback.innerHTML = window.DOMPurify.sanitize(rendered, {
           USE_PROFILES: { html: true, svg: false, mathMl: false },
           ADD_TAGS: ['details', 'summary', 'font', 'mark', 'kbd'],
@@ -923,6 +969,7 @@
         }, 16);
       });
 
+      showdownConverter = configureShowdown();
       markdown = configureMarkdown();
       initializeMermaid();
       renderAll();
