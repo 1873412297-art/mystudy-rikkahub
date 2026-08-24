@@ -1,12 +1,13 @@
 {
   "source": "Huawei XHD0223523008702 Chrome DevTools, visible Tavern opening 3/4",
-  "collectedAt": "2026-08-25T01:31:27.594+08:00",
+  "sourceCommit": "c3c007cfc2dcbc4df9b1005553b75a1d9ba669bb",
+  "collectedAt": "2026-08-25T02:20:26.722+08:00",
   "apk": {
     "path": "app/build/outputs/apk/debug/app-arm64-v8a-debug.apk",
-    "sha256": "F89CD30A13B6FDAD3B27F811FFD2DF4C51BB6CCF59C0AC6114A754D0D827923E",
+    "sha256": "0EEBAB1BD28035813EF35D73F3D3466224FEEA1B8F02A32F48A06E6CE611655C",
     "versionName": "2.4.5",
     "versionCode": 172,
-    "installedLastUpdateTime": "2026-08-25 00:53:30"
+    "installedLastUpdateTime": "2026-08-25 02:06:47"
   },
   "opening": {
     "index": 2,
