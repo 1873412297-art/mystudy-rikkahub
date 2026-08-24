@@ -34,6 +34,7 @@ import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeController
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeSmokeActivity
 import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScript
 import org.json.JSONObject
+import org.json.JSONTokener
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
@@ -82,6 +83,116 @@ class TavernImmersiveRuntimeInstrumentedTest {
             ))
             assertFalse(device.hasObject(By.textContains("{user}")))
             assertTrue(device.hasObject(By.textContains("Welcome, Device User")))
+        }
+    }
+
+    @Test
+    fun showdownRendersCustomTagOpeningAsStructuredSanitizedMarkdown() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val document = buildTavernConversationDocument(
+            context = instrumentation.targetContext,
+            initial = snapshot(
+                conversationId = Uuid.parse("00000000-0000-0000-0000-000000000201"),
+                nodeId = Uuid.parse("00000000-0000-0000-0000-000000000202"),
+                messageId = Uuid.parse("00000000-0000-0000-0000-000000000203"),
+                text = """
+                    <customize_HCI>
+                    <now_plot>
+                    <main_plot>
+                    # Opening
+                    </main_plot>
+                    <details><summary>Status</summary>
+
+                    ```body1
+                    hp: 10
+                    ```
+                    </details>
+                    ```javascript
+                    const hp = 10;
+                    ```
+                    ```mermaid
+                    graph TD; A-->B
+                    ```
+                    <script>window.__forbiddenOpeningScript=true</script>
+                    </now_plot>
+                    </customize_HCI>
+                """.trimIndent(),
+                renderMode = UIMessagePart.RenderMode.MARKDOWN,
+            ),
+        )
+        val result = AtomicReference<JSONObject>()
+        val completed = CountDownLatch(1)
+
+        ActivityScenario.launch<TavernRuntimeSmokeActivity>(
+            Intent(instrumentation.targetContext, TavernRuntimeSmokeActivity::class.java),
+        ).use { scenario ->
+            scenario.onActivity { activity ->
+                val webView = WebView(activity).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView, url: String?) {
+                            pollStructuredMarkdown(view, 0)
+                        }
+
+                        private fun pollStructuredMarkdown(view: WebView, attempt: Int) {
+                            view.evaluateJavascript(
+                                """
+                                (function(){
+                                  var scope=document.querySelector('.mes_text');
+                                  var mermaid=scope ? scope.querySelector('.mermaid') : null;
+                                  return JSON.stringify({
+                                    ready:!!(mermaid && mermaid.querySelector('svg')),
+                                    text:scope ? scope.innerText : '',
+                                    headings:scope ? scope.querySelectorAll('h1').length : 0,
+                                    details:scope ? scope.querySelectorAll('details > summary').length : 0,
+                                    code:scope ? scope.querySelectorAll('pre code').length : 0,
+                                    highlighted:scope ? scope.querySelectorAll('pre code.hljs').length : 0,
+                                    mermaid:scope ? scope.querySelectorAll('.mermaid').length : 0,
+                                    mermaidSvg:!!(mermaid && mermaid.querySelector('svg')),
+                                    forbidden:scope ? scope.querySelectorAll('script,iframe,object,embed,form').length : -1,
+                                    executed:window.__forbiddenOpeningScript === true
+                                  });
+                                })();
+                                """.trimIndent(),
+                            ) { encoded ->
+                                val decoded = JSONTokener(encoded).nextValue() as String
+                                val rendered = JSONObject(decoded)
+                                result.set(rendered)
+                                if (rendered.optBoolean("ready")) {
+                                    completed.countDown()
+                                } else if (attempt < 180) {
+                                    view.postDelayed({ pollStructuredMarkdown(view, attempt + 1) }, 250)
+                                }
+                            }
+                        }
+                    }
+                }
+                activity.setContentView(webView)
+                webView.loadDataWithBaseURL(
+                    TAVERN_CONVERSATION_BASE_URL,
+                    document,
+                    "text/html",
+                    "UTF-8",
+                    null,
+                )
+            }
+
+            assertTrue("structured Markdown probe timed out", completed.await(45, TimeUnit.SECONDS))
+            val rendered = requireNotNull(result.get())
+            assertFalse(rendered.getString("text").contains("<customize_HCI>"))
+            assertFalse(rendered.getString("text").contains("<now_plot>"))
+            assertFalse(rendered.getString("text").contains("<main_plot>"))
+            assertEquals(1, rendered.getInt("headings"))
+            assertEquals(1, rendered.getInt("details"))
+            assertEquals(2, rendered.getInt("code"))
+            assertEquals(1, rendered.getInt("highlighted"))
+            assertEquals(1, rendered.getInt("mermaid"))
+            assertTrue(rendered.getBoolean("mermaidSvg"))
+            assertEquals(0, rendered.getInt("forbidden"))
+            assertFalse(rendered.getBoolean("executed"))
         }
     }
 

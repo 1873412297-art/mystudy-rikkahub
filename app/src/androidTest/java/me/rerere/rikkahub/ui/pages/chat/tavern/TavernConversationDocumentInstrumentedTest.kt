@@ -576,6 +576,367 @@ class TavernConversationDocumentInstrumentedTest {
     }
 
     @Test
+    fun katexKeepsPricesAndEscapedDollarsWhileRenderingValidBundledFontFormulae() {
+        val dollar = '$'
+        val markdown = """
+            <span id="prices">Costs ${dollar}5 and ${dollar}10</span>
+
+            <span id="escaped">Escaped \${dollar}5 and \${dollar}10</span>
+
+            <span id="even-escaped">Even \\${dollar}x^2${dollar}</span>
+
+            <span id="constraints">Keep ${dollar} x${dollar}, ${dollar}x ${dollar}, and ${dollar}x${dollar}2</span>
+
+            Inline ${dollar}x^2${dollar}
+
+            ${dollar}${dollar}\sum_{i=1}^{n} \frac{1}{i^2}${dollar}${dollar}
+        """.trimIndent()
+        val html = buildTavernConversationDocument(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+            snapshot(nodes = listOf(node("n1", 0, 1, message("m1", markdown)))),
+        )
+
+        val result = withVisibleWebView(html) { view ->
+            awaitJson(view, 30) {
+                """
+                (function(){
+                  var formulae=document.querySelectorAll('.mes_text .katex');
+                  var complex=document.querySelector('.mes_text .katex-display .katex');
+                  var rect=complex && complex.getBoundingClientRect();
+                  var fonts=Array.from(document.fonts || []);
+                  return JSON.stringify({
+                    ready:document.fonts.status === 'loaded' && formulae.length >= 3 && !!complex,
+                    prices:document.getElementById('prices') && document.getElementById('prices').textContent,
+                    escaped:document.getElementById('escaped') && document.getElementById('escaped').textContent,
+                    constraints:document.getElementById('constraints') &&
+                      document.getElementById('constraints').textContent,
+                    formulae:formulae.length,
+                    evenEscaped:!!document.querySelector('#even-escaped .katex'),
+                    inline:formulae.length > document.querySelectorAll('.katex-display .katex').length,
+                    display:!!complex,
+                    mainFontLoaded:fonts.some(function(font){
+                      return font.family.indexOf('KaTeX_Main') >= 0 && font.status === 'loaded';
+                    }),
+                    sizeFontLoaded:fonts.some(function(font){
+                      return font.family.indexOf('KaTeX_Size') >= 0 && font.status === 'loaded';
+                    }),
+                    width:rect ? rect.width : 0,
+                    height:rect ? rect.height : 0
+                  });
+                })();
+                """.trimIndent()
+            }
+        }
+
+        assertEquals("Costs ${dollar}5 and ${dollar}10", result.getString("prices"))
+        assertEquals("Escaped ${dollar}5 and ${dollar}10", result.getString("escaped"))
+        assertEquals("Keep ${dollar} x${dollar}, ${dollar}x ${dollar}, and ${dollar}x${dollar}2", result.getString("constraints"))
+        assertEquals(3, result.getInt("formulae"))
+        assertTrue(result.getBoolean("evenEscaped"))
+        assertTrue(result.getBoolean("inline"))
+        assertTrue(result.getBoolean("display"))
+        assertTrue(result.getBoolean("mainFontLoaded"))
+        assertTrue(result.getBoolean("sizeFontLoaded"))
+        assertTrue(result.getDouble("width") > 0.0)
+        assertTrue(result.getDouble("height") > 0.0)
+    }
+
+    @Test
+    fun invalidDollarCandidatesDoNotConsumeLaterValidFormulaInTheSameTextNode() {
+        val dollar = '$'
+        val markdown = """
+            <span id="mixed">Costs ${dollar}5 and ${dollar}10; keep ${dollar} x${dollar}, ${dollar}x ${dollar},
+            ${dollar}x${dollar}2, and ${dollar}${dollar} before formula ${dollar}x^2${dollar}.</span>
+        """.trimIndent()
+        val html = buildTavernConversationDocument(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+            snapshot(nodes = listOf(node("n1", 0, 1, message("m1", markdown)))),
+        )
+
+        val result = withVisibleWebView(html) { view ->
+            awaitJson(view, 30) {
+                """
+                (function(){
+                  var mixed=document.getElementById('mixed');
+                  var formulae=mixed && mixed.querySelectorAll('.katex');
+                  var annotation=mixed && mixed.querySelector('.katex annotation[encoding="application/x-tex"]');
+                  return JSON.stringify({
+                    ready:!!(mixed && formulae && formulae.length === 1 && annotation),
+                    text:mixed && mixed.textContent,
+                    formulae:formulae ? formulae.length : 0,
+                    formula:annotation && annotation.textContent
+                  });
+                })();
+                """.trimIndent()
+            }
+        }
+
+        assertTrue(result.getString("text").contains("Costs ${dollar}5 and ${dollar}10"))
+        assertTrue(result.getString("text").contains("${dollar} x${dollar}"))
+        assertTrue(result.getString("text").contains("${dollar}x ${dollar}"))
+        assertTrue(result.getString("text").contains("${dollar}x${dollar}2"))
+        assertTrue(result.getString("text").contains("${dollar}${dollar}"))
+        assertEquals(1, result.getInt("formulae"))
+        assertEquals("x^2", result.getString("formula"))
+    }
+
+    @Test
+    fun escapedDollarPlaceholdersRestoreInSanitizedAttributesWithoutRevivingUnsafeUrls() {
+        val dollar = '$'
+        val markdown = """
+            <a id="allowed" title="Price \${dollar}5" href="https://example.test/items/\${dollar}5">safe</a>
+            <a id="blocked" href="javascript:\${dollar}alert(1)" onclick="window.attributePwned=true">blocked</a>
+        """.trimIndent()
+        val html = buildTavernConversationDocument(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+            snapshot(nodes = listOf(node("n1", 0, 1, message("m1", markdown)))),
+        )
+
+        val result = withVisibleWebView(html) { view ->
+            awaitJson(view, 30) {
+                """
+                (function(){
+                  var allowed=document.getElementById('allowed');
+                  var blocked=document.getElementById('blocked');
+                  var html=document.querySelector('.mes_text').innerHTML;
+                  return JSON.stringify({
+                    ready:!!(allowed && blocked),
+                    title:allowed && allowed.getAttribute('title'),
+                    href:allowed && allowed.getAttribute('href'),
+                    blockedHref:blocked && blocked.getAttribute('href'),
+                    blockedClick:blocked && blocked.getAttribute('onclick'),
+                    leaked:/rikkahub-(?:dollar|slash)-/.test(html),
+                    executed:window.attributePwned === true
+                  });
+                })();
+                """.trimIndent()
+            }
+        }
+
+        assertEquals("Price ${dollar}5", result.getString("title"))
+        assertEquals("https://example.test/items/${dollar}5", result.getString("href"))
+        assertTrue(result.isNull("blockedHref"))
+        assertTrue(result.isNull("blockedClick"))
+        assertFalse(result.getBoolean("leaked"))
+        assertFalse(result.getBoolean("executed"))
+    }
+
+    @Test
+    fun markdownItTakesOverWhenShowdownRenderingThrows() {
+        val html = buildTavernConversationDocument(
+            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            initial = snapshot(
+                nodes = listOf(
+                    node(
+                        "n1",
+                        0,
+                        1,
+                        message(
+                            "m1",
+                            "# Fallback\n\n**markdown-it**\n\n```javascript\nconst hp = 100;\n```",
+                        ),
+                    ),
+                ),
+            ),
+            runtimeScript = """
+                window.showdown.Converter = function () {
+                  return { makeHtml: function () { throw new Error('forced Showdown failure'); } };
+                };
+            """.trimIndent(),
+        )
+
+        val result = withVisibleWebView(html) { view ->
+            awaitJson(view, 30) {
+                """
+                (function(){
+                  var scope=document.querySelector('.mes_text');
+                  var highlighted=scope && scope.querySelector('pre.hljs');
+                  var style=highlighted && getComputedStyle(highlighted);
+                  return JSON.stringify({
+                    ready:!!(scope && scope.querySelector('h1') && scope.querySelector('strong') && highlighted),
+                    heading:scope && scope.querySelector('h1') && scope.querySelector('h1').textContent,
+                    strong:scope && scope.querySelector('strong') && scope.querySelector('strong').textContent,
+                    highlightedColor:style && style.color,
+                    highlightedBackground:style && style.backgroundColor
+                  });
+                })();
+                """.trimIndent()
+            }
+        }
+
+        assertEquals("Fallback", result.getString("heading"))
+        assertEquals("markdown-it", result.getString("strong"))
+        assertEquals("rgb(171, 178, 191)", result.getString("highlightedColor"))
+        assertEquals("rgb(40, 44, 52)", result.getString("highlightedBackground"))
+        assertFalse(result.getString("highlightedColor").equals("rgb(244, 247, 250)", ignoreCase = true))
+        assertFalse(result.getString("highlightedBackground").equals("rgb(32, 36, 43)", ignoreCase = true))
+    }
+
+    @Test
+    fun stickyOpeningLayerUsesExplicitOpaqueAppThemeSurfaces() {
+        fun sample(surface: String): JSONObject {
+            val initial = snapshot(
+                nodes = listOf(node("n1", 0, 1, message("m1", "opening"))),
+                theme = linkedMapOf("--rikkahub-sticky-bg" to surface),
+            ).copy(
+                openingSwipe = TavernOpeningSwipe(
+                    index = 0,
+                    count = 2,
+                    ready = true,
+                    swipes = listOf("opening", "alternate"),
+                ),
+            )
+            val html = buildTavernConversationDocument(
+                InstrumentationRegistry.getInstrumentation().targetContext,
+                initial,
+            )
+            return withVisibleWebView(html) { view ->
+                awaitJson(view, 30) {
+                    """
+                    (function(){
+                      var nav=document.querySelector('.opening-swipe-nav');
+                      var color=nav && getComputedStyle(nav).backgroundColor;
+                      var parts=String(color || '').match(/[\d.]+/g) || [];
+                      return JSON.stringify({
+                        ready:!!nav,
+                        color:color,
+                        alpha:parts.length > 3 ? Number(parts[3]) : 1,
+                        position:nav && getComputedStyle(nav).position,
+                        top:nav && getComputedStyle(nav).top
+                      });
+                    })();
+                    """.trimIndent()
+                }
+            }
+        }
+
+        val light = sample("#fff4e8")
+        val dark = sample("#171a21")
+
+        assertEquals("rgb(255, 244, 232)", light.getString("color"))
+        assertEquals("rgb(23, 26, 33)", dark.getString("color"))
+        assertEquals(1.0, light.getDouble("alpha"), 0.001)
+        assertEquals(1.0, dark.getDouble("alpha"), 0.001)
+        assertEquals("sticky", light.getString("position"))
+        assertEquals("0px", light.getString("top"))
+    }
+
+    @Test
+    fun escapedTextTakesOverWhenBothMarkdownParsersAreUnavailable() {
+        val html = buildTavernConversationDocument(
+            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            initial = snapshot(
+                nodes = listOf(
+                    node(
+                        "n1",
+                        0,
+                        1,
+                        message("m1", "# Literal fallback\n\n**not bold** <script>window.fallbackPwned=true</script>"),
+                    ),
+                ),
+            ),
+            runtimeScript = "window.showdown = undefined; window.MarkdownIt = undefined;",
+        )
+
+        val result = withVisibleWebView(html) { view ->
+            awaitJson(view, 30) {
+                """
+                (function(){
+                  var fallback=document.querySelector('.mes_text [data-render-mode="markdown"]');
+                  return JSON.stringify({
+                    ready:!!fallback,
+                    text:fallback ? fallback.textContent : '',
+                    headings:document.querySelectorAll('.mes_text h1').length,
+                    strong:document.querySelectorAll('.mes_text strong').length,
+                    scripts:document.querySelectorAll('.mes_text script').length,
+                    executed:window.fallbackPwned === true
+                  });
+                })();
+                """.trimIndent()
+            }
+        }
+
+        assertTrue(result.getString("text").contains("# Literal fallback"))
+        assertTrue(result.getString("text").contains("**not bold**"))
+        assertEquals(0, result.getInt("headings"))
+        assertEquals(0, result.getInt("strong"))
+        assertEquals(0, result.getInt("scripts"))
+        assertFalse(result.getBoolean("executed"))
+    }
+
+    @Test
+    fun plainCodeKeepsHighContrastAcrossThemesWithoutOverridingHljsPalette() {
+        val markdown = """
+            ```body1
+            hp: 100
+            ```
+
+            ```javascript
+            const hp = 100;
+            ```
+        """.trimIndent()
+        val html = buildTavernConversationDocument(
+            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            initial = snapshot(nodes = listOf(node("n1", 0, 1, message("m1", markdown)))),
+        )
+
+        val result = withVisibleWebView(html) { view ->
+            awaitJson(view, 30) {
+                """
+                (function(){
+                  function rgba(value) {
+                    var parts=String(value || '').match(/[\d.]+/g) || [];
+                    return [Number(parts[0] || 0), Number(parts[1] || 0), Number(parts[2] || 0),
+                      parts.length > 3 ? Number(parts[3]) : 1];
+                  }
+                  function luminance(color) {
+                    var channels=color.slice(0,3).map(function(value){
+                      value=value / 255;
+                      return value <= 0.03928 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+                    });
+                    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+                  }
+                  function contrast(foreground, background) {
+                    var first=luminance(foreground);
+                    var second=luminance(background);
+                    return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+                  }
+                  function sample(plain, pre) {
+                    var foreground=rgba(getComputedStyle(plain).color);
+                    var background=rgba(getComputedStyle(pre).backgroundColor);
+                    return { ratio:contrast(foreground, background), alpha:background[3] };
+                  }
+                  var plain=document.querySelector('pre code:not(.hljs)');
+                  var highlighted=document.querySelector('pre code.hljs');
+                  var pre=plain && plain.closest('pre');
+                  if (!plain || !highlighted || !pre) return JSON.stringify({ready:false});
+                  document.documentElement.style.setProperty('--rikkahub-text', '#111827');
+                  var light=sample(plain, pre);
+                  document.documentElement.style.setProperty('--rikkahub-text', '#e5e7eb');
+                  var dark=sample(plain, pre);
+                  return JSON.stringify({
+                    ready:true,
+                    lightContrast:light.ratio,
+                    darkContrast:dark.ratio,
+                    lightAlpha:light.alpha,
+                    darkAlpha:dark.alpha,
+                    highlightedColor:getComputedStyle(highlighted).color,
+                    highlightedBackground:getComputedStyle(highlighted).backgroundColor
+                  });
+                })();
+                """.trimIndent()
+            }
+        }
+
+        assertTrue(result.getDouble("lightContrast") >= 7.0)
+        assertTrue(result.getDouble("darkContrast") >= 7.0)
+        assertEquals(1.0, result.getDouble("lightAlpha"), 0.001)
+        assertEquals(1.0, result.getDouble("darkAlpha"), 0.001)
+        assertEquals("rgb(171, 178, 191)", result.getString("highlightedColor"))
+        assertEquals("rgb(40, 44, 52)", result.getString("highlightedBackground"))
+    }
+
+    @Test
     fun applyPatchesMutatesNodesBranchesStreamingAndClearsStaleThemeVariables() {
         val initial = snapshot(
             nodes = listOf(node("n1", 0, 1, message("m1", "old"))),

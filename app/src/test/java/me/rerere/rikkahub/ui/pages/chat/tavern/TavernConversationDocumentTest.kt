@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import me.rerere.rikkahub.ui.pages.chat.tavern.render.buildTavernViewportAdapterScript
+import me.rerere.rikkahub.ui.components.richtext.inlineKatexFontSources
 
 class TavernConversationDocumentTest {
 
@@ -213,6 +214,99 @@ class TavernConversationDocumentTest {
     }
 
     @Test
+    fun `immersive markdown prefers Showdown and preserves sanitized fallbacks`() {
+        val configure = template.substringAfter("function configureShowdown()")
+            .substringBefore("function configureMarkdown()")
+        val renderer = template.substringAfter("function renderMarkdownPart(part)")
+            .substringBefore("function protectQuotedMarkup")
+        val enhancements = template.substringAfter("function runMarkdownEnhancements(scope)")
+            .substringBefore("function applyDocumentStyle")
+
+        assertTrue(configure.contains("new window.showdown.Converter"))
+        assertTrue(configure.contains("literalMidWordUnderscores: true"))
+        assertTrue(configure.contains("simpleLineBreaks: true"))
+        assertTrue(configure.contains("tasklists: true"))
+        assertTrue(renderer.contains("showdownConverter.makeHtml"))
+        assertTrue(renderer.contains("markdown.render"))
+        assertTrue(renderer.contains("window.DOMPurify.sanitize"))
+        assertTrue(renderer.contains("FORBID_TAGS"))
+        assertTrue(renderer.contains("FORBID_ATTR"))
+        assertTrue(enhancements.contains("querySelectorAll('pre code')"))
+        assertTrue(enhancements.contains("window.hljs.highlightElement(code)"))
+        assertTrue(enhancements.contains("language-mermaid"))
+        assertTrue(enhancements.contains("window.katex.render"))
+        assertTrue(enhancements.contains("trust: false"))
+        assertTrue(template.contains("showdownConverter = configureShowdown()"))
+    }
+
+    @Test
+    fun `katex enhancement uses delimiter semantics instead of a broad dollar regex`() {
+        val enhancement = template.substringAfter("function isWhitespace(value)")
+            .substringBefore("function applyDocumentStyle")
+
+        assertTrue(enhancement.contains("function isEscapedMathDelimiter"))
+        assertTrue(enhancement.contains("function findInlineMathClose"))
+        assertTrue(enhancement.contains("function protectEscapedMathDollars"))
+        assertTrue(enhancement.contains("function restoreEscapedMathDollars"))
+        assertTrue(enhancement.contains("isWhitespace(next)"))
+        assertTrue(enhancement.contains("/[0-9]/.test(after)"))
+        assertTrue(enhancement.contains("throwOnError: true"))
+        assertFalse(enhancement.contains("\\$([^$\\r\\n]+?)\\$"))
+    }
+
+    @Test
+    fun `invalid dollar candidates cannot consume a later valid formula`() {
+        val closeScanner = template.substringAfter("function findInlineMathClose(source, opening)")
+            .substringBefore("function findDisplayMathClose")
+
+        assertTrue(closeScanner.contains("if (source[index + 1] === '$') return -1"))
+        assertTrue(closeScanner.contains("if (isWhitespace(previous) || /[0-9]/.test(after)) return -1"))
+        assertFalse(closeScanner.contains("/[0-9]/.test(after)) continue"))
+    }
+
+    @Test
+    fun `escaped math placeholders restore only after sanitized attributes exist`() {
+        val restore = template.substringAfter("function restoreEscapedMathDollars(scope)")
+            .substringBefore("function findInlineMathClose")
+        val renderer = template.substringAfter("function renderMarkdownPart(part)")
+            .substringBefore("function protectQuotedMarkup")
+        val enhancement = template.substringAfter("function runKatexEnhancements(scope)")
+            .substringBefore("function applyDocumentStyle")
+
+        assertTrue(restore.contains("Array.from(element.attributes)"))
+        assertTrue(restore.contains("element.setAttribute(attribute.name"))
+        assertTrue(renderer.contains("window.DOMPurify.sanitize"))
+        assertTrue(enhancement.contains("restoreEscapedMathDollars(scope)"))
+    }
+
+    @Test
+    fun `generated Tavern document inlines every bundled katex font`() {
+        val vendorDir = listOf(
+            File("src/main/assets/html/vendor"),
+            File("app/src/main/assets/html/vendor"),
+        ).firstOrNull { it.isDirectory } ?: error("vendor directory not found")
+        val fontData = File(vendorDir, "katex-fonts.b64").readLines()
+            .filter { it.isNotBlank() }
+            .associate { it.substringBefore('=') to it.substringAfter('=') }
+        val katexCss = inlineKatexFontSources(File(vendorDir, "katex.min.css").readText(), fontData::get)
+        val document = buildTavernConversationDocument(
+            initial = emptySnapshot(),
+            template = template,
+            vendorScripts = "",
+            vendorStyles = "<style>$katexCss</style>",
+        )
+        val loaderSource = listOf(
+            File("src/main/java/me/rerere/rikkahub/ui/pages/chat/tavern/TavernConversationDocument.kt"),
+            File("app/src/main/java/me/rerere/rikkahub/ui/pages/chat/tavern/TavernConversationDocument.kt"),
+        ).first { it.exists() }.readText()
+
+        assertTrue(loaderSource.contains("loadBundledKatexFontData("))
+        assertTrue(loaderSource.contains("inlineKatexFontSources(css, fonts::get)"))
+        assertFalse(document.contains("url(fonts/"))
+        assertTrue(document.contains("url(data:font/woff2;base64,"))
+    }
+
+    @Test
     fun `template applies SillyTavern quote semantics before markdown rendering`() {
         assertTrue(template.contains("function wrapSillyTavernQuotes"))
         assertTrue(template.contains("protectQuotedMarkup"))
@@ -223,7 +317,8 @@ class TavernConversationDocumentTest {
         assertTrue(template.contains(".mes q::after"))
         listOf("ASCII_DOUBLE", "CURLY_DOUBLE", "GUILLEMET", "CJK_CORNER", "CJK_WHITE_CORNER", "FULLWIDTH_DOUBLE")
             .forEach { marker -> assertTrue("missing quote family $marker", template.contains(marker)) }
-        assertTrue(template.contains("markdown.render(wrapSillyTavernQuotes(part.text))"))
+        assertTrue(template.contains("var source = protectEscapedMathDollars(wrapSillyTavernQuotes(part.text))"))
+        assertTrue(template.contains("markdown.render(source)"))
     }
 
     @Test
@@ -255,6 +350,20 @@ class TavernConversationDocumentTest {
         assertTrue(template.contains("window.mermaid.run({ nodes: mermaidNodes })"))
         assertTrue(template.contains("runMarkdownEnhancements(root)"))
         assertTrue(template.contains("runMarkdownEnhancements(replacement)"))
+    }
+
+    @Test
+    fun `plain code blocks use an opaque high contrast palette without overriding hljs`() {
+        val rootStyle = template.substringAfter(":root {").substringBefore("}")
+        val preStyle = template.substringAfter(".mes_text pre:not(.hljs) {").substringBefore("}")
+
+        assertTrue(rootStyle.contains("--rikkahub-code-bg: #20242b"))
+        assertTrue(rootStyle.contains("--rikkahub-code-text: #f4f7fa"))
+        assertFalse(template.contains(".mes_text pre {"))
+        assertTrue(preStyle.contains("background: var(--rikkahub-code-bg)"))
+        assertTrue(preStyle.contains("color: var(--rikkahub-code-text)"))
+        assertFalse(preStyle.contains("rgba("))
+        assertFalse(template.contains(".mes_text pre code.hljs { color:"))
     }
 
     @Test
@@ -344,14 +453,17 @@ class TavernConversationDocumentTest {
 
     @Test
     fun `opening navigation uses a sticky toolbar without covering the message`() {
+        val rootStyle = template.substringAfter(":root {").substringBefore("}")
         val openingCss = template.substringAfter(".mes.opening-swipe {")
             .substringBefore("@keyframes opening-enter-forward")
 
+        assertTrue(rootStyle.contains("--rikkahub-sticky-bg: Canvas"))
         assertTrue(template.contains("opening-swipe-nav"))
         assertTrue(openingCss.contains(".mes.opening-swipe .opening-swipe-nav"))
         assertTrue(openingCss.contains("position: sticky"))
         assertTrue(openingCss.contains("top: -12px"))
-        assertTrue(openingCss.contains("background: var(--rikkahub-surface)"))
+        assertTrue(openingCss.contains("background: var(--rikkahub-sticky-bg)"))
+        assertTrue(openingCss.contains("box-shadow: 0 1px 0 var(--rikkahub-border)"))
         assertTrue(openingCss.contains("min-width: 44px"))
         assertFalse(openingCss.contains("position: fixed"))
     }
@@ -486,6 +598,7 @@ class TavernConversationDocumentTest {
         ).firstOrNull { it.isDirectory } ?: error("vendor directory not found")
         val names = vendorDir.list().orEmpty().toSet()
 
+        assertTrue("showdown.min.js" in names)
         assertTrue("markdown-it.min.js" in names)
         assertTrue("dompurify.min.js" in names)
         assertTrue("highlight.js.min.js" in names)

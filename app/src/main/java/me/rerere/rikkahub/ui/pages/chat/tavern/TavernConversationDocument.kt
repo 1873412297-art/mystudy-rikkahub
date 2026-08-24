@@ -3,6 +3,8 @@ package me.rerere.rikkahub.ui.pages.chat.tavern
 import android.content.Context
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import me.rerere.rikkahub.ui.components.richtext.inlineKatexFontSources
+import me.rerere.rikkahub.ui.components.richtext.loadBundledKatexFontData
 import me.rerere.rikkahub.ui.pages.chat.tavern.render.buildTavernViewportAdapterScript
 
 private val conversationJson = Json {
@@ -74,12 +76,18 @@ internal fun buildTavernConversationDocument(
 private fun Context.loadTavernConversationDocumentAssets(): TavernConversationDocumentAssets {
     val template = assets.open("html/tavern-conversation.html").bufferedReader().use { it.readText() }
     val vendorNames = assets.list("html/vendor").orEmpty().sorted()
+    val fonts by lazy { loadBundledKatexFontData(this) }
     val scripts = vendorNames.filter { it.endsWith(".js") }.joinToString("\n") { name ->
         val source = assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
         "<script>$source</script>"
     }
     val styles = vendorNames.filter { it.endsWith(".css") }.joinToString("\n") { name ->
-        val source = assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
+        val css = assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
+        val source = if (name == "katex.min.css") {
+            inlineKatexFontSources(css, fonts::get)
+        } else {
+            css
+        }
         "<style>$source</style>"
     }
     return TavernConversationDocumentAssets(template, scripts, styles)

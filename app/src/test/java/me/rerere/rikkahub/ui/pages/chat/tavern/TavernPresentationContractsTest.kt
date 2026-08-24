@@ -176,6 +176,15 @@ class TavernPresentationContractsTest {
         assertTrue(dispatcher.contains("postEvaluate("))
     }
 
+    @Test
+    fun `conversation web view injects the app surface into the sticky opening layer`() {
+        val webView = sourceFile("TavernConversationWebView.kt")
+        val themeVariables = webView.substringAfter("val themeVariables = mapOf(")
+            .substringBefore("val visibleConversation")
+
+        assertTrue(themeVariables.contains("\"--rikkahub-sticky-bg\" to hex(colorScheme.surface)"))
+    }
+
     private fun tavernAssistant() = Assistant(tavernCardJson = "{\"name\":\"Card\"}")
 
     private fun sourceFile(name: String): String = listOf(

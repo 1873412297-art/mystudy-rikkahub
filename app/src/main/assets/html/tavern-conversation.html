@@ -17,6 +17,9 @@
       --rikkahub-text-secondary: inherit;
       --rikkahub-border: rgba(127, 127, 127, .25);
       --rikkahub-accent: #4a90d9;
+      --rikkahub-code-bg: #20242b;
+      --rikkahub-code-text: #f4f7fa;
+      --rikkahub-sticky-bg: Canvas;
       --SmartThemeBodyColor: var(--rikkahub-text);
       --SmartThemeEmColor: var(--rikkahub-text-secondary);
       --SmartThemeQuoteColor: var(--rikkahub-accent);
@@ -43,7 +46,7 @@
     .mes_text > * { max-width: 100%; }
     .mes_text p { margin: 0 0 8px; }
     .mes_text p:last-child { margin-bottom: 0; }
-    .mes_text pre { overflow: auto; border-radius: 8px; padding: 10px 12px; background: rgba(20, 20, 20, .75); }
+    .mes_text pre:not(.hljs) { overflow: auto; border-radius: 8px; padding: 10px 12px; color: var(--rikkahub-code-text); background: var(--rikkahub-code-bg); }
     .mes_text img { max-width: 100%; height: auto; }
     .mes_text a { color: var(--rikkahub-accent); }
     .mes_text q { color: var(--SmartThemeQuoteColor); }
@@ -78,7 +81,7 @@
     .mes.opening-swipe .mes_block { width: 100%; }
     .mes.opening-swipe .name_text { min-height: 46px; margin: 0 0 6px 60px; }
     .mes.opening-swipe .mes_text { line-height: 1.62; }
-    .mes.opening-swipe .opening-swipe-nav { position: sticky; top: -12px; z-index: 4; display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 2px 0 8px; background: var(--rikkahub-surface); }
+    .mes.opening-swipe .opening-swipe-nav { position: sticky; top: -12px; z-index: 4; display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 2px 0 8px; background: var(--rikkahub-sticky-bg); box-shadow: 0 1px 0 var(--rikkahub-border); }
     .mes.opening-swipe .swipe_left,
     .mes.opening-swipe .swipe_right { min-width: 44px; width: 44px; height: 44px; margin: 0; border: 1px solid var(--rikkahub-border); background: color-mix(in srgb, var(--rikkahub-surface) 94%, transparent); opacity: .78; transition: opacity 160ms ease, background-color 160ms ease; }
     .mes.opening-swipe .swipes-counter { min-width: 42px; min-height: 24px; border: 1px solid var(--rikkahub-border); border-radius: 999px; padding: 4px 12px; background: color-mix(in srgb, var(--rikkahub-surface) 94%, transparent); text-align: center; }
@@ -128,7 +131,10 @@
       var root = document.getElementById('chat');
       var rawHtmlTemplate = document.getElementById('raw-html-part-template');
       var state = window.__RIKKAHUB_TAVERN_CONVERSATION__;
+      var showdownConverter = null;
       var markdown = null;
+      var escapedMathDollarToken = '\uE000rikkahub-dollar-' + Math.random().toString(36).slice(2) + '\uE001';
+      var escapedMathBackslashToken = '\uE000rikkahub-slash-' + Math.random().toString(36).slice(2) + '\uE001';
       var appliedThemeVariables = [];
       var runtimeBrokerSequence = 0;
       var runtimeBrokerPrefix = createRuntimeBrokerPrefix();
@@ -194,6 +200,25 @@
         }
       }
 
+      function configureShowdown() {
+        if (!window.showdown || typeof window.showdown.Converter !== 'function' || !window.DOMPurify) return null;
+        try {
+          return new window.showdown.Converter({
+            emoji: true,
+            literalMidWordUnderscores: true,
+            parseImgDimensions: true,
+            tables: true,
+            underline: true,
+            simpleLineBreaks: true,
+            strikethrough: true,
+            tasklists: true,
+            disableForced4SpacesIndentedSublists: true
+          });
+        } catch (_) {
+          return null;
+        }
+      }
+
       function configureMarkdown() {
         if (!window.MarkdownIt || !window.DOMPurify) return null;
         markdown = new window.MarkdownIt({
@@ -246,13 +271,192 @@
       }
 
       function runMarkdownEnhancements(scope) {
-        if (!window.mermaid || !scope) return;
+        if (!scope) return;
+        var codeNodes = Array.prototype.slice.call(scope.querySelectorAll('pre code'));
+        codeNodes.forEach(function (code) {
+          var classes = String(code.className || '');
+          if (/(?:^|\s)(?:mermaid|language-mermaid)(?:\s|$)/.test(classes)) {
+            var pre = code.closest('pre');
+            if (!pre) return;
+            var diagram = document.createElement('div');
+            diagram.className = 'mermaid';
+            diagram.textContent = code.textContent || '';
+            pre.replaceWith(diagram);
+            return;
+          }
+          if (!window.hljs || code.classList.contains('hljs')) return;
+          var languageMatch = classes.match(/(?:^|\s)language-([^\s]+)/);
+          if (languageMatch && !window.hljs.getLanguage(languageMatch[1])) return;
+          try { window.hljs.highlightElement(code); } catch (_) {}
+        });
+
+        runKatexEnhancements(scope);
+        if (!window.mermaid) return;
         var mermaidNodes = scope.querySelectorAll('.mermaid:not([data-processed])');
         if (mermaidNodes.length === 0) return;
         try {
           var pending = window.mermaid.run({ nodes: mermaidNodes });
           if (pending && typeof pending.catch === 'function') pending.catch(function () {});
         } catch (_) {}
+      }
+
+      function isWhitespace(value) {
+        return !value || /\s/.test(value);
+      }
+
+      function isEscapedMathDelimiter(source, index) {
+        var slashes = 0;
+        for (var cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) slashes += 1;
+        return slashes % 2 === 1;
+      }
+
+      function protectEscapedMathDollars(source) {
+        var protectedSource = '';
+        for (var index = 0; index < source.length;) {
+          if (source[index] !== '\\') {
+            protectedSource += source[index++];
+            continue;
+          }
+          var runStart = index;
+          while (index < source.length && source[index] === '\\') index += 1;
+          var slashCount = index - runStart;
+          if (index < source.length && source[index] === '$') {
+            protectedSource += escapedMathBackslashToken.repeat(Math.floor(slashCount / 2));
+            protectedSource += slashCount % 2 === 1 ? escapedMathDollarToken : '$';
+            index += 1;
+          } else {
+            protectedSource += source.slice(runStart, index);
+          }
+        }
+        return protectedSource;
+      }
+
+      function restoreEscapedMathDollars(scope) {
+        if (!scope) return;
+        function restoreValue(value) {
+          return String(value || '')
+            .split(escapedMathDollarToken).join('$')
+            .split(escapedMathBackslashToken).join('\\');
+        }
+        var walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+        var nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        nodes.forEach(function (node) {
+          node.nodeValue = restoreValue(node.nodeValue);
+        });
+        scope.querySelectorAll('*').forEach(function (element) {
+          Array.from(element.attributes).forEach(function (attribute) {
+            var restored = restoreValue(attribute.value);
+            if (restored !== attribute.value) element.setAttribute(attribute.name, restored);
+          });
+        });
+      }
+
+      function findInlineMathClose(source, opening) {
+        for (var index = opening + 1; index < source.length; index += 1) {
+          var current = source[index];
+          if (current === '\r' || current === '\n') return -1;
+          if (current !== '$' || isEscapedMathDelimiter(source, index)) continue;
+          if (source[index + 1] === '$') return -1;
+          var previous = source[index - 1] || '';
+          var after = source[index + 1] || '';
+          if (isWhitespace(previous) || /[0-9]/.test(after)) return -1;
+          return index;
+        }
+        return -1;
+      }
+
+      function findDisplayMathClose(source, opening) {
+        for (var index = opening + 2; index < source.length - 1; index += 1) {
+          if (source[index] === '$' && source[index + 1] === '$' &&
+              !isEscapedMathDelimiter(source, index)) return index;
+        }
+        return -1;
+      }
+
+      function findBackslashMathClose(source, opening, marker) {
+        for (var index = opening + 2; index < source.length - 1; index += 1) {
+          if (source[index] === '\\' && source[index + 1] === marker &&
+              !isEscapedMathDelimiter(source, index)) return index;
+        }
+        return -1;
+      }
+
+      function findNextMathSpan(source, from) {
+        for (var index = from; index < source.length; index += 1) {
+          if (source[index] === '$' && !isEscapedMathDelimiter(source, index)) {
+            if (source[index + 1] === '$') {
+              var displayClose = findDisplayMathClose(source, index);
+              if (displayClose >= 0 && source.slice(index + 2, displayClose).trim()) {
+                return { start:index, end:displayClose + 2,
+                  expression:source.slice(index + 2, displayClose), display:true };
+              }
+              index += 1;
+              continue;
+            }
+            var next = source[index + 1] || '';
+            if (isWhitespace(next)) continue;
+            var inlineClose = findInlineMathClose(source, index);
+            if (inlineClose >= 0) {
+              return { start:index, end:inlineClose + 1,
+                expression:source.slice(index + 1, inlineClose), display:false };
+            }
+          }
+          if (source[index] === '\\' && !isEscapedMathDelimiter(source, index) &&
+              (source[index + 1] === '(' || source[index + 1] === '[')) {
+            var marker = source[index + 1] === '(' ? ')' : ']';
+            var backslashClose = findBackslashMathClose(source, index, marker);
+            if (backslashClose >= 0 && source.slice(index + 2, backslashClose).trim()) {
+              return { start:index, end:backslashClose + 2,
+                expression:source.slice(index + 2, backslashClose), display:marker === ']' };
+            }
+          }
+        }
+        return null;
+      }
+
+      function runKatexEnhancements(scope) {
+        if (!scope) return;
+        if (!window.katex || typeof window.katex.render !== 'function') {
+          restoreEscapedMathDollars(scope);
+          return;
+        }
+        var walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+        var textNodes = [];
+        while (walker.nextNode()) {
+          var textNode = walker.currentNode;
+          var parent = textNode.parentElement;
+          if (!parent || parent.closest('pre,code,kbd,script,style,textarea,.katex,.mermaid')) continue;
+          if (/\$|\\\(|\\\[/.test(textNode.nodeValue || '')) textNodes.push(textNode);
+        }
+        textNodes.forEach(function (textNode) {
+          var source = textNode.nodeValue || '';
+          var fragment = document.createDocumentFragment();
+          var cursor = 0;
+          var changed = false;
+          var span;
+          while ((span = findNextMathSpan(source, cursor)) !== null) {
+            if (span.start > cursor) fragment.appendChild(document.createTextNode(source.slice(cursor, span.start)));
+            var container = document.createElement(span.display ? 'div' : 'span');
+            try {
+              window.katex.render(span.expression, container, {
+                displayMode: span.display,
+                throwOnError: true,
+                strict: 'ignore',
+                trust: false
+              });
+            } catch (_) {
+              container.textContent = source.slice(span.start, span.end);
+            }
+            fragment.appendChild(container);
+            cursor = span.end;
+            changed = true;
+          }
+          if (!changed) return;
+          if (cursor < source.length) fragment.appendChild(document.createTextNode(source.slice(cursor)));
+          textNode.replaceWith(fragment);
+        });
+        restoreEscapedMathDollars(scope);
       }
 
       function applyDocumentStyle(snapshot) {
@@ -319,8 +523,16 @@
         var fallback = document.createElement('div');
         fallback.dataset.renderMode = 'markdown';
         fallback.textContent = part.text;
-        if (!markdown || !window.DOMPurify) return fallback;
-        var rendered = markdown.render(wrapSillyTavernQuotes(part.text));
+        if (!window.DOMPurify) return fallback;
+        var source = protectEscapedMathDollars(wrapSillyTavernQuotes(part.text));
+        var rendered = null;
+        if (showdownConverter) {
+          try { rendered = showdownConverter.makeHtml(source); } catch (_) {}
+        }
+        if (rendered === null && markdown) {
+          try { rendered = markdown.render(source); } catch (_) {}
+        }
+        if (rendered === null) return fallback;
         fallback.innerHTML = window.DOMPurify.sanitize(rendered, {
           USE_PROFILES: { html: true, svg: false, mathMl: false },
           ADD_TAGS: ['details', 'summary', 'font', 'mark', 'kbd'],
@@ -923,6 +1135,7 @@
         }, 16);
       });
 
+      showdownConverter = configureShowdown();
       markdown = configureMarkdown();
       initializeMermaid();
       renderAll();
