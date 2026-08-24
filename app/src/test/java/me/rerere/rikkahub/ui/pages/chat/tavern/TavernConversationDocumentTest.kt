@@ -255,6 +255,31 @@ class TavernConversationDocumentTest {
     }
 
     @Test
+    fun `invalid dollar candidates cannot consume a later valid formula`() {
+        val closeScanner = template.substringAfter("function findInlineMathClose(source, opening)")
+            .substringBefore("function findDisplayMathClose")
+
+        assertTrue(closeScanner.contains("if (source[index + 1] === '$') return -1"))
+        assertTrue(closeScanner.contains("if (isWhitespace(previous) || /[0-9]/.test(after)) return -1"))
+        assertFalse(closeScanner.contains("/[0-9]/.test(after)) continue"))
+    }
+
+    @Test
+    fun `escaped math placeholders restore only after sanitized attributes exist`() {
+        val restore = template.substringAfter("function restoreEscapedMathDollars(scope)")
+            .substringBefore("function findInlineMathClose")
+        val renderer = template.substringAfter("function renderMarkdownPart(part)")
+            .substringBefore("function protectQuotedMarkup")
+        val enhancement = template.substringAfter("function runKatexEnhancements(scope)")
+            .substringBefore("function applyDocumentStyle")
+
+        assertTrue(restore.contains("Array.from(element.attributes)"))
+        assertTrue(restore.contains("element.setAttribute(attribute.name"))
+        assertTrue(renderer.contains("window.DOMPurify.sanitize"))
+        assertTrue(enhancement.contains("restoreEscapedMathDollars(scope)"))
+    }
+
+    @Test
     fun `generated Tavern document inlines every bundled katex font`() {
         val vendorDir = listOf(
             File("src/main/assets/html/vendor"),

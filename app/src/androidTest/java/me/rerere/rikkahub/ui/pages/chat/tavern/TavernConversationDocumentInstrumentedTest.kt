@@ -642,6 +642,86 @@ class TavernConversationDocumentInstrumentedTest {
     }
 
     @Test
+    fun invalidDollarCandidatesDoNotConsumeLaterValidFormulaInTheSameTextNode() {
+        val dollar = '$'
+        val markdown = """
+            <span id="mixed">Costs ${dollar}5 and ${dollar}10; keep ${dollar} x${dollar}, ${dollar}x ${dollar},
+            ${dollar}x${dollar}2, and ${dollar}${dollar} before formula ${dollar}x^2${dollar}.</span>
+        """.trimIndent()
+        val html = buildTavernConversationDocument(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+            snapshot(nodes = listOf(node("n1", 0, 1, message("m1", markdown)))),
+        )
+
+        val result = withVisibleWebView(html) { view ->
+            awaitJson(view, 30) {
+                """
+                (function(){
+                  var mixed=document.getElementById('mixed');
+                  var formulae=mixed && mixed.querySelectorAll('.katex');
+                  var annotation=mixed && mixed.querySelector('.katex annotation[encoding="application/x-tex"]');
+                  return JSON.stringify({
+                    ready:!!(mixed && formulae && formulae.length === 1 && annotation),
+                    text:mixed && mixed.textContent,
+                    formulae:formulae ? formulae.length : 0,
+                    formula:annotation && annotation.textContent
+                  });
+                })();
+                """.trimIndent()
+            }
+        }
+
+        assertTrue(result.getString("text").contains("Costs ${dollar}5 and ${dollar}10"))
+        assertTrue(result.getString("text").contains("${dollar} x${dollar}"))
+        assertTrue(result.getString("text").contains("${dollar}x ${dollar}"))
+        assertTrue(result.getString("text").contains("${dollar}x${dollar}2"))
+        assertTrue(result.getString("text").contains("${dollar}${dollar}"))
+        assertEquals(1, result.getInt("formulae"))
+        assertEquals("x^2", result.getString("formula"))
+    }
+
+    @Test
+    fun escapedDollarPlaceholdersRestoreInSanitizedAttributesWithoutRevivingUnsafeUrls() {
+        val dollar = '$'
+        val markdown = """
+            <a id="allowed" title="Price \${dollar}5" href="https://example.test/items/\${dollar}5">safe</a>
+            <a id="blocked" href="javascript:\${dollar}alert(1)" onclick="window.attributePwned=true">blocked</a>
+        """.trimIndent()
+        val html = buildTavernConversationDocument(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+            snapshot(nodes = listOf(node("n1", 0, 1, message("m1", markdown)))),
+        )
+
+        val result = withVisibleWebView(html) { view ->
+            awaitJson(view, 30) {
+                """
+                (function(){
+                  var allowed=document.getElementById('allowed');
+                  var blocked=document.getElementById('blocked');
+                  var html=document.querySelector('.mes_text').innerHTML;
+                  return JSON.stringify({
+                    ready:!!(allowed && blocked),
+                    title:allowed && allowed.getAttribute('title'),
+                    href:allowed && allowed.getAttribute('href'),
+                    blockedHref:blocked && blocked.getAttribute('href'),
+                    blockedClick:blocked && blocked.getAttribute('onclick'),
+                    leaked:/rikkahub-(?:dollar|slash)-/.test(html),
+                    executed:window.attributePwned === true
+                  });
+                })();
+                """.trimIndent()
+            }
+        }
+
+        assertEquals("Price ${dollar}5", result.getString("title"))
+        assertEquals("https://example.test/items/${dollar}5", result.getString("href"))
+        assertTrue(result.isNull("blockedHref"))
+        assertTrue(result.isNull("blockedClick"))
+        assertFalse(result.getBoolean("leaked"))
+        assertFalse(result.getBoolean("executed"))
+    }
+
+    @Test
     fun markdownItTakesOverWhenShowdownRenderingThrows() {
         val html = buildTavernConversationDocument(
             context = InstrumentationRegistry.getInstrumentation().targetContext,

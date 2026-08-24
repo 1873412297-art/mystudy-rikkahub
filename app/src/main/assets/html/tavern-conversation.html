@@ -333,16 +333,22 @@
 
       function restoreEscapedMathDollars(scope) {
         if (!scope) return;
+        function restoreValue(value) {
+          return String(value || '')
+            .split(escapedMathDollarToken).join('$')
+            .split(escapedMathBackslashToken).join('\\');
+        }
         var walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
         var nodes = [];
         while (walker.nextNode()) nodes.push(walker.currentNode);
         nodes.forEach(function (node) {
-          if ((node.nodeValue || '').indexOf(escapedMathDollarToken) >= 0) {
-            node.nodeValue = node.nodeValue.split(escapedMathDollarToken).join('$');
-          }
-          if ((node.nodeValue || '').indexOf(escapedMathBackslashToken) >= 0) {
-            node.nodeValue = node.nodeValue.split(escapedMathBackslashToken).join('\\');
-          }
+          node.nodeValue = restoreValue(node.nodeValue);
+        });
+        scope.querySelectorAll('*').forEach(function (element) {
+          Array.from(element.attributes).forEach(function (attribute) {
+            var restored = restoreValue(attribute.value);
+            if (restored !== attribute.value) element.setAttribute(attribute.name, restored);
+          });
         });
       }
 
@@ -351,10 +357,10 @@
           var current = source[index];
           if (current === '\r' || current === '\n') return -1;
           if (current !== '$' || isEscapedMathDelimiter(source, index)) continue;
-          if (source[index + 1] === '$') continue;
+          if (source[index + 1] === '$') return -1;
           var previous = source[index - 1] || '';
           var after = source[index + 1] || '';
-          if (isWhitespace(previous) || /[0-9]/.test(after)) continue;
+          if (isWhitespace(previous) || /[0-9]/.test(after)) return -1;
           return index;
         }
         return -1;
