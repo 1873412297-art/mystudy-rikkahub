@@ -22,6 +22,8 @@ class TransformerContext(
     val workspaceCwd: String? = null,
     /** 当前对话的 ID，状态变量 transformer 用它读写 conversation.statusVariables */
     val conversationId: Uuid? = null,
+    /** Initial history rendering must not apply stale status patches to the live conversation store. */
+    val allowStatusVariableMutations: Boolean = true,
     val promptTraceSession: PromptTraceRecorder? = null,
 )
 
@@ -106,8 +108,16 @@ suspend fun List<UIMessage>.visualTransforms(
     assistant: Assistant,
     settings: Settings,
     conversationId: Uuid? = null,
+    allowStatusVariableMutations: Boolean = true,
 ): List<UIMessage> {
-    val ctx = TransformerContext(context, model, assistant, settings, conversationId = conversationId)
+    val ctx = TransformerContext(
+        context,
+        model,
+        assistant,
+        settings,
+        conversationId = conversationId,
+        allowStatusVariableMutations = allowStatusVariableMutations,
+    )
     return transformers.fold(this) { acc, transformer ->
         if (transformer is OutputMessageTransformer) {
             transformer.visualTransform(ctx, acc)

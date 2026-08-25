@@ -313,6 +313,37 @@ internal fun initializationInstallAction(
     else -> InitializationInstallAction.SKIP
 }
 
+/** Applies persisted status variables only when this loader won the session installation race. */
+internal fun applyInitializedStatusVariables(
+    action: InitializationInstallAction,
+    store: StatusVariableStore,
+    conversationId: Uuid,
+    variables: JsonObject,
+) {
+    if (action == InitializationInstallAction.INSTALL) {
+        store.init(conversationId, variables)
+    }
+}
+
+/** Stable order prevents opposing assistant deletions from taking session locks in different orders. */
+internal fun orderedAssistantConversationDeletionIds(conversationIds: Collection<Uuid>): List<Uuid> =
+    conversationIds.sortedBy(Uuid::toString)
+
+internal suspend fun deleteAssistantConversationIds(
+    conversationIds: List<Uuid>,
+    delete: suspend (Uuid) -> Boolean,
+): Boolean {
+    var allDeleted = true
+    conversationIds.forEach { conversationId ->
+        if (!delete(conversationId)) allDeleted = false
+    }
+    return allDeleted
+}
+
+/** A missing row may only be inserted by an initialized new conversation or an explicit creator. */
+internal fun canPersistConversation(exists: Boolean, isReady: Boolean, allowCreate: Boolean): Boolean =
+    exists || isReady || allowCreate
+
 internal fun resolveLocalGroupTurnSelection(
     director: GroupDirectorState,
     effectiveStrategy: TurnTakingStrategy,
@@ -577,7 +608,6 @@ class ChatService(
         val conversation = conversationRepo.getConversationById(conversationId)
         if (conversation != null) {
             settingsStore.updateAssistant(conversation.assistantId)
-            statusVariableStore.init(conversationId, conversation.statusVariables)
             val settings = settingsStore.settingsFlowRaw.first()
             val assistant = settings.getAssistantById(conversation.assistantId)
                 ?: settings.getCurrentAssistant()
@@ -620,18 +650,18 @@ class ChatService(
             // 新建对话, 并添加预设消息
             val currentSettings = settingsStore.settingsFlowRaw.first()
             val assistant = currentSettings.getCurrentAssistant()
-            statusVariableStore.init(conversationId, JsonObject(emptyMap()))
             val presetMessages = renderPresetMessages(
                 conversationId = conversationId,
                 settings = currentSettings,
                 assistant = assistant,
+                allowStatusVariableMutations = false,
             )
             val newConversation = Conversation.ofId(
                 id = conversationId,
                 assistantId = assistant.id,
                 newConversation = true
             ).updateCurrentMessages(presetMessages)
-                .copy(statusVariables = statusVariableStore.getValue(conversationId))
+                .copy(statusVariables = JsonObject(emptyMap()))
             installInitializedConversation(
                 conversationId = conversationId,
                 session = session,
@@ -657,15 +687,20 @@ class ChatService(
     ) {
         session.withRefSuspend {
             session.withConversationMutationLock {
-                when (
-                    initializationInstallAction(
-                        session = session,
-                        token = token,
-                        sessionIsCurrent = sessions[conversationId] === session,
-                        isReady = tavernRuntimeReadiness.isReady(conversationId),
-                    )
-                ) {
+                val action = initializationInstallAction(
+                    session = session,
+                    token = token,
+                    sessionIsCurrent = sessions[conversationId] === session,
+                    isReady = tavernRuntimeReadiness.isReady(conversationId),
+                )
+                when (action) {
                     InitializationInstallAction.INSTALL -> {
+                        applyInitializedStatusVariables(
+                            action = action,
+                            store = statusVariableStore,
+                            conversationId = conversationId,
+                            variables = conversation.statusVariables,
+                        )
                         if (shouldPersist) {
                             saveConversationUnlocked(conversationId, conversation, promptTraceCleanup)
                         } else {
@@ -697,9 +732,10 @@ class ChatService(
             settings = settings,
             assistant = assistant,
             messages = messages,
+            allowStatusVariableMutations = false,
         )
         return conversation.updateCurrentMessages(renderedMessages)
-            .copy(statusVariables = statusVariableStore.getValue(conversationId))
+            .copy(statusVariables = conversation.statusVariables)
     }
 
     private fun List<UIMessage>.hasUnrenderedStatusInstructions(): Boolean {
@@ -717,6 +753,7 @@ class ChatService(
         settings: me.rerere.rikkahub.data.datastore.Settings,
         assistant: Assistant,
         messages: List<UIMessage> = assistant.presetMessages,
+        allowStatusVariableMutations: Boolean = true,
     ): List<UIMessage> {
         val presetMessages = messages
         if (presetMessages.isEmpty()) return presetMessages
@@ -736,6 +773,7 @@ class ChatService(
             assistant = assistant,
             settings = settings,
             conversationId = conversationId,
+            allowStatusVariableMutations = allowStatusVariableMutations,
         )
     }
 
@@ -2046,6 +2084,16 @@ class ChatService(
     }
 
     /**
+     * Closes every live assistant conversation through the same atomic deletion path before its assistant is removed.
+     */
+    suspend fun deleteConversationsOfAssistantAtomic(assistantId: Uuid): Boolean {
+        val conversationIds = orderedAssistantConversationDeletionIds(
+            conversationRepo.getConversationsOfAssistant(assistantId).first().map { it.id },
+        )
+        return deleteAssistantConversationIds(conversationIds, ::deleteConversationAtomic)
+    }
+
+    /**
      * 文件夹内是否存在正在生成回复的会话。
      * 仅活跃 session 可能在生成；内存态 folderId 为权威（移动会先同步内存态）。
      */
@@ -2079,9 +2127,18 @@ class ChatService(
         }
     }
 
-    suspend fun saveConversation(conversationId: Uuid, conversation: Conversation) {
+    suspend fun saveConversation(
+        conversationId: Uuid,
+        conversation: Conversation,
+        allowCreate: Boolean = false,
+    ) {
         withConversationMutation(conversationId) {
-            saveConversationUnlocked(conversationId, conversation, PromptTraceCleanup.None)
+            saveConversationUnlocked(
+                conversationId,
+                conversation,
+                PromptTraceCleanup.None,
+                allowCreate,
+            )
         }
     }
 
@@ -2099,8 +2156,12 @@ class ChatService(
         conversationId: Uuid,
         conversation: Conversation,
         promptTraceCleanup: PromptTraceCleanup,
+        allowCreate: Boolean = false,
     ) {
         val exists = conversationRepo.existsConversationById(conversation.id)
+        if (!canPersistConversation(exists, tavernRuntimeReadiness.isReady(conversationId), allowCreate)) {
+            return
+        }
         if (!exists && conversation.title.isBlank() && conversation.messageNodes.isEmpty()) {
             return // 新会话且为空时不保存
         }
@@ -2295,7 +2356,7 @@ class ChatService(
             copyPart = { part -> part.copyWithForkedFileUrl() },
         )
 
-        saveConversation(forkConversation.id, forkConversation)
+        saveConversation(forkConversation.id, forkConversation, allowCreate = true)
         return forkConversation
     }
 

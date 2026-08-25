@@ -1,6 +1,8 @@
 package me.rerere.rikkahub.service
 
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
@@ -32,6 +34,7 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.datastore.DisplaySetting
 import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.data.model.toMessageNode
@@ -146,6 +149,98 @@ class ChatServiceTest {
         } finally {
             scope.cancel()
         }
+    }
+
+    @Test
+    fun `superseded initializer does not overwrite variables installed by the winning loader`() {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(conversationId, Conversation.ofId(conversationId), scope, onIdle = {})
+        val variables = StatusVariableStore()
+        try {
+            val firstLoader = session.beginInitialization()
+            val secondLoader = session.beginInitialization()
+            val oldVariables = buildJsonObject { put("source", "first") }
+            val currentVariables = buildJsonObject { put("source", "second") }
+
+            applyInitializedStatusVariables(
+                action = initializationInstallAction(session, secondLoader, sessionIsCurrent = true, isReady = false),
+                store = variables,
+                conversationId = conversationId,
+                variables = currentVariables,
+            )
+            applyInitializedStatusVariables(
+                action = initializationInstallAction(session, firstLoader, sessionIsCurrent = true, isReady = false),
+                store = variables,
+                conversationId = conversationId,
+                variables = oldVariables,
+            )
+
+            assertEquals(currentVariables, variables.getValue(conversationId))
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `same initializer mutation marks ready without overwriting live variables`() {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(conversationId, Conversation.ofId(conversationId), scope, onIdle = {})
+        val variables = StatusVariableStore()
+        try {
+            val loader = session.beginInitialization()
+            val liveVariables = buildJsonObject { put("source", "live") }
+            variables.set(conversationId, liveVariables)
+            session.recordConversationMutation()
+
+            applyInitializedStatusVariables(
+                action = initializationInstallAction(session, loader, sessionIsCurrent = true, isReady = false),
+                store = variables,
+                conversationId = conversationId,
+                variables = buildJsonObject { put("source", "stored") },
+            )
+
+            assertEquals(liveVariables, variables.getValue(conversationId))
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `assistant conversation deletion uses a stable session lock order`() {
+        val firstId = Uuid.parse("00000000-0000-4000-8000-000000000003")
+        val secondId = Uuid.parse("00000000-0000-4000-8000-000000000001")
+        val thirdId = Uuid.parse("00000000-0000-4000-8000-000000000002")
+
+        val ordered = orderedAssistantConversationDeletionIds(listOf(firstId, secondId, thirdId))
+
+        assertEquals(listOf(secondId, thirdId, firstId), ordered)
+    }
+
+    @Test
+    fun `assistant deletion attempts every ordered conversation after one deletion fails`() = runBlocking {
+        val firstId = Uuid.parse("00000000-0000-4000-8000-000000000001")
+        val secondId = Uuid.parse("00000000-0000-4000-8000-000000000002")
+        val attempted = mutableListOf<Uuid>()
+
+        val deleted = deleteAssistantConversationIds(
+            conversationIds = listOf(firstId, secondId),
+            delete = { conversationId ->
+                attempted += conversationId
+                conversationId != firstId
+            },
+        )
+
+        assertFalse(deleted)
+        assertEquals(listOf(firstId, secondId), attempted)
+    }
+
+    @Test
+    fun `deleted non-ready conversation cannot be recreated by a normal save`() {
+        assertFalse(canPersistConversation(exists = false, isReady = false, allowCreate = false))
+        assertTrue(canPersistConversation(exists = false, isReady = true, allowCreate = false))
+        assertTrue(canPersistConversation(exists = false, isReady = false, allowCreate = true))
     }
 
     @Test

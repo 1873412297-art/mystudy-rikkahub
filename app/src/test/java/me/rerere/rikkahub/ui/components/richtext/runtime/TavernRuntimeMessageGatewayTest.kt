@@ -330,6 +330,47 @@ class TavernRuntimeMessageGatewayTest {
     }
 
     @Test
+    fun `bound injected current message is rejected after its conversation is no longer ready`() {
+        val conversationId = Uuid.random()
+        val gateway = object : TavernRuntimeMessageGateway {
+            override fun isReady(conversationId: Uuid): Boolean = false
+
+            override fun list(conversationId: Uuid): List<TavernRuntimeMessage> = emptyList()
+
+            override fun get(conversationId: Uuid, messageId: String): TavernRuntimeMessage? = null
+
+            override fun create(conversationId: Uuid, role: MessageRole, text: String): TavernRuntimeMessage =
+                error("not used")
+
+            override fun update(
+                conversationId: Uuid,
+                messageId: String,
+                text: String,
+            ): TavernRuntimeMessage? = null
+
+            override fun delete(conversationId: Uuid, messageId: String): Boolean = false
+        }
+        val controller = TavernRuntimeController(conversationId = conversationId, messageGateway = gateway)
+        controller.setCurrentMessage(buildJsonObject { put("messageId", "injected"); put("text", "old") })
+
+        val response = controller.dispatch(request("messages.getCurrent"))
+
+        assertFalse(response.ok)
+        assertEquals("CONVERSATION_NOT_READY", response.error!!.code)
+    }
+
+    @Test
+    fun `isolated injected current message remains available without a bound conversation`() {
+        val controller = TavernRuntimeController()
+        controller.setCurrentMessage(buildJsonObject { put("messageId", "isolated"); put("text", "preview") })
+
+        val response = controller.dispatch(request("messages.getCurrent"))
+
+        assertTrue(response.ok)
+        assertEquals("isolated", response.result!!.jsonObject.getValue("messageId").jsonPrimitive.content)
+    }
+
+    @Test
     fun `create response rereads committed current status`() {
         val conversationId = Uuid.random()
         val created = TavernRuntimeMessage("created", MessageRole.USER, "new", true)

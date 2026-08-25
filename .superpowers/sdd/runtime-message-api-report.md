@@ -112,6 +112,28 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
 
 ## Verification
 
+## Ninth review initialization variables, assistant deletion, and injected-current pass
+
+- Persisted status variables are now initialized only in the winning `INSTALL` branch while holding the session
+  mutation lock. A superseded loader and a same-generation loader invalidated by a live mutation take `SKIP` or
+  `MARK_READY` without changing variables. Initial-history rendering explicitly disables status-variable writes, so
+  old persisted message tags cannot mutate the live store before the installation token is accepted.
+- `AssistantVM` delegates assistant-owned conversation removal to
+  `ChatService.deleteConversationsOfAssistantAtomic`. The service reads the IDs once, orders them stably, attempts
+  every deletion, and routes each through `deleteConversationAtomic` before settings/memory/file cleanup can remove
+  the assistant. This preserves the closed-session/readiness barrier for active conversations.
+- Bound injected `messages.getCurrent` now validates the production gateway readiness before returning its cache;
+  a deleted or evicted conversation returns `CONVERSATION_NOT_READY`. Pure isolated iframe injection remains
+  available when no conversation is bound.
+- A normal save cannot insert a missing non-ready conversation. Explicit fork creation and ready newly initialized
+  conversations remain allowed to create persistence rows.
+- New JVM regressions cover superseded and mutation-invalidated initialization variables, deterministic batch
+  deletion order/attempts, deleted-save admission, bound injected-current readiness, and isolated injection.
+- Focused JVM suite: PASS (`ChatServiceTest` 39, `TavernRuntimeMessageMutationStoreTest` 9,
+  `TavernRuntimeMessageGatewayTest` 16; 0 failures).
+- `:app:compileDebugKotlin :web:compileDebugKotlin --no-configuration-cache`: PASS.
+- `git diff --check`: PASS.
+
 ## Eighth review initialization ownership and deletion pass
 
 - Initialization action now distinguishes token generation from mutation version: a later initializer makes the older
@@ -205,3 +227,5 @@ Fourth review commit: `fix: serialize ChatService conversation mutations` (this 
 Sixth review commit: `dd5dd24d fix: guard Tavern conversation initialization`.
 
 Seventh review commit: `fix: close Tavern runtime mutations during cleanup`.
+
+Ninth review commit: `fix: harden Tavern initialization and assistant deletion`.

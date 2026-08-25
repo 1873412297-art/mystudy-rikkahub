@@ -366,8 +366,14 @@ internal class TavernRuntimeController(
     }
 
     private fun getCurrentMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {
-        injectedCurrentMessage?.let { return TavernRuntimeResponse.success(request.id, it) }
-        val conversationId = activeConversationId(request) ?: return noActiveConversation(request)
+        val conversationId = activeConversationId(request)
+        injectedCurrentMessage?.let { injected ->
+            if (conversationId != null && !messageGateway.isReady(conversationId)) {
+                return conversationNotReady(request)
+            }
+            return TavernRuntimeResponse.success(request.id, injected)
+        }
+        conversationId ?: return noActiveConversation(request)
         val messages = messageGateway.readSnapshot(conversationId) ?: return conversationNotReady(request)
         val current = messages.lastOrNull()
         if (current != null) return TavernRuntimeResponse.success(request.id, current.toJson())

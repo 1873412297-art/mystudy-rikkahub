@@ -195,8 +195,10 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                                 if (patchContent.isNotBlank()) {
                                     val ops = json.decodeFromString<List<JsonPatchOp>>(patchContent)
                                     if (ops.isNotEmpty()) {
-                                        store.applyPatch(convId, ops)
-                                        variablesChanged = true
+                                        if (ctx.allowStatusVariableMutations) {
+                                            store.applyPatch(convId, ops)
+                                            variablesChanged = true
+                                        }
                                     }
                                 }
                             } catch (e: Exception) {
@@ -207,8 +209,10 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                         "barePatch" -> {
                             try {
                                 val ops = json.decodeFromString<List<JsonPatchOp>>(rawContent)
-                                store.applyPatch(convId, ops)
-                                variablesChanged = true
+                                if (ctx.allowStatusVariableMutations) {
+                                    store.applyPatch(convId, ops)
+                                    variablesChanged = true
+                                }
                             } catch (e: Exception) {
                                 android.util.Log.e("StatusPlhd", "  ✗ Bare patch parse error", e)
                                 resultParts.add(UIMessagePart.Text(rawContent))
@@ -227,8 +231,10 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                                         path = "/_expression",
                                         value = kotlinx.serialization.json.JsonPrimitive(exprName)
                                     )
-                                    store.applyPatch(convId, listOf(exprOp))
-                                    variablesChanged = true
+                                    if (ctx.allowStatusVariableMutations) {
+                                        store.applyPatch(convId, listOf(exprOp))
+                                        variablesChanged = true
+                                    }
                                     } catch (e: Exception) {
                                     e.printStackTrace()
                                 }
