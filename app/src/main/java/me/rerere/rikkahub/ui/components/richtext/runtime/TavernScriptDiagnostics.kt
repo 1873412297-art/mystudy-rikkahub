@@ -3,12 +3,14 @@ package me.rerere.rikkahub.ui.components.richtext.runtime
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
+@Serializable
 internal enum class TavernScriptRuntimeStatus {
     DISABLED,
     WAITING_PERMISSION,
@@ -19,6 +21,7 @@ internal enum class TavernScriptRuntimeStatus {
     OVER_LIMIT,
 }
 
+@Serializable
 internal enum class TavernScriptDiagnosticLevel {
     DEBUG,
     INFO,
@@ -26,6 +29,7 @@ internal enum class TavernScriptDiagnosticLevel {
     ERROR,
 }
 
+@Serializable
 internal data class TavernScriptDiagnosticEntry(
     val timestamp: Long,
     val level: TavernScriptDiagnosticLevel,

@@ -124,3 +124,29 @@ The review fix is included in the subsequent final `HEAD` commit on `codex/port-
 ### Second review-fix commit
 
 The second review fix is included in the subsequent final `HEAD` commit on `codex/port-private-to-2.4.10`.
+
+## Final minor fix: diagnostic entry JSON serialization
+
+### RED evidence
+
+Added `diagnostic entry survives JSON round trip` before changing the runtime models, then ran:
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernScriptDiagnosticsTest'
+```
+
+Result: expected `kotlinx.serialization.SerializationException` at `TavernScriptDiagnosticsTest.kt:177`; `TavernScriptDiagnosticEntry` had no generated serializer.
+
+### GREEN evidence
+
+- Added `@Serializable` to `TavernScriptDiagnosticEntry`, `TavernScriptDiagnosticLevel`, and the related runtime-status enum used with diagnostic models.
+- The new round trip preserves every optional and required entry field.
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernScriptDiagnosticsTest'
+# BUILD SUCCESSFUL (10 focused JVM tests)
+```
+
+### Final minor-fix commit
+
+The serialization fix is included in the subsequent final `HEAD` commit on `codex/port-private-to-2.4.10`.

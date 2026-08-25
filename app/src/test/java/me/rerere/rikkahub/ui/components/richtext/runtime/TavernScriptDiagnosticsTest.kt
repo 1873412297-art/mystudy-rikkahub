@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.components.richtext.runtime
 
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -9,6 +10,23 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class TavernScriptDiagnosticsTest {
+    @Test
+    fun `diagnostic entry survives JSON round trip`() {
+        val entry = TavernScriptDiagnosticEntry(
+            timestamp = 123L,
+            level = TavernScriptDiagnosticLevel.ERROR,
+            category = "rpc",
+            message = "request rejected",
+            rpcMethod = "messages.send",
+            durationMs = 42L,
+            error = "timeout",
+        )
+
+        val decoded = Json.decodeFromString<TavernScriptDiagnosticEntry>(Json.encodeToString(entry))
+
+        assertEquals(entry, decoded)
+    }
+
     @Test
     fun `keeps only the latest 500 entries for one script in insertion order`() {
         var now = 0L
