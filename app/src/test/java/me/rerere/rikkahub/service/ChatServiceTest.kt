@@ -41,6 +41,7 @@ import me.rerere.rikkahub.data.ai.status.JsonPatchOp
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.data.model.toMessageNode
+import me.rerere.rikkahub.data.repository.runCommittedConversationCleanup
 import me.rerere.rikkahub.service.group.GroupDirectorCommand
 import me.rerere.rikkahub.service.group.GroupDirectorCommandContext
 import me.rerere.rikkahub.service.group.GroupDirectorEngine
@@ -351,6 +352,72 @@ class ChatServiceTest {
 
         assertTrue(canMoveConversationToAssistant(otherAssistant, deleting))
         assertFalse(canMoveConversationToAssistant(deletingAssistant, deleting))
+    }
+
+    @Test
+    fun `assistant deletion keeps its gate through final assistant cleanup`() = runBlocking {
+        val assistantId = Uuid.random()
+        val deleting = linkedSetOf<Uuid>()
+        var finalized = false
+
+        val result = runAssistantDeletionGate(
+            assistantId = assistantId,
+            deletingAssistantIds = deleting,
+            deleteConversations = {
+                assertTrue(assistantId in deleting)
+                true
+            },
+            finalizeAssistantDeletion = {
+                assertTrue(assistantId in deleting)
+                finalized = true
+            },
+        )
+
+        assertTrue(result.succeeded)
+        assertTrue(finalized)
+        assertFalse(assistantId in deleting)
+    }
+
+    @Test
+    fun `assistant deletion releases its gate after final cleanup failure`() = runBlocking {
+        val assistantId = Uuid.random()
+        val deleting = linkedSetOf<Uuid>()
+
+        val result = runAssistantDeletionGate(
+            assistantId = assistantId,
+            deletingAssistantIds = deleting,
+            deleteConversations = { true },
+            finalizeAssistantDeletion = { error("settings deletion failed") },
+        )
+
+        assertFalse(result.succeeded)
+        assertTrue(result.finalizeError!!.message!!.contains("settings deletion failed"))
+        assertFalse(assistantId in deleting)
+    }
+
+    @Test
+    fun `restore rejects a deleting or missing assistant`() {
+        val assistantId = Uuid.random()
+
+        assertFalse(canRestoreConversation(assistantExists = false, assistantIsDeleting = false))
+        assertFalse(canRestoreConversation(assistantExists = true, assistantIsDeleting = true))
+        assertTrue(canRestoreConversation(assistantExists = true, assistantIsDeleting = false))
+    }
+
+    @Test
+    fun `committed deletion keeps later cleanup steps after FTS failure`() = runBlocking {
+        var filesCleaned = false
+        var statusCleared = false
+
+        val failures = runCommittedConversationCleanup(
+            deleteFts = { error("fts unavailable") },
+            deleteFiles = { filesCleaned = true },
+            clearStatus = { statusCleared = true },
+        )
+
+        assertEquals(1, failures.size)
+        assertTrue(filesCleaned)
+        assertTrue(statusCleared)
     }
 
     @Test

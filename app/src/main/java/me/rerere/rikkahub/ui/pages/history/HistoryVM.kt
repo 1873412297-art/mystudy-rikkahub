@@ -61,7 +61,7 @@ class HistoryVM(
 
     fun restoreConversation(conversation: Conversation) {
         viewModelScope.launch {
-            conversationRepo.insertConversation(conversation)
+            chatService.restoreConversationAtomic(conversation)
         }
     }
 

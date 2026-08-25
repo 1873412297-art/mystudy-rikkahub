@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.JsonObject
@@ -336,6 +338,34 @@ internal data class AssistantConversationDeletionResult(
     val succeeded: Boolean get() = failedConversationIds.isEmpty()
 }
 
+data class AssistantDeletionResult(
+    val succeeded: Boolean,
+    val finalizeError: Exception? = null,
+)
+
+/** Holds the assistant gate until both its conversations and its owning settings have been finalized. */
+internal suspend fun runAssistantDeletionGate(
+    assistantId: Uuid,
+    deletingAssistantIds: MutableSet<Uuid>,
+    deleteConversations: suspend () -> Boolean,
+    finalizeAssistantDeletion: suspend () -> Unit,
+): AssistantDeletionResult {
+    if (!deletingAssistantIds.add(assistantId)) return AssistantDeletionResult(succeeded = false)
+    return try {
+        if (!deleteConversations()) return AssistantDeletionResult(succeeded = false)
+        try {
+            finalizeAssistantDeletion()
+            AssistantDeletionResult(succeeded = true)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            AssistantDeletionResult(succeeded = false, finalizeError = error)
+        }
+    } finally {
+        deletingAssistantIds.remove(assistantId)
+    }
+}
+
 enum class ConversationDeleteResult {
     DELETED,
     NOT_FOUND,
@@ -349,6 +379,9 @@ internal fun isAssistantBatchDeleteSuccess(result: ConversationDeleteResult): Bo
 /** An assistant being deleted cannot receive new conversations, while moving out remains valid. */
 internal fun canMoveConversationToAssistant(assistantId: Uuid, deletingAssistantIds: Set<Uuid>): Boolean =
     assistantId !in deletingAssistantIds
+
+internal fun canRestoreConversation(assistantExists: Boolean, assistantIsDeleting: Boolean): Boolean =
+    assistantExists && !assistantIsDeleting
 
 /**
  * Resolves ownership immediately before the conditional delete. A batch may have collected the id while it belonged
@@ -473,6 +506,7 @@ class ChatService(
     // 统一会话管理
     private val sessions = ConcurrentHashMap<Uuid, ConversationSession>()
     private val deletingAssistantIds = ConcurrentHashMap.newKeySet<Uuid>()
+    private val assistantDeletionGateMutex = Mutex()
     private val tavernRuntimeReadiness = TavernRuntimeConversationReadiness()
     private val tavernRuntimeMessageStore by lazy {
         TavernRuntimeMessageMutationStore(object : TavernRuntimeMessagePersistenceAdapter {
@@ -2084,19 +2118,18 @@ class ChatService(
         assistantId: Uuid,
         clearFolder: Boolean,
     ): Boolean {
-        if (!canMoveConversationToAssistant(assistantId, deletingAssistantIds)) return false
-        return updateExistingConversationField(
-            conversationId = conversationId,
-            transform = { current ->
-                current.copy(assistantId = assistantId, folderId = if (clearFolder) null else current.folderId)
-            },
-            updateInactive = {
-                if (!canMoveConversationToAssistant(assistantId, deletingAssistantIds)) {
-                    return@updateExistingConversationField false
-                }
-                conversationRepo.updateConversationAssistant(conversationId, assistantId, clearFolder)
-            },
-        )
+        return assistantDeletionGateMutex.withLock {
+            if (!canMoveConversationToAssistant(assistantId, deletingAssistantIds)) return@withLock false
+            updateExistingConversationField(
+                conversationId = conversationId,
+                transform = { current ->
+                    current.copy(assistantId = assistantId, folderId = if (clearFolder) null else current.folderId)
+                },
+                updateInactive = {
+                    conversationRepo.updateConversationAssistant(conversationId, assistantId, clearFolder)
+                },
+            )
+        }
     }
 
     suspend fun updateConversationMessageFields(
@@ -2104,6 +2137,20 @@ class ChatService(
         requested: Conversation,
     ): Conversation = updateConversationFields(conversationId) { current ->
         mergeConversationUiFields(current, requested)
+    }
+
+    /** Restores only into an existing assistant that is not in the full assistant-deletion gate. */
+    suspend fun restoreConversationAtomic(conversation: Conversation): Boolean {
+        return assistantDeletionGateMutex.withLock {
+            val settings = settingsStore.settingsFlowRaw.first()
+            val assistantExists = settings.getAssistantById(conversation.assistantId) != null
+            if (!canRestoreConversation(assistantExists, conversation.assistantId in deletingAssistantIds)) {
+                return@withLock false
+            }
+            if (conversationRepo.existsConversationById(conversation.id)) return@withLock false
+            conversationRepo.insertConversation(conversation)
+            true
+        }
     }
 
     suspend fun updateConversationInjections(
@@ -2178,77 +2225,140 @@ class ChatService(
             updateInactive = { conversationRepo.updateConversationFolderId(conversationId, folderId) },
         )
 
-    /** Removes the live owner before deleting persistence, so late runtime calls cannot recreate this conversation. */
-    suspend fun deleteConversationAtomic(
+    private data class ConversationDeletionCommitResult(
+        val result: ConversationDeleteResult,
+        val conversation: Conversation? = null,
+    )
+
+    private suspend fun commitConversationDeletion(
         conversationId: Uuid,
-        expectedAssistantId: Uuid? = null,
-    ): ConversationDeleteResult {
-        val session = sessions[conversationId]
-        if (session == null) {
-            if (expectedAssistantId != null) {
-                return deleteConversationWithExpectedAssistant(
-                    expectedAssistantId = expectedAssistantId,
-                    load = { conversationRepo.getConversationById(conversationId) },
-                    delete = { conversationRepo.deleteConversationIfAssistantId(it, expectedAssistantId) },
-                )
-            }
-            val conversation = conversationRepo.getConversationById(conversationId)
-                ?: return ConversationDeleteResult.NOT_FOUND
-            conversationRepo.deleteConversation(conversation)
-            return ConversationDeleteResult.DELETED
+        expectedAssistantId: Uuid?,
+    ): ConversationDeletionCommitResult {
+        val conversation = conversationRepo.getConversationById(conversationId)
+            ?: return ConversationDeletionCommitResult(ConversationDeleteResult.NOT_FOUND)
+        if (expectedAssistantId != null && conversation.assistantId != expectedAssistantId) {
+            return ConversationDeletionCommitResult(ConversationDeleteResult.MOVED)
         }
-        return session.withRefSuspend {
-            session.withConversationMutationLock {
-                if (sessions[conversationId] !== session) {
-                    return@withConversationMutationLock ConversationDeleteResult.NOT_FOUND
-                }
-                if (expectedAssistantId != null && session.state.value.assistantId != expectedAssistantId) {
-                    return@withConversationMutationLock ConversationDeleteResult.MOVED
-                }
-                val result = if (expectedAssistantId != null) {
-                    deleteConversationWithExpectedAssistant(
-                        expectedAssistantId = expectedAssistantId,
-                        load = { conversationRepo.getConversationById(conversationId) },
-                        delete = { conversationRepo.deleteConversationIfAssistantId(it, expectedAssistantId) },
-                    )
-                } else {
-                    val conversation = conversationRepo.getConversationById(conversationId)
-                        ?: return@withConversationMutationLock ConversationDeleteResult.NOT_FOUND
-                    conversationRepo.deleteConversation(conversation)
-                    ConversationDeleteResult.DELETED
-                }
-                if (result != ConversationDeleteResult.DELETED) {
-                    return@withConversationMutationLock result
-                }
-                tavernRuntimeReadiness.clear(conversationId)
-                session.closeLockedForCleanup()
-                sessions.remove(conversationId, session)
-                _sessionsVersion.value++
-                ConversationDeleteResult.DELETED
+        val commit = if (expectedAssistantId == null) {
+            conversationRepo.commitConversationDeletion(conversation)
+        } else {
+            conversationRepo.commitConversationDeletionIfAssistantId(conversation, expectedAssistantId)
+        }
+        if (!commit.committed) {
+            val result = if (expectedAssistantId == null) {
+                ConversationDeleteResult.NOT_FOUND
+            } else {
+                ConversationDeleteResult.MOVED
             }
+            return ConversationDeletionCommitResult(result)
+        }
+        return ConversationDeletionCommitResult(ConversationDeleteResult.DELETED, commit.conversation)
+    }
+
+    private suspend fun cleanupCommittedConversationDeletion(conversation: Conversation) {
+        conversationRepo.cleanupCommittedConversationDeletion(conversation).forEach { error ->
+            Log.w(TAG, "Conversation deletion cleanup failed: ${conversation.id}", error)
         }
     }
 
-    /**
-     * Closes every live assistant conversation through the same atomic deletion path before its assistant is removed.
-     */
-    suspend fun deleteConversationsOfAssistantAtomic(assistantId: Uuid): Boolean {
-        if (!deletingAssistantIds.add(assistantId)) return false
-        return try {
-            val repositoryIds = conversationRepo.getConversationsOfAssistant(assistantId).first().map { it.id }
-            val liveSessionIds = sessions.values
-                .filter { it.state.value.assistantId == assistantId }
-                .map { it.id }
-            val conversationIds = orderedAssistantConversationDeletionIds(repositoryIds + liveSessionIds)
-            deleteAssistantConversationIds(conversationIds) { conversationId ->
-                isAssistantBatchDeleteSuccess(
-                    deleteConversationAtomic(conversationId, expectedAssistantId = assistantId),
-                )
-            }.succeeded
-        } finally {
-            deletingAssistantIds.remove(assistantId)
+    private fun closeCommittedConversationSession(conversationId: Uuid, session: ConversationSession?) {
+        tavernRuntimeReadiness.clear(conversationId)
+        statusVariableStore.remove(conversationId)
+        if (session != null) {
+            session.closeLockedForCleanup()
+            if (sessions.remove(conversationId, session)) _sessionsVersion.value++
         }
     }
+
+    private suspend fun deleteInactiveConversationAtomically(
+        conversationId: Uuid,
+        expectedAssistantId: Uuid?,
+    ): ConversationDeleteResult {
+        val commit = commitConversationDeletion(conversationId, expectedAssistantId)
+        val conversation = commit.conversation ?: return commit.result
+        closeCommittedConversationSession(conversationId, session = null)
+        cleanupCommittedConversationDeletion(conversation)
+        return ConversationDeleteResult.DELETED
+    }
+
+    /** Commits Room deletion before revoking the live owner; cleanup cannot revive an already deleted id. */
+    suspend fun deleteConversationAtomic(
+        conversationId: Uuid,
+        expectedAssistantId: Uuid? = null,
+    ): ConversationDeleteResult = withContext(NonCancellable) {
+        repeat(2) {
+            val session = sessions[conversationId] ?: return@withContext deleteInactiveConversationAtomically(
+                conversationId,
+                expectedAssistantId,
+            )
+            val committed = try {
+                session.withRefSuspend {
+                    session.withConversationMutationLock {
+                        if (sessions[conversationId] !== session) return@withConversationMutationLock null
+                        if (expectedAssistantId != null && session.state.value.assistantId != expectedAssistantId) {
+                            return@withConversationMutationLock ConversationDeletionCommitResult(
+                                ConversationDeleteResult.MOVED,
+                            )
+                        }
+                        val commit = commitConversationDeletion(conversationId, expectedAssistantId)
+                        val conversation = commit.conversation ?: return@withConversationMutationLock commit
+                        closeCommittedConversationSession(conversationId, session)
+                        ConversationDeletionCommitResult(ConversationDeleteResult.DELETED, conversation)
+                    }
+                }
+            } catch (error: IllegalStateException) {
+                if (error.message == "CONVERSATION_SESSION_CLOSED") null else throw error
+            }
+            if (committed == null) return@repeat
+            val conversation = committed.conversation
+            if (conversation != null) cleanupCommittedConversationDeletion(conversation)
+            return@withContext committed.result
+        }
+        deleteInactiveConversationAtomically(conversationId, expectedAssistantId)
+    }
+
+    private suspend fun deleteConversationsForDeletingAssistant(assistantId: Uuid): Boolean {
+        val repositoryIds = conversationRepo.getConversationsOfAssistant(assistantId).first().map { it.id }
+        val liveSessionIds = sessions.values
+            .filter { it.state.value.assistantId == assistantId }
+            .map { it.id }
+        val conversationIds = orderedAssistantConversationDeletionIds(repositoryIds + liveSessionIds)
+        return deleteAssistantConversationIds(conversationIds) { conversationId ->
+            isAssistantBatchDeleteSuccess(
+                deleteConversationAtomic(conversationId, expectedAssistantId = assistantId),
+            )
+        }.succeeded
+    }
+
+    /** Holds the deletion gate through conversation removal and caller-owned assistant settings/memory finalization. */
+    suspend fun deleteAssistantAtomically(
+        assistantId: Uuid,
+        finalizeAssistantDeletion: suspend () -> Unit,
+    ): AssistantDeletionResult {
+        val acquired = assistantDeletionGateMutex.withLock { deletingAssistantIds.add(assistantId) }
+        if (!acquired) return AssistantDeletionResult(succeeded = false)
+        return try {
+            if (!deleteConversationsForDeletingAssistant(assistantId)) {
+                AssistantDeletionResult(succeeded = false)
+            } else {
+                try {
+                    finalizeAssistantDeletion()
+                    AssistantDeletionResult(succeeded = true)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Log.e(TAG, "Failed to finalize assistant deletion: $assistantId", error)
+                    AssistantDeletionResult(succeeded = false, finalizeError = error)
+                }
+            }
+        } finally {
+            assistantDeletionGateMutex.withLock { deletingAssistantIds.remove(assistantId) }
+        }
+    }
+
+    /** Closes every live assistant conversation through the same gate as full assistant deletion. */
+    suspend fun deleteConversationsOfAssistantAtomic(assistantId: Uuid): Boolean =
+        deleteAssistantAtomically(assistantId) {}.succeeded
 
     /**
      * 文件夹内是否存在正在生成回复的会话。

@@ -177,11 +177,12 @@ class TavernRuntimeMessageGatewayTest {
         val updatedReal = controller.dispatch(
             request("messages.updateCurrent", "patch" to buildJsonObject { put("text", "new") }),
         )
-        controller.setCurrentMessage(buildJsonObject { put("messageId", "injected"); put("text", "before") })
+        controller.setCurrentMessage(buildJsonObject { put("messageId", "one"); put("text", "injected") })
         val injected = controller.dispatch(request("messages.getCurrent"))
 
         assertEquals("new", updatedReal.result!!.jsonObject.getValue("text").jsonPrimitive.content)
-        assertEquals("injected", injected.result!!.jsonObject.getValue("messageId").jsonPrimitive.content)
+        assertEquals("one", injected.result!!.jsonObject.getValue("messageId").jsonPrimitive.content)
+        assertEquals("injected", injected.result!!.jsonObject.getValue("text").jsonPrimitive.content)
     }
 
     @Test
@@ -357,6 +358,29 @@ class TavernRuntimeMessageGatewayTest {
 
         assertFalse(response.ok)
         assertEquals("CONVERSATION_NOT_READY", response.error!!.code)
+    }
+
+    @Test
+    fun `deleting the injected current message clears its cached current value`() {
+        val conversationId = Uuid.random()
+        val message = TavernRuntimeMessage("persisted", MessageRole.ASSISTANT, "old", isCurrent = true)
+        val gateway = InMemoryTavernRuntimeMessageGateway(mapOf(conversationId to listOf(message)))
+        val controller = TavernRuntimeController(
+            conversationId = conversationId,
+            messageGateway = gateway,
+            permissionStore = TavernRuntimePermissionStore(TavernRuntimePermissions(allowMessageWrite = true)),
+        )
+        controller.setCurrentMessage(buildJsonObject {
+            put("messageId", message.messageId)
+            put("text", message.text)
+        })
+
+        val deleted = controller.dispatch(request("messages.delete", "id" to message.messageId))
+        val current = controller.dispatch(request("messages.getCurrent"))
+
+        assertTrue(deleted.ok)
+        assertFalse(current.ok)
+        assertEquals("NOT_FOUND", current.error!!.code)
     }
 
     @Test

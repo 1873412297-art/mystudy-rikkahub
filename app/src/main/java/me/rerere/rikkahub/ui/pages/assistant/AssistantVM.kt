@@ -43,16 +43,16 @@ class AssistantVM(
 
     fun removeAssistant(assistant: Assistant) {
         viewModelScope.launch {
-            if (!chatService.deleteConversationsOfAssistantAtomic(assistant.id)) return@launch
-            cleanupAssistantFiles(assistant)
-
-            val settings = settings.value
-            settingsStore.update(
-                settings.copy(
-                    assistants = settings.assistants.filter { it.id != assistant.id }
+            chatService.deleteAssistantAtomically(assistant.id) {
+                val settings = settings.value
+                settingsStore.update(
+                    settings.copy(
+                        assistants = settings.assistants.filter { it.id != assistant.id }
+                    )
                 )
-            )
-            memoryRepository.deleteMemoriesOfAssistant(assistant.id.toString())
+                memoryRepository.deleteMemoriesOfAssistant(assistant.id.toString())
+                cleanupAssistantFiles(assistant)
+            }
         }
     }
 
