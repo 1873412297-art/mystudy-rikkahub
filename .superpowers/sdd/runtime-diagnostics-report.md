@@ -96,3 +96,31 @@ The initial report accurately recorded the two HTML-contract RED runs. It did **
 ### Review-fix commit
 
 The review fix is included in the subsequent final `HEAD` commit on `codex/port-private-to-2.4.10`.
+
+## Second review fix: embedded header JSON and renderer recovery
+
+### RED evidence
+
+1. Added regressions for the real multi-argument console shape (`request headers {"Authorization":"Basic …","Cookie":"…","X-Company-Trace":"…"}`), root-level `X-*` JSON, and quoted properties without a surrounding JSON object. The first batch also introduced the recovery-coordinator contract, which correctly failed test compilation because `TavernBrowserSessionRecovery` and `TavernBrowserReloadAction` did not exist.
+
+2. The recovery compile error prevented the new redaction assertions from executing in that initial batch. To obtain honest redaction evidence, the uncommitted embedded-JSON implementation was removed, leaving the prior whole-message-only sanitizer, and then ran:
+
+   ```powershell
+   .\gradlew.bat :app:testDebugUnitTest --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernScriptDiagnosticsTest'
+   ```
+
+   Result: expected failures for embedded/root JSON (`:83`) and quoted-property fallback (`:93`); secrets were still visible. The production sanitizer was then freshly reimplemented from these failures.
+
+### GREEN evidence
+
+- Diagnostics now scans text for balanced JSON objects/arrays while respecting string escapes, recursively redacts them, and retains a quoted-property fallback for malformed/partial console output. Any `X-*` key is treated as sensitive, including root-level JSON keys. Copying continues to call the same sanitizer as storage.
+- `TavernBrowserSessionRecovery` owns per-script generations. `rendererGone` increments only the failed script generation; the registry removes that exact WebView before rebuilding. Host composition includes the generation in its key, so only the affected session is recreated and registers anew. Reloading a missing/dead session requests the same targeted rebuild; live sessions reload in place.
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernScriptDiagnosticsTest' --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernBrowserSessionRecoveryTest' --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernBrowserSessionHtmlTest' --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernBrowserScriptSelectionTest'
+# BUILD SUCCESSFUL (13 focused JVM tests)
+```
+
+### Second review-fix commit
+
+The second review fix is included in the subsequent final `HEAD` commit on `codex/port-private-to-2.4.10`.

@@ -19,6 +19,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlin.uuid.Uuid
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScope
@@ -32,15 +35,45 @@ import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
 import org.json.JSONObject
 import org.koin.compose.koinInject
 
+internal enum class TavernBrowserReloadAction {
+    RELOAD_LIVE,
+    REBUILD,
+}
+
+internal class TavernBrowserSessionRecovery {
+    private val _generations = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val generations = _generations.asStateFlow()
+
+    fun generation(scriptId: String): Int = _generations.value[scriptId] ?: 0
+
+    fun rendererGone(scriptId: String): Int = rebuild(scriptId)
+
+    fun requestReload(scriptId: String, hasLiveView: Boolean): TavernBrowserReloadAction = if (hasLiveView) {
+        TavernBrowserReloadAction.RELOAD_LIVE
+    } else {
+        rebuild(scriptId)
+        TavernBrowserReloadAction.REBUILD
+    }
+
+    private fun rebuild(scriptId: String): Int {
+        _generations.update { generations ->
+            generations + (scriptId to ((generations[scriptId] ?: 0) + 1))
+        }
+        return generation(scriptId)
+    }
+}
+
 internal object TavernBrowserSessionRegistry {
     private val sessions = ConcurrentHashMap<String, WebView>()
+    private val recovery = TavernBrowserSessionRecovery()
+    val generations = recovery.generations
 
     fun register(scriptId: String, webView: WebView) {
         sessions[scriptId] = webView
     }
 
-    fun unregister(scriptId: String, webView: WebView) {
-        sessions.remove(scriptId, webView)
+    fun unregister(scriptId: String, webView: WebView): Boolean {
+        return sessions.remove(scriptId, webView)
     }
 
     fun emitButton(scriptId: String, buttonName: String) {
@@ -55,8 +88,19 @@ internal object TavernBrowserSessionRegistry {
         }
     }
 
+    fun rendererGone(scriptId: String, webView: WebView?) {
+        if (webView == null || sessions.remove(scriptId, webView)) recovery.rendererGone(scriptId)
+    }
+
     fun reload(scriptId: String) {
-        sessions[scriptId]?.let { webView -> webView.post { webView.reload() } }
+        val webView = sessions[scriptId]
+        if (recovery.requestReload(scriptId, webView != null) == TavernBrowserReloadAction.REBUILD) return
+        webView?.post {
+            runCatching { webView.reload() }.onFailure {
+                sessions.remove(scriptId, webView)
+                recovery.requestReload(scriptId, hasLiveView = false)
+            }
+        }
     }
 }
 
@@ -182,13 +226,15 @@ internal fun TavernBrowserRuntimeHost(
     conversationId: String?,
 ) {
     val repository: TavernHelperScriptRepository = koinInject()
+    val sessionGenerations by TavernBrowserSessionRegistry.generations.collectAsStateWithLifecycle()
     val conversationUuid = remember(conversationId) {
         conversationId?.let { runCatching { Uuid.parse(it) }.getOrNull() }
     }
     Box(modifier = Modifier.size(1.dp)) {
         scripts.forEach { script ->
-            key(script.id, script.content.hashCode()) {
-                val scriptBridge = remember(script.id, repository) {
+            val sessionGeneration = sessionGenerations[script.id] ?: 0
+            key(script.id, script.content.hashCode(), sessionGeneration) {
+                val scriptBridge = remember(script.id, repository, sessionGeneration) {
                     TavernBrowserScriptBridge(script.id, repository)
                 }
                 MarkdownWebView(
@@ -203,8 +249,9 @@ internal fun TavernBrowserRuntimeHost(
                         tavernScriptDiagnostics.setStatus(script.id, TavernScriptRuntimeStatus.WAITING_PERMISSION)
                     },
                     onWebViewDisposed = {
-                        TavernBrowserSessionRegistry.unregister(script.id, it)
-                        tavernScriptDiagnostics.setStatus(script.id, TavernScriptRuntimeStatus.PAUSED)
+                        if (TavernBrowserSessionRegistry.unregister(script.id, it)) {
+                            tavernScriptDiagnostics.setStatus(script.id, TavernScriptRuntimeStatus.PAUSED)
+                        }
                     },
                     onWebViewLoadFailed = { detail ->
                         tavernScriptDiagnostics.setStatus(script.id, TavernScriptRuntimeStatus.LOAD_FAILED)
@@ -216,8 +263,9 @@ internal fun TavernBrowserRuntimeHost(
                             error = detail.takeIf { it.isNotBlank() },
                         )
                     },
-                    onWebViewRendererCrashed = { didCrash ->
+                    onWebViewRendererCrashed = { webView, didCrash ->
                         val detail = if (didCrash) "WebView 渲染进程崩溃" else "WebView 渲染进程被系统终止"
+                        TavernBrowserSessionRegistry.rendererGone(script.id, webView)
                         tavernScriptDiagnostics.setStatus(script.id, TavernScriptRuntimeStatus.RUNTIME_CRASH)
                         tavernScriptDiagnostics.record(
                             scriptId = script.id,

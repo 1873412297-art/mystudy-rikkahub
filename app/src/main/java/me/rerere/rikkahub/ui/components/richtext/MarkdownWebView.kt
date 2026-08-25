@@ -73,7 +73,7 @@ internal fun MarkdownWebView(
     onWebViewCreated: (WebView) -> Unit = {},
     onWebViewDisposed: (WebView) -> Unit = {},
     onWebViewLoadFailed: (String) -> Unit = {},
-    onWebViewRendererCrashed: (Boolean) -> Unit = {},
+    onWebViewRendererCrashed: (WebView?, Boolean) -> Unit = { _, _ -> },
     additionalJavascriptInterface: Pair<String, Any>? = null,
     /**
      * 高度上限（dp）：超过此高度的内容会触发 WebView 内部纵向滚动，
@@ -488,7 +488,7 @@ internal fun MarkdownWebView(
                             view: WebView?,
                             detail: android.webkit.RenderProcessGoneDetail?,
                         ): Boolean {
-                            onWebViewRendererCrashed(detail?.didCrash() == true)
+                            onWebViewRendererCrashed(view, detail?.didCrash() == true)
                             view?.destroy()
                             return true
                         }

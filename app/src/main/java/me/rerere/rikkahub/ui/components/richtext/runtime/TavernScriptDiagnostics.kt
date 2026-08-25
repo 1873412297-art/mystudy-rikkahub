@@ -124,7 +124,11 @@ internal fun effectiveTavernScriptStatus(
     else -> runtimeStatus ?: TavernScriptRuntimeStatus.PAUSED
 }
 
-internal fun redactScriptDiagnostic(value: String): String = redactJsonDiagnostic(value) ?: value
+internal fun redactScriptDiagnostic(value: String): String = redactEmbeddedJsonDiagnostics(value)
+    .replace(
+        Regex("(?i)(\"(?:authorization|cookie|x-[a-z0-9-]+|api[_ -]?key|token|secret|password)\"\\s*:\\s*\")(?:(?:\\\\.)|[^\"])*(\")"),
+        "$1[已隐藏]$2",
+    )
     .replace(Regex("(?i)(authorization\\s*[:=]\\s*)(?:basic|bearer)\\s+[^\\s,;]+"), "$1[已隐藏]")
     .replace(Regex("(?i)(authorization\\s*[:=]\\s*)[^\\s,;]+"), "$1[已隐藏]")
     .replace(Regex("(?i)(cookie\\s*[:=]\\s*)[^\\r\\n]+"), "$1[已隐藏]")
@@ -135,6 +139,52 @@ private fun redactJsonDiagnostic(value: String): String? = runCatching {
     Json.parseToJsonElement(value)
 }.getOrNull()?.takeIf { it is JsonObject || it is JsonArray }?.let {
     redactJsonElement(it).toString()
+}
+
+private fun redactEmbeddedJsonDiagnostics(value: String): String = buildString {
+    var index = 0
+    while (index < value.length) {
+        val end = value.findJsonEnd(index)
+        if (end != null) {
+            val rawJson = value.substring(index, end + 1)
+            val redacted = redactJsonDiagnostic(rawJson)
+            if (redacted != null) {
+                append(redacted)
+                index = end + 1
+                continue
+            }
+        }
+        append(value[index])
+        index++
+    }
+}
+
+private fun String.findJsonEnd(start: Int): Int? {
+    if (getOrNull(start) !in setOf('{', '[')) return null
+    val expectedClosers = ArrayDeque<Char>()
+    var inString = false
+    var escaped = false
+    for (index in start until length) {
+        val char = this[index]
+        if (inString) {
+            when {
+                escaped -> escaped = false
+                char == '\\' -> escaped = true
+                char == '"' -> inString = false
+            }
+            continue
+        }
+        when (char) {
+            '"' -> inString = true
+            '{' -> expectedClosers.addLast('}')
+            '[' -> expectedClosers.addLast(']')
+            '}', ']' -> {
+                if (expectedClosers.removeLastOrNull() != char) return null
+                if (expectedClosers.isEmpty()) return index
+            }
+        }
+    }
+    return null
 }
 
 private fun redactJsonElement(element: JsonElement, redactAllValues: Boolean = false): JsonElement = when (element) {
@@ -151,6 +201,7 @@ private fun redactJsonElement(element: JsonElement, redactAllValues: Boolean = f
 
 private fun String.isSensitiveDiagnosticKey(): Boolean = lowercase().let { key ->
     key == "authorization" || key == "cookie" ||
+        key.startsWith("x-") ||
         key.contains("api_key") || key.contains("api-key") || key.contains("api key") ||
         key.contains("token") || key.contains("secret") || key.contains("password")
 }

@@ -63,6 +63,38 @@ class TavernScriptDiagnosticsTest {
     }
 
     @Test
+    fun `redacts quoted headers embedded in a console message and root X header JSON`() {
+        val store = TavernScriptDiagnosticsStore()
+        store.record(
+            scriptId = "one",
+            level = TavernScriptDiagnosticLevel.INFO,
+            category = "console",
+            message = "request headers {\"Authorization\":\"Basic basic-secret\",\"Cookie\":\"sid=cookie-secret\",\"X-Company-Trace\":\"custom-secret\"}",
+        )
+        store.record(
+            scriptId = "two",
+            level = TavernScriptDiagnosticLevel.INFO,
+            category = "console",
+            message = "{\"X-Company-Trace\":\"root-custom-secret\"}",
+        )
+
+        val embedded = store.entries("one").single().message
+        val root = store.entries("two").single().message
+        assertFalse(embedded.contains("basic-secret"))
+        assertFalse(embedded.contains("cookie-secret"))
+        assertFalse(embedded.contains("custom-secret"))
+        assertFalse(root.contains("root-custom-secret"))
+    }
+
+    @Test
+    fun `redacts quoted sensitive properties even without a surrounding JSON object`() {
+        val message = redactScriptDiagnostic("header pair \"Authorization\":\"Basic standalone-secret\" \"X-Company-Trace\":\"standalone-custom\"")
+
+        assertFalse(message.contains("standalone-secret"))
+        assertFalse(message.contains("standalone-custom"))
+    }
+
+    @Test
     fun `keeps diagnostics isolated by script and clear affects only selected script`() {
         val store = TavernScriptDiagnosticsStore()
         store.record("one", TavernScriptDiagnosticLevel.INFO, "console", "one-log")
