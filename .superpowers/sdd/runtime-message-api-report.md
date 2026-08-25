@@ -80,6 +80,21 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
   the non-group generation completion path now read and save inside `withConversationMutation`; raw saves avoid
   locking the non-reentrant mutex twice.
 
+## Fourth review mutation audit
+
+- Audited every ChatService read followed by a live update, repository save, or raw save. Tool approval,
+  user/assistant regeneration, title and suggestion completion, translation chunk/clear updates, and public
+  `updateConversationState` now derive from the latest value under `withConversationMutation`.
+- Group command reduction, selected-speaker resolution, group cancellation, failure handoff, success handoff, and
+  group cleanup follow one lock order: `groupDirectorMutex -> conversationMutationMutex`. Once that lock is held,
+  they call `saveConversationUnlocked` rather than re-entering public `saveConversation`.
+- `normalizeCancelledGroupGeneration` takes the conversation mutation lock while it derives its cancellation
+  state, so all of its persistence callbacks receive a current snapshot. Translation network work remains outside
+  the lock; each final live apply re-reads the current session while locked.
+- `mutateConversation(session)` is the shared production helper used by ChatService. Its deterministic regression
+  pauses a runtime mutation before commit, starts the tool-approval-shaped production mutation path, and proves it
+  cannot read the stale snapshot; the final session retains both changes.
+
 ## Verification
 
 - Focused runtime JVM suite: PASS, including controller/gateway, mutation-store, readiness, persistence-order,
@@ -108,3 +123,7 @@ Implementation commit: `81456f1e feat: add persistent Tavern runtime message API
 Refactor/test commit: `1b65be8a refactor: extract Tavern runtime message mutations`.
 
 Follow-up correctness commit: current `fix: serialize Tavern runtime conversation mutations`.
+
+Third review commit: `b881268a fix: harden Tavern runtime message synchronization`.
+
+Fourth review commit: `fix: serialize ChatService conversation mutations` (this commit).

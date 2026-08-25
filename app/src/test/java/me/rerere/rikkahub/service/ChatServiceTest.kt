@@ -201,6 +201,52 @@ class ChatServiceTest {
     }
 
     @Test
+    fun `production mutateConversation waits before deriving a tool approval update`() = runBlocking {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(
+            id = conversationId,
+            initial = Conversation.ofId(conversationId),
+            scope = scope,
+            onIdle = {},
+        )
+        val runtimeEntered = CompletableDeferred<Unit>()
+        val allowRuntimeCommit = CompletableDeferred<Unit>()
+        val approvalRead = CompletableDeferred<Conversation>()
+
+        try {
+            val runtimeCreate = async(Dispatchers.Default) {
+                session.withRuntimeMessageLock {
+                    runtimeEntered.complete(Unit)
+                    allowRuntimeCommit.await()
+                    session.state.value = session.state.value.copy(
+                        messageNodes = session.state.value.messageNodes + UIMessage.user("runtime").toMessageNode(),
+                    )
+                }
+            }
+            runtimeEntered.await()
+            val toolApproval = async(Dispatchers.Default) {
+                mutateConversation(session) { current ->
+                    approvalRead.complete(current)
+                    session.state.value = current.copy(
+                        messageNodes = current.messageNodes + UIMessage.assistant("approved").toMessageNode(),
+                    )
+                }
+            }
+
+            assertNull(withTimeoutOrNull(250) { approvalRead.await() })
+            allowRuntimeCommit.complete(Unit)
+            runtimeCreate.await()
+            approvalRead.await()
+            toolApproval.await()
+        } finally {
+            scope.cancel()
+        }
+
+        assertEquals(setOf("runtime", "approved"), session.state.value.currentMessages.map { it.toText() }.toSet())
+    }
+
+    @Test
     fun `session director lock serializes state commits`() = runBlocking {
         val conversationId = Uuid.parse("00000000-0000-0000-0000-000000000020")
         val assistantId = Uuid.parse("00000000-0000-0000-0000-000000000010")
