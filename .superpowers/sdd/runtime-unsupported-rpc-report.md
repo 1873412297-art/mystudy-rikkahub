@@ -35,3 +35,11 @@ puts `emitResult` last and has direct regression coverage.
 
 - No unsupported host capability was implemented.
 - `verification-screenshots/` was not modified or staged.
+
+## Review follow-up
+
+- Added RED/GREEN coverage for CJK and emoji requests whose Kotlin character count is
+  below 256,000 but UTF-8 byte count exceeds it. The request cap now measures UTF-8 bytes,
+  while still delivering `REQUEST_TOO_LARGE` through a safe callback.
+- `rpcMethod` is now passed through `redactScriptDiagnostic` before it reaches diagnostics,
+  so caller-controlled method text cannot leak bearer credentials into the log UI.

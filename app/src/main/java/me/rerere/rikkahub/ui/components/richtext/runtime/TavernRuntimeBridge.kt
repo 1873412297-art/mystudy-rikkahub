@@ -28,7 +28,7 @@ internal class TavernRuntimeBridge(
         val startedAt = System.nanoTime()
         var method = "unknown"
         val response = try {
-            if (requestJson.length > MAX_REQUEST_CHARS) {
+            if (requestJson.toByteArray(Charsets.UTF_8).size > MAX_REQUEST_CHARS) {
                 TavernRuntimeResponse.error("unknown", "REQUEST_TOO_LARGE", "Runtime request exceeds the 256KB limit")
             } else {
                 val request = RUNTIME_JSON.decodeFromString(TavernRuntimeRequest.serializer(), requestJson)
@@ -46,7 +46,7 @@ internal class TavernRuntimeBridge(
                 level = if (error == null) TavernScriptDiagnosticLevel.INFO else TavernScriptDiagnosticLevel.ERROR,
                 category = "rpc",
                 message = if (error == null) "RPC $method completed" else "RPC $method failed",
-                rpcMethod = method,
+                rpcMethod = redactScriptDiagnostic(method),
                 durationMs = (System.nanoTime() - startedAt) / 1_000_000,
                 error = error?.message,
             )

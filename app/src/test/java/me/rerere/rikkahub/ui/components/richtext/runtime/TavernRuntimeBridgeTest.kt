@@ -39,6 +39,33 @@ class TavernRuntimeBridgeTest {
     }
 
     @Test
+    fun `UTF-8 oversized CJK and emoji requests return structured errors to safe callbacks`() {
+        val emitted = mutableListOf<Pair<String, String>>()
+        val bridge = TavernRuntimeBridge(
+            controller = TavernRuntimeController(),
+            emitResult = { callback, response -> emitted += callback to response },
+        )
+        val requests = listOf(
+            "你".repeat(85_334),
+            "😀".repeat(64_001),
+        )
+
+        requests.forEachIndexed { index, request ->
+            assertTrue(request.length <= 256_000)
+            assertTrue(request.toByteArray(Charsets.UTF_8).size > 256_000)
+
+            bridge.call(request, "safeCallback$index")
+        }
+
+        assertEquals(2, emitted.size)
+        emitted.forEachIndexed { index, (callback, payload) ->
+            assertEquals("safeCallback$index", callback)
+            val response = Json.decodeFromString<TavernRuntimeResponse>(payload)
+            assertEquals("REQUEST_TOO_LARGE", response.error!!.code)
+        }
+    }
+
+    @Test
     fun `bridge caps an oversized controller response`() {
         val emitted = mutableListOf<Pair<String, String>>()
         val controller = TavernRuntimeController().apply {
@@ -76,7 +103,11 @@ class TavernRuntimeBridgeTest {
         assertEquals(1, emitted.size)
         val entry = diagnostics.entries("browser-script").single()
         assertEquals("rpc", entry.category)
-        assertEquals("unknown.authorization: Bearer secret-value", entry.rpcMethod)
+        assertEquals(
+            redactScriptDiagnostic("unknown.authorization: Bearer secret-value"),
+            entry.rpcMethod,
+        )
+        assertTrue(!entry.rpcMethod.orEmpty().contains("secret-value"))
         assertTrue(entry.durationMs != null)
         val error = entry.error.orEmpty()
         assertTrue(error.contains("[已隐藏]"))
