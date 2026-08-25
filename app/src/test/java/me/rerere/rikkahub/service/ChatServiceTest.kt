@@ -151,6 +151,56 @@ class ChatServiceTest {
     }
 
     @Test
+    fun `stream chunk merge and runtime mutation share one conversation lock`() = runBlocking {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(
+            id = conversationId,
+            initial = Conversation.ofId(conversationId),
+            scope = scope,
+            onIdle = {},
+        )
+        val streamRead = CompletableDeferred<Unit>()
+        val allowStreamCommit = CompletableDeferred<Unit>()
+        val runtimeRead = CompletableDeferred<Conversation>()
+
+        try {
+            val streamChunk = async(Dispatchers.Default) {
+                session.withGroupDirectorLock {
+                    session.withConversationMutationLock {
+                        val snapshot = session.state.value
+                        streamRead.complete(Unit)
+                        allowStreamCommit.await()
+                        session.state.value = snapshot.copy(
+                            messageNodes = snapshot.messageNodes + UIMessage.assistant("chunk").toMessageNode(),
+                        )
+                    }
+                }
+            }
+            streamRead.await()
+            val runtimeMutation = async(Dispatchers.Default) {
+                session.withRuntimeMessageLock {
+                    val snapshot = session.state.value
+                    runtimeRead.complete(snapshot)
+                    session.state.value = snapshot.copy(
+                        messageNodes = snapshot.messageNodes + UIMessage.user("runtime").toMessageNode(),
+                    )
+                }
+            }
+
+            assertNull(withTimeoutOrNull(250) { runtimeRead.await() })
+            allowStreamCommit.complete(Unit)
+            streamChunk.await()
+            runtimeRead.await()
+            runtimeMutation.await()
+        } finally {
+            scope.cancel()
+        }
+
+        assertEquals(setOf("chunk", "runtime"), session.state.value.currentMessages.map { it.toText() }.toSet())
+    }
+
+    @Test
     fun `session director lock serializes state commits`() = runBlocking {
         val conversationId = Uuid.parse("00000000-0000-0000-0000-000000000020")
         val assistantId = Uuid.parse("00000000-0000-0000-0000-000000000010")

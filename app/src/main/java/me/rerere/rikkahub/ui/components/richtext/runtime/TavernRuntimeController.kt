@@ -118,7 +118,7 @@ internal class TavernRuntimeController(
 
     /** 宿主注入当前消息 JSON（messages.getCurrent 的数据源） */
     fun setCurrentMessage(message: JsonElement) {
-        injectedCurrentMessage = message
+        injectedCurrentMessage = normalizeInjectedCurrentMessage(message)
     }
 
     /**
@@ -368,8 +368,8 @@ internal class TavernRuntimeController(
     private fun getCurrentMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {
         injectedCurrentMessage?.let { return TavernRuntimeResponse.success(request.id, it) }
         val conversationId = activeConversationId(request) ?: return noActiveConversation(request)
-        if (!messageGateway.isReady(conversationId)) return conversationNotReady(request)
-        val current = messageGateway.list(conversationId).lastOrNull()
+        val messages = messageGateway.readSnapshot(conversationId) ?: return conversationNotReady(request)
+        val current = messages.lastOrNull()
         if (current != null) return TavernRuntimeResponse.success(request.id, current.toJson())
         val fromContext = contextSnapshot?.get("chat")?.jsonArray
             ?.lastOrNull { it.jsonObject["isCurrent"]?.jsonPrimitive?.boolean == true }
@@ -387,6 +387,17 @@ internal class TavernRuntimeController(
         injectedCurrentMessage?.let { injected ->
             val objectMessage = injected as? JsonObject
                 ?: return badRequest(request, "Injected current message cannot be patched")
+            val messageId = objectMessage["messageId"]?.jsonPrimitive?.content
+            val persistedId = messageId?.let { value -> runCatching { Uuid.parse(value) }.getOrNull() }
+            val conversationId = activeConversationId(request)
+            if (persistedId != null && conversationId != null) {
+                if (!messageGateway.isReady(conversationId)) return conversationNotReady(request)
+                val updated = messageGateway.update(conversationId, messageId, text)
+                    ?: return notFound(request, "Message not found")
+                val normalized = updated.toJson()
+                injectedCurrentMessage = normalized
+                return TavernRuntimeResponse.success(request.id, normalized)
+            }
             val updated = buildJsonObject {
                 objectMessage.forEach { (key, value) -> put(key, value) }
                 put("text", text)
@@ -395,8 +406,8 @@ internal class TavernRuntimeController(
             return TavernRuntimeResponse.success(request.id, updated)
         }
         val conversationId = activeConversationId(request) ?: return noActiveConversation(request)
-        if (!messageGateway.isReady(conversationId)) return conversationNotReady(request)
-        val current = messageGateway.list(conversationId).lastOrNull()
+        val messages = messageGateway.readSnapshot(conversationId) ?: return conversationNotReady(request)
+        val current = messages.lastOrNull()
             ?: return notFound(request, "No current message exists")
         val updated = messageGateway.update(conversationId, current.messageId, text)
             ?: return notFound(request, "Message not found")
@@ -405,17 +416,18 @@ internal class TavernRuntimeController(
 
     private fun listMessages(request: TavernRuntimeRequest): TavernRuntimeResponse {
         val conversationId = activeConversationId(request) ?: return noActiveConversation(request)
-        if (!messageGateway.isReady(conversationId)) return conversationNotReady(request)
+        val messages = messageGateway.readSnapshot(conversationId) ?: return conversationNotReady(request)
         return TavernRuntimeResponse.success(
             request.id,
-            JsonArray(messageGateway.list(conversationId).map { it.toJson() }),
+            JsonArray(messages.map { it.toJson() }),
         )
     }
 
     private fun getMessage(request: TavernRuntimeRequest): TavernRuntimeResponse = withMessageId(request) { messageId ->
         val conversationId = activeConversationId(request) ?: return@withMessageId noActiveConversation(request)
-        if (!messageGateway.isReady(conversationId)) return@withMessageId conversationNotReady(request)
-        val message = messageGateway.get(conversationId, messageId)
+        val messages = messageGateway.readSnapshot(conversationId)
+            ?: return@withMessageId conversationNotReady(request)
+        val message = messages.firstOrNull { it.messageId == messageId }
             ?: return@withMessageId notFound(request, "Message not found")
         TavernRuntimeResponse.success(request.id, message.toJson())
     }
@@ -494,6 +506,21 @@ internal class TavernRuntimeController(
 
     private fun notFound(request: TavernRuntimeRequest, message: String): TavernRuntimeResponse =
         TavernRuntimeResponse.error(request.id, "NOT_FOUND", message)
+
+    private fun normalizeInjectedCurrentMessage(message: JsonElement): JsonElement {
+        val objectMessage = message as? JsonObject ?: return message
+        val messageId = objectMessage["messageId"] ?: objectMessage["id"] ?: return message
+        val serializedText = objectMessage["parts"]?.jsonArray
+            ?.firstOrNull { part -> part.jsonObject["text"] != null }
+            ?.jsonObject?.get("text")
+        val role = objectMessage["role"]?.jsonPrimitive?.content?.lowercase()
+        return buildJsonObject {
+            put("messageId", messageId)
+            put("role", role ?: "assistant")
+            put("text", objectMessage["text"] ?: serializedText ?: JsonPrimitive(""))
+            put("isCurrent", objectMessage["isCurrent"] ?: JsonPrimitive(true))
+        }
+    }
 
     private fun TavernRuntimeMessage.toJson(): JsonObject = buildJsonObject {
         put("messageId", messageId)

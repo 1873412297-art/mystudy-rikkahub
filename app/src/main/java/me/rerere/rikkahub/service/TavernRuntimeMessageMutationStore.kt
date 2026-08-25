@@ -34,6 +34,10 @@ internal interface TavernRuntimeMessageService {
 
     fun getTavernRuntimeMessages(conversationId: Uuid): List<UIMessage>
 
+    /** Returns null when the bound live session was evicted or is not initialized. */
+    suspend fun readTavernRuntimeMessageSnapshot(conversationId: Uuid): List<UIMessage>? =
+        getTavernRuntimeMessages(conversationId).takeIf { isTavernRuntimeConversationReady(conversationId) }
+
     suspend fun createTavernRuntimeMessage(conversationId: Uuid, role: MessageRole, text: String): UIMessage
 
     suspend fun updateTavernRuntimeMessageText(conversationId: Uuid, messageId: Uuid, text: String): UIMessage?

@@ -346,7 +346,10 @@ class TavernRuntimeScriptApiTest {
 
         assertEquals(1, seen.size)
         assertEquals("first", seen[0].first)
-        assertEquals(listOf("first" to JsonPrimitive(1), "second" to null).map { it.first }, bus.recent().map { it.first })
+        assertEquals(
+            listOf("first" to JsonPrimitive(1), "second" to null).map { it.first },
+            bus.recent().map { it.first },
+        )
     }
 
     // ── messages.getCurrent ────────────────────────────────────────
@@ -361,7 +364,7 @@ class TavernRuntimeScriptApiTest {
         val after = controller.dispatch(TavernRuntimeRequest(id = "m2", method = "messages.getCurrent"))
 
         assertTrue(after.ok)
-        assertEquals("msg-1", after.result!!.jsonObject.getValue("id").jsonPrimitive.content)
+        assertEquals("msg-1", after.result!!.jsonObject.getValue("messageId").jsonPrimitive.content)
     }
 
     // ── 序列化 ──────────────────────────────────────────────────────

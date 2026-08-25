@@ -11,6 +11,7 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.service.TavernRuntimeMessageService
 import me.rerere.rikkahub.data.model.TavernRuntimePermissions
+import me.rerere.rikkahub.utils.JsonInstant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -18,6 +19,49 @@ import org.junit.Test
 import kotlin.uuid.Uuid
 
 class TavernRuntimeMessageGatewayTest {
+    @Test
+    fun `production gateway maps an unavailable atomic read to conversation not ready`() {
+        val conversationId = Uuid.random()
+        val service = object : TavernRuntimeMessageService {
+            var atomicReads = 0
+
+            override fun isTavernRuntimeConversationReady(conversationId: Uuid): Boolean = true
+
+            override fun getTavernRuntimeMessages(conversationId: Uuid): List<UIMessage> =
+                error("Gateway must use the atomic runtime snapshot")
+
+            override suspend fun readTavernRuntimeMessageSnapshot(conversationId: Uuid): List<UIMessage>? {
+                atomicReads++
+                return null
+            }
+
+            override suspend fun createTavernRuntimeMessage(
+                conversationId: Uuid,
+                role: MessageRole,
+                text: String,
+            ): UIMessage = error("not used")
+
+            override suspend fun updateTavernRuntimeMessageText(
+                conversationId: Uuid,
+                messageId: Uuid,
+                text: String,
+            ): UIMessage? = error("not used")
+
+            override suspend fun deleteTavernRuntimeMessage(conversationId: Uuid, messageId: Uuid): Boolean =
+                error("not used")
+        }
+        val controller = TavernRuntimeController(
+            conversationId = conversationId,
+            messageGateway = ChatServiceTavernRuntimeMessageGateway(service),
+        )
+
+        val response = controller.dispatch(request("messages.list"))
+
+        assertFalse(response.ok)
+        assertEquals("CONVERSATION_NOT_READY", response.error!!.code)
+        assertTrue(service.atomicReads > 0)
+    }
+
     @Test
     fun `production gateway maps the committed ChatService message state`() {
         val conversationId = Uuid.random()
@@ -138,6 +182,58 @@ class TavernRuntimeMessageGatewayTest {
 
         assertEquals("new", updatedReal.result!!.jsonObject.getValue("text").jsonPrimitive.content)
         assertEquals("injected", injected.result!!.jsonObject.getValue("messageId").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `serializer injected current message persists updateCurrent through its real id`() {
+        val conversationId = Uuid.random()
+        var persisted = UIMessage.assistant("before")
+        var updatedId: String? = null
+        val gateway = object : TavernRuntimeMessageGateway {
+            override fun list(conversationId: Uuid): List<TavernRuntimeMessage> = listOf(
+                TavernRuntimeMessage(
+                    persisted.id.toString(),
+                    persisted.role,
+                    persisted.toText(),
+                    isCurrent = true,
+                ),
+            )
+
+            override fun get(conversationId: Uuid, messageId: String): TavernRuntimeMessage? =
+                list(conversationId).singleOrNull { it.messageId == messageId }
+
+            override fun create(conversationId: Uuid, role: MessageRole, text: String): TavernRuntimeMessage =
+                error("not used")
+
+            override fun update(
+                conversationId: Uuid,
+                messageId: String,
+                text: String,
+            ): TavernRuntimeMessage? {
+                updatedId = messageId
+                persisted = persisted.copy(parts = listOf(me.rerere.ai.ui.UIMessagePart.Text(text)))
+                return get(conversationId, messageId)
+            }
+
+            override fun delete(conversationId: Uuid, messageId: String): Boolean = false
+        }
+        val controller = TavernRuntimeController(
+            conversationId = conversationId,
+            messageGateway = gateway,
+            permissionStore = TavernRuntimePermissionStore(TavernRuntimePermissions(allowMessageWrite = true)),
+        )
+        controller.setCurrentMessage(JsonInstant.encodeToJsonElement(UIMessage.serializer(), persisted))
+
+        val updated = controller.dispatch(
+            request("messages.updateCurrent", "patch" to buildJsonObject { put("text", "after") }),
+        )
+        val current = controller.dispatch(request("messages.getCurrent"))
+
+        assertEquals(persisted.id.toString(), updatedId)
+        assertEquals("after", persisted.toText())
+        assertEquals(persisted.id.toString(), updated.result!!.jsonObject.getValue("messageId").jsonPrimitive.content)
+        assertEquals("after", updated.result!!.jsonObject.getValue("text").jsonPrimitive.content)
+        assertEquals(updated.result, current.result)
     }
 
     @Test

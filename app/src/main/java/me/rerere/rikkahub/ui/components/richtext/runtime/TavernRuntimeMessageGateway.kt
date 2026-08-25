@@ -9,6 +9,9 @@ import kotlin.uuid.Uuid
 /** Message operations exposed to Tavern browser scripts for one conversation. */
 internal interface TavernRuntimeMessageGateway {
     fun isReady(conversationId: Uuid): Boolean = true
+    fun readSnapshot(conversationId: Uuid): List<TavernRuntimeMessage>? =
+        list(conversationId).takeIf { isReady(conversationId) }
+
     fun list(conversationId: Uuid): List<TavernRuntimeMessage>
 
     fun get(conversationId: Uuid, messageId: String): TavernRuntimeMessage?
@@ -44,6 +47,8 @@ internal class InMemoryTavernRuntimeMessageGateway(
         }
     }
 
+    override fun readSnapshot(conversationId: Uuid): List<TavernRuntimeMessage> = list(conversationId)
+
     override fun get(conversationId: Uuid, messageId: String): TavernRuntimeMessage? =
         list(conversationId).firstOrNull { it.messageId == messageId }
 
@@ -68,18 +73,22 @@ internal class InMemoryTavernRuntimeMessageGateway(
 internal class ChatServiceTavernRuntimeMessageGateway(
     private val chatService: TavernRuntimeMessageService,
 ) : TavernRuntimeMessageGateway {
-    override fun isReady(conversationId: Uuid): Boolean = chatService.isTavernRuntimeConversationReady(conversationId)
+    override fun isReady(conversationId: Uuid): Boolean = readSnapshot(conversationId) != null
+
+    override fun readSnapshot(conversationId: Uuid): List<TavernRuntimeMessage>? = runBlocking {
+        chatService.readTavernRuntimeMessageSnapshot(conversationId)
+    }?.toRuntimeMessages()
+
     override fun list(conversationId: Uuid): List<TavernRuntimeMessage> {
-        val messages = chatService.getTavernRuntimeMessages(conversationId)
-        return messages.mapIndexed { index, message -> toRuntimeMessage(message, index == messages.lastIndex) }
+        return readSnapshot(conversationId).orEmpty()
     }
 
     override fun get(conversationId: Uuid, messageId: String): TavernRuntimeMessage? =
-        list(conversationId).firstOrNull { it.messageId == messageId }
+        readSnapshot(conversationId)?.firstOrNull { it.messageId == messageId }
 
     override fun create(conversationId: Uuid, role: MessageRole, text: String): TavernRuntimeMessage = runBlocking {
         val created = chatService.createTavernRuntimeMessage(conversationId, role, text)
-        val selected = chatService.getTavernRuntimeMessages(conversationId)
+        val selected = chatService.readTavernRuntimeMessageSnapshot(conversationId).orEmpty()
         toRuntimeMessage(created, selected.lastOrNull()?.id == created.id)
     }
 
@@ -87,7 +96,7 @@ internal class ChatServiceTavernRuntimeMessageGateway(
         val id = runCatching { Uuid.parse(messageId) }.getOrNull() ?: return null
         return runBlocking { chatService.updateTavernRuntimeMessageText(conversationId, id, text) }
             ?.let { message ->
-                val selected = chatService.getTavernRuntimeMessages(conversationId)
+                val selected = runBlocking { chatService.readTavernRuntimeMessageSnapshot(conversationId) }.orEmpty()
                 toRuntimeMessage(message, selected.lastOrNull()?.id == message.id)
             }
     }
@@ -103,4 +112,7 @@ internal class ChatServiceTavernRuntimeMessageGateway(
         text = message.toText(),
         isCurrent = isCurrent,
     )
+
+    private fun List<UIMessage>.toRuntimeMessages(): List<TavernRuntimeMessage> =
+        mapIndexed { index, message -> toRuntimeMessage(message, index == lastIndex) }
 }

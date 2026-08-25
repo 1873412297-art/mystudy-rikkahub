@@ -2,21 +2,32 @@
 
 ## Scope
 
-Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create`, `update`, `updateCurrent`, and `delete`.
+Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create`, `update`,
+`updateCurrent`, and `delete`.
 
 ## RED to GREEN evidence
 
-1. `TavernRuntimeMessageGatewayTest` initially failed to compile because `TavernRuntimeMessage` and `InMemoryTavernRuntimeMessageGateway` did not exist. The test now verifies selected-order reads and the full controller create/update/delete path.
-2. The controller message-RPC test then failed because `TavernRuntimeController` had no `messageGateway` constructor parameter. It is green with permission denial/no mutation, structured missing data, no active conversation, and injected-current precedence coverage.
-3. The JavaScript contract test failed because the runtime did not expose the new message functions. It is green after adding all functions to the shared `TavernHelper`/`TH` API object.
-4. `ChatServiceRuntimeMessageTest` initially failed to compile because `replaceRuntimeMessageText` did not exist. It is green and proves exact text replacement preserves ID, role, annotation, attachment object, and part metadata.
-5. Existing runtime regressions initially caught the loss of context/injected `getCurrent` fallback. The controller was corrected and the regression suite is green.
+1. `TavernRuntimeMessageGatewayTest` initially failed to compile because `TavernRuntimeMessage` and
+   `InMemoryTavernRuntimeMessageGateway` did not exist. The test now verifies selected-order reads and the
+   full controller create/update/delete path.
+2. The controller message-RPC test then failed because `TavernRuntimeController` had no `messageGateway`
+   constructor parameter. It is green with permission denial/no mutation, structured missing data, no active
+   conversation, and injected-current precedence coverage.
+3. The JavaScript contract test failed because the runtime did not expose the new message functions. It is green
+   after adding all functions to the shared `TavernHelper`/`TH` API object.
+4. `ChatServiceRuntimeMessageTest` initially failed to compile because `replaceRuntimeMessageText` did not exist.
+   It is green and proves exact text replacement preserves ID, role, annotation, attachment object, and metadata.
+5. Existing runtime regressions initially caught the loss of context/injected `getCurrent` fallback. The controller
+   was corrected and the regression suite is green.
 
 ## Implementation
 
-- Added `TavernRuntimeMessageGateway`, in-memory test/preview implementation, and `ChatServiceTavernRuntimeMessageGateway`.
+- Added `TavernRuntimeMessageGateway`, in-memory test/preview implementation, and
+  `ChatServiceTavernRuntimeMessageGateway`.
 - `MarkdownWebView` injects the production gateway backed directly by the singleton `ChatService`.
-- `ChatService` now appends message nodes, performs exact in-place text replacement rather than creating a swipe, uses normal deletion/persistence cleanup, refreshes live session state through `saveConversation`, and emits message lifecycle events.
+- `ChatService` now appends message nodes, performs exact in-place text replacement rather than creating a swipe,
+  uses normal deletion/persistence cleanup, refreshes live session state through `saveConversation`, and emits
+  message lifecycle events.
 - Controller validates roles/IDs/text, enforces `allowScripts` plus `allowMessageWrite`, and returns structured errors.
 
 ## Production mutation-store refactor
@@ -52,10 +63,27 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
 - `ChatServiceTavernRuntimeMessageGateway` is tested directly through the real `TavernRuntimeMessageService`
   contract implemented by `ChatService`, including structured role/ID/current mapping.
 
+## Third review concurrency pass
+
+- Host-injected `UIMessage.serializer()` payloads are normalized to the runtime `messageId`, `role`, `text`, and
+  `isCurrent` shape. `messages.updateCurrent` detects a real UUID plus active conversation, persists through the
+  gateway, and replaces the injected cache with the committed shape; only synthetic iframe-only payloads remain
+  memory-only.
+- `ChatService` now provides an atomic suspend runtime snapshot: it retains the existing session, takes the shared
+  mutation mutex, verifies readiness and session identity, then reads selected messages. The production gateway
+  calls it through `runBlocking` for list/get/current reads, returning `CONVERSATION_NOT_READY` without creating an
+  empty live session after eviction.
+- Streaming chunk merging and completion now use the established `groupDirectorMutex -> conversationMutationMutex`
+  order. Generation-start live updates follow that order too. A deterministic streaming-chunk/runtime-mutation
+  regression proves the runtime write cannot read a pre-chunk snapshot.
+- `selectMessageNode`, greetings, interrupted-tool cleanup, invalid-message cleanup, translation final saves, and
+  the non-group generation completion path now read and save inside `withConversationMutation`; raw saves avoid
+  locking the non-reentrant mutex twice.
+
 ## Verification
 
 - Focused runtime JVM suite: PASS, including controller/gateway, mutation-store, readiness, persistence-order,
-  and conversation-lock competition tests.
+  serializer-injection, atomic-read, streaming/runtime competition, and conversation-lock competition tests.
 - `:app:compileDebugKotlin --no-configuration-cache`: PASS.
 - `git diff --check`: PASS.
 
