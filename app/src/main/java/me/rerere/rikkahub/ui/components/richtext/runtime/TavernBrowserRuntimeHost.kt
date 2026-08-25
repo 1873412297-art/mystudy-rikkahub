@@ -244,6 +244,7 @@ internal fun TavernBrowserRuntimeHost(
                     fixedHeight = true,
                     maxHeightDp = 1,
                     tavernConversationId = conversationUuid,
+                    tavernScriptId = script.id,
                     onWebViewCreated = {
                         TavernBrowserSessionRegistry.register(script.id, it)
                         tavernScriptDiagnostics.setStatus(script.id, TavernScriptRuntimeStatus.WAITING_PERMISSION)

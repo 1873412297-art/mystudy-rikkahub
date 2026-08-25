@@ -162,11 +162,14 @@ internal class TavernRuntimeController(
                 "slash.unregister" -> unregisterSlashCommand(request)
                 "requestHeaders.get" -> getRequestHeaders(request)
                 "sendHook.register" -> registerSendHook(request)
-                else -> TavernRuntimeResponse.error(
-                    id = request.id,
-                    code = "UNSUPPORTED",
-                    message = "Runtime method '${request.method}' is not available in this compatibility layer",
-                )
+                "extensions.install",
+                "extensions.uninstall",
+                "extensions.update",
+                "server.getAdminStatus",
+                "server.filesystem.read",
+                "dom.jquery.queryTopLevel",
+                "backend.st.request" -> unsupportedHostCapability(request)
+                else -> unsupportedHostCapability(request)
             }
         } catch (e: Exception) {
             TavernRuntimeResponse.error(
@@ -179,6 +182,14 @@ internal class TavernRuntimeController(
 
     private fun permissionDenied(request: TavernRuntimeRequest, message: String): TavernRuntimeResponse {
         return TavernRuntimeResponse.error(request.id, "PERMISSION_DENIED", message)
+    }
+
+    private fun unsupportedHostCapability(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        return TavernRuntimeResponse.error(
+            id = request.id,
+            code = "UNSUPPORTED_HOST_CAPABILITY",
+            message = "Request '${request.id}' cannot use unavailable host capability '${request.method}'",
+        )
     }
 
     /**

@@ -35,13 +35,39 @@ class TavernRuntimeControllerTest {
     }
 
     @Test
-    fun `unknown method returns unsupported error`() {
+    fun `unknown method returns structured unsupported host capability error`() {
         val response = controller.dispatch(
             TavernRuntimeRequest(id = "2", method = "unknown.method")
         )
 
         assertFalse(response.ok)
-        assertEquals("UNSUPPORTED", response.error!!.code)
+        val error = response.error ?: error("missing runtime error")
+        assertEquals("UNSUPPORTED_HOST_CAPABILITY", error.code)
+        assertTrue(error.message.contains("2"))
+        assertTrue(error.message.contains("unknown.method"))
+    }
+
+    @Test
+    fun `explicit unavailable host capability methods return structured errors`() {
+        val methods = listOf(
+            "extensions.install",
+            "extensions.uninstall",
+            "extensions.update",
+            "server.getAdminStatus",
+            "server.filesystem.read",
+            "dom.jquery.queryTopLevel",
+            "backend.st.request",
+        )
+
+        methods.forEachIndexed { index, method ->
+            val response = controller.dispatch(TavernRuntimeRequest(id = "unsupported-$index", method = method))
+
+            assertFalse("$method must reject", response.ok)
+            val error = response.error ?: error("missing runtime error")
+            assertEquals("$method code", "UNSUPPORTED_HOST_CAPABILITY", error.code)
+            assertTrue("$method must identify request", error.message.contains("unsupported-$index"))
+            assertTrue("$method must identify method", error.message.contains(method))
+        }
     }
 
     @Test

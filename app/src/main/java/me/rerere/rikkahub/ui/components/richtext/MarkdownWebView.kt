@@ -129,6 +129,8 @@ internal fun MarkdownWebView(
      * 注意：仅允许在 allowRequestHeaders 权限开启时经 RPC 拉取（含 API key，敏感）。
      */
     tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
+    /** 隐藏浏览器会话的受信脚本身份；消息前端保持 null，绝不归因到常驻脚本。 */
+    tavernScriptId: String? = null,
 ) {
     val context = LocalContext.current
     val settingsStore: SettingsStore = koinInject()
@@ -384,7 +386,8 @@ internal fun MarkdownWebView(
                                 "(function(){var cb=window['$callbackName'];" +
                                     "if(typeof cb==='function'){cb(JSON.parse($payload));}})();"
                             )
-                        }
+                        },
+                        scriptId = tavernScriptId,
                     )
                     addJavascriptInterface(tavernBridge, "TavernRuntimeBridge")
                     additionalJavascriptInterface?.let { (name, value) ->

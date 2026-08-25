@@ -40,4 +40,21 @@ class TavernRuntimeScriptTest {
         assertTrue(script.contains("requestHeaders.get"))
         assertTrue(script.contains("sendHook.register"))
     }
+
+    @Test
+    fun `unsupported host capability shims remain callable and dispatch structured RPC methods`() {
+        val script = buildTavernRuntimeScript()
+
+        assertTrue(script.contains("window.RikkaHubTavern"))
+        assertTrue(script.contains("extensions.install"))
+        assertTrue(script.contains("extensions.uninstall"))
+        assertTrue(script.contains("extensions.update"))
+        assertTrue(script.contains("server.getAdminStatus"))
+        assertTrue(script.contains("server.filesystem.read"))
+        assertTrue(script.contains("dom.jquery.queryTopLevel"))
+        assertTrue(script.contains("backend.st.request"))
+        assertTrue(script.contains("return call("))
+        assertTrue(!script.contains("Android"))
+        assertTrue(!script.contains("Kotlin"))
+    }
 }

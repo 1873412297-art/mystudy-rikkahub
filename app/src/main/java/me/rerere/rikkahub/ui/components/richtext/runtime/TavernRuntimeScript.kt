@@ -133,6 +133,37 @@ internal fun buildTavernRuntimeScript(): String = """
     }
   };
 
+  // ── 明确不支持的 ST 宿主功能：保持可调用，统一返回结构化 Promise rejection ──
+  var unsupportedHost = {
+    extensions: {
+      install: function(extension){ return call('extensions.install', { extension: extension }); },
+      uninstall: function(extension){ return call('extensions.uninstall', { extension: extension }); },
+      update: function(extension){ return call('extensions.update', { extension: extension }); }
+    },
+    server: {
+      getAdminStatus: function(){ return call('server.getAdminStatus', {}); },
+      filesystem: {
+        read: function(path){ return call('server.filesystem.read', { path: path }); }
+      }
+    },
+    dom: {
+      jquery: {
+        queryTopLevel: function(selector){ return call('dom.jquery.queryTopLevel', { selector: selector }); }
+      }
+    },
+    backend: {
+      st: {
+        request: function(route, options){ return call('backend.st.request', { route: route, options: options || {} }); }
+      }
+    }
+  };
+  window.SillyTavern.extensions = window.SillyTavern.extensions || unsupportedHost.extensions;
+  window.SillyTavern.server = window.SillyTavern.server || unsupportedHost.server;
+  window.SillyTavern.dom = window.SillyTavern.dom || unsupportedHost.dom;
+  window.SillyTavern.backend = window.SillyTavern.backend || unsupportedHost.backend;
+  window.RikkaHubTavern = window.RikkaHubTavern || {};
+  window.RikkaHubTavern.runtime = window.RikkaHubTavern.runtime || {};
+
   var api = {
     runtime: {
       ping: function(){ return call('runtime.ping', {}); }
@@ -180,5 +211,6 @@ internal fun buildTavernRuntimeScript(): String = """
   window.TavernHelperCompat = api;
   window.TavernHelper = window.TavernHelper || api;
   window.TH = window.TH || api;
+  window.RikkaHubTavern.runtime.api = api;
 })();
 """.trimIndent()
