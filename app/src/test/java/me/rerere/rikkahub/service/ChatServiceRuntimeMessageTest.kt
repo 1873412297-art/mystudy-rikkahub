@@ -6,11 +6,31 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessageAnnotation
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.model.toMessageNode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
 
 class ChatServiceRuntimeMessageTest {
+    @Test
+    fun `failed persistence does not publish an uncommitted live conversation`() = kotlinx.coroutines.runBlocking {
+        val conversationId = kotlin.uuid.Uuid.random()
+        val before = me.rerere.rikkahub.data.model.Conversation.ofId(conversationId)
+        val after = before.copy(messageNodes = listOf(UIMessage.user("saved").toMessageNode()))
+        var live = before
+
+        val failure = runCatching {
+            persistConversationThenPublishLive(
+                conversation = after,
+                persist = { error("database failed") },
+                publishLive = { live = it },
+            )
+        }
+
+        assertEquals("database failed", failure.exceptionOrNull()?.message)
+        assertSame(before, live)
+    }
+
     @Test
     fun `exact runtime text update preserves message identity attachments annotations and metadata`() {
         val textMetadata = buildJsonObject { put("format", "markdown") }

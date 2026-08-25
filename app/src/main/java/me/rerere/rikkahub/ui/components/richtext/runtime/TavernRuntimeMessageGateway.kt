@@ -3,7 +3,7 @@ package me.rerere.rikkahub.ui.components.richtext.runtime
 import kotlinx.coroutines.runBlocking
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
-import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.service.TavernRuntimeMessageService
 import kotlin.uuid.Uuid
 
 /** Message operations exposed to Tavern browser scripts for one conversation. */
@@ -66,7 +66,7 @@ internal class InMemoryTavernRuntimeMessageGateway(
 
 /** Production gateway: the existing ChatService remains the only live and persisted conversation source. */
 internal class ChatServiceTavernRuntimeMessageGateway(
-    private val chatService: ChatService,
+    private val chatService: TavernRuntimeMessageService,
 ) : TavernRuntimeMessageGateway {
     override fun isReady(conversationId: Uuid): Boolean = chatService.isTavernRuntimeConversationReady(conversationId)
     override fun list(conversationId: Uuid): List<TavernRuntimeMessage> {
@@ -78,7 +78,9 @@ internal class ChatServiceTavernRuntimeMessageGateway(
         list(conversationId).firstOrNull { it.messageId == messageId }
 
     override fun create(conversationId: Uuid, role: MessageRole, text: String): TavernRuntimeMessage = runBlocking {
-        toRuntimeMessage(chatService.createTavernRuntimeMessage(conversationId, role, text), true)
+        val created = chatService.createTavernRuntimeMessage(conversationId, role, text)
+        val selected = chatService.getTavernRuntimeMessages(conversationId)
+        toRuntimeMessage(created, selected.lastOrNull()?.id == created.id)
     }
 
     override fun update(conversationId: Uuid, messageId: String, text: String): TavernRuntimeMessage? {

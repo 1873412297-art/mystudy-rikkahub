@@ -110,6 +110,9 @@ internal class TavernRuntimeController(
      * Rebinds this persistent browser session to the active chat without replacing its WebView.
      */
     fun updateConversationId(conversationId: Uuid?) {
+        if (this.conversationId != conversationId) {
+            injectedCurrentMessage = null
+        }
         this.conversationId = conversationId
     }
 
@@ -372,7 +375,7 @@ internal class TavernRuntimeController(
             ?.lastOrNull { it.jsonObject["isCurrent"]?.jsonPrimitive?.boolean == true }
             ?: contextSnapshot?.get("chat")?.jsonArray?.lastOrNull()
         if (fromContext != null) return TavernRuntimeResponse.success(request.id, fromContext)
-        return TavernRuntimeResponse.success(request.id, JsonNull)
+        return notFound(request, "No current message exists")
     }
 
     private fun updateCurrentMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {
@@ -412,7 +415,8 @@ internal class TavernRuntimeController(
     private fun getMessage(request: TavernRuntimeRequest): TavernRuntimeResponse = withMessageId(request) { messageId ->
         val conversationId = activeConversationId(request) ?: return@withMessageId noActiveConversation(request)
         if (!messageGateway.isReady(conversationId)) return@withMessageId conversationNotReady(request)
-        val message = messageGateway.get(conversationId, messageId) ?: return@withMessageId notFound(request, "Message not found")
+        val message = messageGateway.get(conversationId, messageId)
+            ?: return@withMessageId notFound(request, "Message not found")
         TavernRuntimeResponse.success(request.id, message.toJson())
     }
 
@@ -432,7 +436,9 @@ internal class TavernRuntimeController(
         val text = request.params.getString("text")
             ?.takeIf { it.isNotBlank() }
             ?: return badRequest(request, "messages.create requires params.text")
-        return TavernRuntimeResponse.success(request.id, messageGateway.create(conversationId, role, text).toJson())
+        val created = messageGateway.create(conversationId, role, text)
+        val committed = messageGateway.get(conversationId, created.messageId) ?: created
+        return TavernRuntimeResponse.success(request.id, committed.toJson())
     }
 
     private fun updateMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {
@@ -477,7 +483,11 @@ internal class TavernRuntimeController(
     private fun activeConversationId(request: TavernRuntimeRequest): Uuid? = conversationId
 
     private fun noActiveConversation(request: TavernRuntimeRequest): TavernRuntimeResponse =
-        TavernRuntimeResponse.error(request.id, "NO_ACTIVE_CONVERSATION", "No active conversation is bound to this script")
+        TavernRuntimeResponse.error(
+            request.id,
+            "NO_ACTIVE_CONVERSATION",
+            "No active conversation is bound to this script",
+        )
 
     private fun conversationNotReady(request: TavernRuntimeRequest): TavernRuntimeResponse =
         TavernRuntimeResponse.error(request.id, "CONVERSATION_NOT_READY", "The active conversation has not loaded yet")

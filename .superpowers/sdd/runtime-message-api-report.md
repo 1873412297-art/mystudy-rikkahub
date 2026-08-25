@@ -33,13 +33,31 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
   live `StateFlow`, success/failure event ordering, selected-branch update preservation, and no swipe creation.
 - The runtime gateway test now verifies that only the last selected-branch message has `isCurrent=true`.
 
+## Follow-up correctness pass
+
+- `ChatService.cleanup()` clears `TavernRuntimeConversationReadiness` before clearing sessions. Session eviction
+  also clears the same readiness owner; a cleared/recreated conversation therefore rejects runtime writes without
+  replacing loaded history.
+- `ConversationSession` now has one conversation-mutation mutex. The runtime-specific name is a compatibility
+  alias to that mutex. Normal send, public `saveConversation`, ordinary edit, and ordinary delete all use it;
+  runtime persistence uses the unlocked internal save function while already holding it, avoiding non-reentrant
+  `Mutex` deadlock.
+- The normal-save/runtime-create race regression pauses a production `TavernRuntimeMessageMutationStore` create at
+  persistence, starts a full normal save, and proves the normal save cannot read the old snapshot before runtime
+  commits. The final session has both messages.
+- `saveConversationUnlocked` persists through the repository before publishing `StateFlow`; the failure regression
+  proves a repository exception leaves live state unchanged.
+- `getCurrent` returns `NOT_FOUND` for a ready, empty gateway. Changing the bound conversation clears injected
+  current-message state. Create responses and the production gateway re-read committed selection for `isCurrent`.
+- `ChatServiceTavernRuntimeMessageGateway` is tested directly through the real `TavernRuntimeMessageService`
+  contract implemented by `ChatService`, including structured role/ID/current mapping.
+
 ## Verification
 
-- `:app:testDebugUnitTest` focused runtime/controller/bridge/message tests: PASS (67 tests).
+- Focused runtime JVM suite: PASS, including controller/gateway, mutation-store, readiness, persistence-order,
+  and conversation-lock competition tests.
 - `:app:compileDebugKotlin --no-configuration-cache`: PASS.
 - `git diff --check`: PASS.
-- Focused runtime JVM suite: PASS, including the seven mutation-store cases.
-- `:app:compileDebugKotlin --no-configuration-cache`: PASS after the refactor.
 
 ## Self-review
 
@@ -49,12 +67,16 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
 
 ## Concerns
 
-- Runtime calls now return `CONVERSATION_NOT_READY` until `initializeConversation` completes; mutations are serialized by the per-session runtime-message mutex and only emit events after persistence succeeds.
-- The new JVM persistence fixture deliberately models the adapter contract rather than Room itself; the real
-  adapter delegates to `ChatService.saveConversation`, which continues to use the repository source of truth.
+- Runtime calls return `CONVERSATION_NOT_READY` until `initializeConversation` installs live state. Cleanup and
+  eviction synchronously revoke this readiness before a later recreated session can be mutated.
+- The focused suite uses deterministic JVM persistence fixtures rather than Room instrumentation. The production
+  gateway itself is exercised directly and `ChatService` is its concrete service implementation; its adapter still
+  delegates to the real repository save/live-state path.
 
 ## Commit
 
 Implementation commit: `81456f1e feat: add persistent Tavern runtime message API`.
 
-Refactor/test commit: current `refactor: extract Tavern runtime message mutations` commit.
+Refactor/test commit: `1b65be8a refactor: extract Tavern runtime message mutations`.
+
+Follow-up correctness commit: current `fix: serialize Tavern runtime conversation mutations`.

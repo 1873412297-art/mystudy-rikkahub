@@ -44,13 +44,18 @@ class ConversationSession(
     val isInUse: Boolean get() = refCount.get() > 0 || isGenerating
 
     private val groupDirectorMutex = Mutex()
-    private val runtimeMessageMutex = Mutex()
+    private val conversationMutationMutex = Mutex()
     private var groupReplyActiveJob: Job? = null
 
     suspend fun <T> withGroupDirectorLock(block: suspend () -> T): T =
         groupDirectorMutex.withLock { block() }
 
-    suspend fun <T> withRuntimeMessageLock(block: suspend () -> T): T = runtimeMessageMutex.withLock { block() }
+    /** Serializes every persisted conversation read-modify-write, including browser runtime mutations. */
+    suspend fun <T> withConversationMutationLock(block: suspend () -> T): T =
+        conversationMutationMutex.withLock { block() }
+
+    /** Compatibility name for the browser runtime; it intentionally shares the general mutation lock. */
+    suspend fun <T> withRuntimeMessageLock(block: suspend () -> T): T = withConversationMutationLock(block)
 
     internal fun markGroupReplyStartedLocked(job: Job?) {
         groupReplyActiveJob = job

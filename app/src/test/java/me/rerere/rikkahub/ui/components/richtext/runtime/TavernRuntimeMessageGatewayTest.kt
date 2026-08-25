@@ -2,11 +2,14 @@ package me.rerere.rikkahub.ui.components.richtext.runtime
 
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
+import me.rerere.ai.ui.UIMessage
+import me.rerere.rikkahub.service.TavernRuntimeMessageService
 import me.rerere.rikkahub.data.model.TavernRuntimePermissions
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,6 +18,37 @@ import org.junit.Test
 import kotlin.uuid.Uuid
 
 class TavernRuntimeMessageGatewayTest {
+    @Test
+    fun `production gateway maps the committed ChatService message state`() {
+        val conversationId = Uuid.random()
+        val service = object : TavernRuntimeMessageService {
+            val message = UIMessage.assistant("persisted")
+            val newer = UIMessage.user("newer")
+            override fun isTavernRuntimeConversationReady(conversationId: Uuid): Boolean = true
+            override fun getTavernRuntimeMessages(conversationId: Uuid): List<UIMessage> = listOf(message, newer)
+            override suspend fun createTavernRuntimeMessage(
+                conversationId: Uuid,
+                role: MessageRole,
+                text: String,
+            ): UIMessage = message
+
+            override suspend fun updateTavernRuntimeMessageText(
+                conversationId: Uuid,
+                messageId: Uuid,
+                text: String,
+            ): UIMessage? = message
+
+            override suspend fun deleteTavernRuntimeMessage(conversationId: Uuid, messageId: Uuid): Boolean = true
+        }
+        val gateway = ChatServiceTavernRuntimeMessageGateway(service)
+
+        val created = gateway.create(conversationId, MessageRole.ASSISTANT, "ignored")
+
+        assertEquals(service.message.id.toString(), created.messageId)
+        assertEquals("assistant", created.role)
+        assertFalse(created.isCurrent)
+    }
+
     @Test
     fun `in memory gateway returns selected branch in node order`() {
         val conversationId = Uuid.parse("00000000-0000-4000-8000-000000000301")
@@ -96,7 +130,9 @@ class TavernRuntimeMessageGatewayTest {
             messageGateway = gateway,
         )
 
-        val updatedReal = controller.dispatch(request("messages.updateCurrent", "patch" to buildJsonObject { put("text", "new") }))
+        val updatedReal = controller.dispatch(
+            request("messages.updateCurrent", "patch" to buildJsonObject { put("text", "new") }),
+        )
         controller.setCurrentMessage(buildJsonObject { put("messageId", "injected"); put("text", "before") })
         val injected = controller.dispatch(request("messages.getCurrent"))
 
@@ -113,6 +149,60 @@ class TavernRuntimeMessageGatewayTest {
     }
 
     @Test
+    fun `ready conversation without messages returns not found for getCurrent`() {
+        val controller = TavernRuntimeController(conversationId = Uuid.random())
+
+        val response = controller.dispatch(request("messages.getCurrent"))
+
+        assertFalse(response.ok)
+        assertEquals("NOT_FOUND", response.error!!.code)
+    }
+
+    @Test
+    fun `rebind clears injected current message before reading the new conversation`() {
+        val firstConversationId = Uuid.random()
+        val secondConversationId = Uuid.random()
+        val gateway = InMemoryTavernRuntimeMessageGateway(
+            mapOf(secondConversationId to listOf(
+                TavernRuntimeMessage("second", MessageRole.ASSISTANT, "persisted", true),
+            )),
+        )
+        val controller = TavernRuntimeController(conversationId = firstConversationId, messageGateway = gateway)
+        controller.setCurrentMessage(buildJsonObject { put("messageId", "injected"); put("text", "old") })
+
+        controller.updateConversationId(secondConversationId)
+        val response = controller.dispatch(request("messages.getCurrent"))
+
+        assertTrue(response.ok)
+        assertEquals("second", response.result!!.jsonObject.getValue("messageId").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `create response rereads committed current status`() {
+        val conversationId = Uuid.random()
+        val created = TavernRuntimeMessage("created", MessageRole.USER, "new", true)
+        val gateway = object : TavernRuntimeMessageGateway {
+            override fun list(conversationId: Uuid): List<TavernRuntimeMessage> = emptyList()
+            override fun get(conversationId: Uuid, messageId: String): TavernRuntimeMessage? =
+                created.copy(isCurrent = false)
+
+            override fun create(conversationId: Uuid, role: MessageRole, text: String): TavernRuntimeMessage = created
+            override fun update(conversationId: Uuid, messageId: String, text: String): TavernRuntimeMessage? = null
+            override fun delete(conversationId: Uuid, messageId: String): Boolean = false
+        }
+        val controller = TavernRuntimeController(
+            conversationId = conversationId,
+            messageGateway = gateway,
+            permissionStore = TavernRuntimePermissionStore(TavernRuntimePermissions(allowMessageWrite = true)),
+        )
+
+        val response = controller.dispatch(request("messages.create", "role" to "user", "text" to "new"))
+
+        assertTrue(response.ok)
+        assertFalse(response.result!!.jsonObject.getValue("isCurrent").jsonPrimitive.boolean)
+    }
+
+    @Test
     fun `getCurrent without injected message requires an active conversation`() {
         val response = TavernRuntimeController().dispatch(request("messages.getCurrent"))
 
@@ -126,9 +216,15 @@ class TavernRuntimeMessageGatewayTest {
 
         assertTrue(script.contains("list: function(){ return call('messages.list', {})"))
         assertTrue(script.contains("get: function(id){ return call('messages.get', { id: id })"))
-        assertTrue(script.contains("create: function(role, text){ return call('messages.create', { role: role, text: text })"))
-        assertTrue(script.contains("update: function(id, text){ return call('messages.update', { id: id, text: text })"))
-        assertTrue(script.contains("updateCurrent: function(patch){ return call('messages.updateCurrent', { patch: patch })"))
+        assertTrue(
+            script.contains("create: function(role, text){ return call('messages.create', { role: role, text: text })"),
+        )
+        assertTrue(
+            script.contains("update: function(id, text){ return call('messages.update', { id: id, text: text })"),
+        )
+        assertTrue(
+            script.contains("updateCurrent: function(patch){ return call('messages.updateCurrent', { patch: patch })"),
+        )
         assertTrue(script.contains("delete: function(id){ return call('messages.delete', { id: id })"))
         assertTrue(script.contains("window.TH = window.TH || api"))
     }

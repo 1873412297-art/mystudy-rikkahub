@@ -17,7 +17,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import me.rerere.ai.core.ReasoningLevel
+import me.rerere.ai.core.MessageRole
 import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.CustomBody
 import me.rerere.ai.provider.CustomHeader
@@ -30,6 +32,7 @@ import me.rerere.rikkahub.data.datastore.DisplaySetting
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
+import me.rerere.rikkahub.data.model.toMessageNode
 import me.rerere.rikkahub.service.group.GroupDirectorCommand
 import me.rerere.rikkahub.service.group.GroupDirectorCommandContext
 import me.rerere.rikkahub.service.group.GroupDirectorEngine
@@ -39,6 +42,7 @@ import me.rerere.rikkahub.service.group.GroupRuntimeState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
@@ -47,6 +51,104 @@ import kotlin.uuid.Uuid
 class ChatServiceTest {
     private val groupMemberA = Uuid.parse("00000000-0000-0000-0000-000000000001")
     private val groupMemberB = Uuid.parse("00000000-0000-0000-0000-000000000002")
+
+    @Test
+    fun `conversation mutation lock serializes normal and runtime writes`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(scope)
+        val active = AtomicInteger()
+        val maximumActive = AtomicInteger()
+
+        try {
+            val normalSave = async(Dispatchers.Default) {
+                session.withConversationMutationLock {
+                    val current = active.incrementAndGet()
+                    maximumActive.accumulateAndGet(current, ::maxOf)
+                    delay(10)
+                    active.decrementAndGet()
+                }
+            }
+            val runtimeCreate = async(Dispatchers.Default) {
+                session.withRuntimeMessageLock {
+                    val current = active.incrementAndGet()
+                    maximumActive.accumulateAndGet(current, ::maxOf)
+                    delay(10)
+                    active.decrementAndGet()
+                }
+            }
+            awaitAll(normalSave, runtimeCreate)
+        } finally {
+            scope.cancel()
+        }
+
+        assertEquals(1, maximumActive.get())
+    }
+
+    @Test
+    fun `normal full save and runtime create cannot overwrite each other`() = runBlocking {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(
+            id = conversationId,
+            initial = Conversation.ofId(conversationId),
+            scope = scope,
+            onIdle = {},
+        )
+        val runtimeEnteredPersist = CompletableDeferred<Unit>()
+        val allowRuntimePersist = CompletableDeferred<Unit>()
+        val normalRead = CompletableDeferred<Conversation>()
+        val allowNormalSave = CompletableDeferred<Unit>()
+        val store = TavernRuntimeMessageMutationStore(object : TavernRuntimeMessagePersistenceAdapter {
+            override fun isReady(conversationId: Uuid): Boolean = true
+
+            override suspend fun <T> mutate(conversationId: Uuid, block: suspend () -> T): T =
+                session.withRuntimeMessageLock(block)
+
+            override fun currentConversation(conversationId: Uuid): Conversation = session.state.value
+
+            override suspend fun persist(conversationId: Uuid, conversation: Conversation) {
+                runtimeEnteredPersist.complete(Unit)
+                allowRuntimePersist.await()
+                session.state.value = conversation
+            }
+
+            override suspend fun persistAfterMessageRemoval(
+                conversationId: Uuid,
+                before: Conversation,
+                after: Conversation,
+            ) = persist(conversationId, after)
+
+            override fun emit(event: TavernRuntimeMessageMutationEvent) = Unit
+        })
+
+        try {
+            val runtimeCreate = async(Dispatchers.Default) {
+                store.create(conversationId, MessageRole.USER, "runtime")
+            }
+            runtimeEnteredPersist.await()
+            val normalSave = async(Dispatchers.Default) {
+                session.withConversationMutationLock {
+                    val snapshot = session.state.value
+                    normalRead.complete(snapshot)
+                    allowNormalSave.await()
+                    session.state.value = snapshot.copy(
+                        messageNodes = snapshot.messageNodes + UIMessage.user("normal").toMessageNode(),
+                    )
+                }
+            }
+
+            assertNull(withTimeoutOrNull(250) { normalRead.await() })
+            allowRuntimePersist.complete(Unit)
+            runtimeCreate.await()
+            normalRead.await()
+            allowNormalSave.complete(Unit)
+            normalSave.await()
+        } finally {
+            scope.cancel()
+        }
+
+        assertEquals(setOf("runtime", "normal"), session.state.value.currentMessages.map { it.toText() }.toSet())
+    }
 
     @Test
     fun `session director lock serializes state commits`() = runBlocking {

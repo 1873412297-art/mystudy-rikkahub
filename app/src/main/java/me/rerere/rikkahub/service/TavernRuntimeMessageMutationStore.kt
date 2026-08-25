@@ -6,7 +6,40 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.ai.status.TavernHostEventType
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.toMessageNode
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.uuid.Uuid
+
+/** ChatService-owned readiness state; clearing it prevents a recreated session from mutating stale live state. */
+internal class TavernRuntimeConversationReadiness {
+    private val readyConversationIds = ConcurrentHashMap.newKeySet<Uuid>()
+
+    fun isReady(conversationId: Uuid): Boolean = conversationId in readyConversationIds
+
+    fun markReady(conversationId: Uuid) {
+        readyConversationIds += conversationId
+    }
+
+    fun clear(conversationId: Uuid) {
+        readyConversationIds.remove(conversationId)
+    }
+
+    fun clearAll() {
+        readyConversationIds.clear()
+    }
+}
+
+/** The real ChatService surface consumed by the browser-runtime gateway. */
+internal interface TavernRuntimeMessageService {
+    fun isTavernRuntimeConversationReady(conversationId: Uuid): Boolean
+
+    fun getTavernRuntimeMessages(conversationId: Uuid): List<UIMessage>
+
+    suspend fun createTavernRuntimeMessage(conversationId: Uuid, role: MessageRole, text: String): UIMessage
+
+    suspend fun updateTavernRuntimeMessageText(conversationId: Uuid, messageId: Uuid, text: String): UIMessage?
+
+    suspend fun deleteTavernRuntimeMessage(conversationId: Uuid, messageId: Uuid): Boolean
+}
 
 /**
  * Persistence boundary for browser-runtime message mutations.

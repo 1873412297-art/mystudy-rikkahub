@@ -293,7 +293,7 @@ class ChatService(
     private val tavernHostEventBus: TavernHostEventBus,
     private val tavernScriptRegistry: TavernScriptRegistry,
     private val tavernSendHookStore: TavernSendHookStore,
-) {
+) : TavernRuntimeMessageService {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
 
@@ -306,11 +306,11 @@ class ChatService(
 
     // 统一会话管理
     private val sessions = ConcurrentHashMap<Uuid, ConversationSession>()
-    private val tavernRuntimeReady = ConcurrentHashMap.newKeySet<Uuid>()
+    private val tavernRuntimeReadiness = TavernRuntimeConversationReadiness()
     private val tavernRuntimeMessageStore by lazy {
         TavernRuntimeMessageMutationStore(object : TavernRuntimeMessagePersistenceAdapter {
             override fun isReady(conversationId: Uuid): Boolean =
-                conversationId in tavernRuntimeReady
+                tavernRuntimeReadiness.isReady(conversationId)
 
             override suspend fun <T> mutate(conversationId: Uuid, block: suspend () -> T): T {
                 val session = getOrCreateSession(conversationId)
@@ -328,7 +328,7 @@ class ChatService(
                 getConversationFlow(conversationId).value
 
             override suspend fun persist(conversationId: Uuid, conversation: Conversation) {
-                saveConversation(conversationId, conversation)
+                saveConversationUnlocked(conversationId, conversation, PromptTraceCleanup.None)
             }
 
             override suspend fun persistAfterMessageRemoval(
@@ -336,7 +336,11 @@ class ChatService(
                 before: Conversation,
                 after: Conversation,
             ) {
-                saveConversationAfterRemovingMessages(conversationId, before, after)
+                saveConversationUnlocked(
+                    conversationId,
+                    after,
+                    PromptTraceCleanup.RemovedMessages(before),
+                )
             }
 
             override fun emit(event: TavernRuntimeMessageMutationEvent) {
@@ -387,11 +391,22 @@ class ChatService(
     val generationDoneFlow: SharedFlow<Uuid> = _generationDoneFlow.asSharedFlow()
 
     fun cleanup() = runCatching {
+        tavernRuntimeReadiness.clearAll()
         sessions.values.forEach { it.cleanup() }
         sessions.clear()
     }
 
     // ---- Session 管理 ----
+
+    private suspend fun <T> withConversationMutation(
+        conversationId: Uuid,
+        block: suspend (ConversationSession) -> T,
+    ): T {
+        val session = getOrCreateSession(conversationId)
+        return session.withRefSuspend {
+            session.withConversationMutationLock { block(session) }
+        }
+    }
 
     private fun getOrCreateSession(conversationId: Uuid): ConversationSession {
         return sessions.computeIfAbsent(conversationId) { id ->
@@ -418,7 +433,7 @@ class ChatService(
             return
         }
         if (sessions.remove(conversationId, session)) {
-            tavernRuntimeReady.remove(conversationId)
+            tavernRuntimeReadiness.clear(conversationId)
             session.cleanup()
             _sessionsVersion.value++
             Log.i(TAG, "removeSession: $conversationId (remaining: ${sessions.size})")
@@ -453,7 +468,8 @@ class ChatService(
         return getOrCreateSession(conversationId).state
     }
 
-    fun isTavernRuntimeConversationReady(conversationId: Uuid): Boolean = conversationId in tavernRuntimeReady
+    override fun isTavernRuntimeConversationReady(conversationId: Uuid): Boolean =
+        tavernRuntimeReadiness.isReady(conversationId)
 
     fun getGenerationJobStateFlow(conversationId: Uuid): Flow<Job?> {
         val session = sessions[conversationId] ?: return flowOf(null)
@@ -544,7 +560,7 @@ class ChatService(
             updateConversation(conversationId, newConversation)
         }
         // Mark ready only after the loaded conversation has been installed into the live session.
-        tavernRuntimeReady += conversationId
+        tavernRuntimeReadiness.markReady(conversationId)
     }
 
     // ---- 发送消息 ----
@@ -642,20 +658,23 @@ class ChatService(
         session: ConversationSession,
         content: List<UIMessagePart>,
     ) {
-        val currentConversation = session.state.value
         val settings = settingsStore.settingsFlow.first()
-        val assistant = settings.getAssistantById(currentConversation.assistantId)
+        val assistantId = session.state.value.assistantId
+        val assistant = settings.getAssistantById(assistantId)
             ?: settings.getCurrentAssistant()
         val processedContent = preprocessUserInputParts(content, assistant, conversationId)
         val userMessage = UIMessage(
             role = MessageRole.USER,
             parts = processedContent,
         )
-        val addressedConversation = currentConversation.withUpdatedGroupAddressedState(assistant, userMessage)
-        val newConversation = addressedConversation.copy(
-            messageNodes = addressedConversation.messageNodes + userMessage.toMessageNode(),
-        )
-        saveConversation(conversationId, newConversation)
+        withConversationMutation(conversationId) { currentSession ->
+            val currentConversation = currentSession.state.value
+            val addressedConversation = currentConversation.withUpdatedGroupAddressedState(assistant, userMessage)
+            val newConversation = addressedConversation.copy(
+                messageNodes = addressedConversation.messageNodes + userMessage.toMessageNode(),
+            )
+            saveConversationUnlocked(conversationId, newConversation, PromptTraceCleanup.None)
+        }
     }
 
     fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) {
@@ -670,9 +689,9 @@ class ChatService(
                 runCatching { previousJob?.join() }
                 finishInterruptedPendingTools(conversationId)
 
-                val currentConversation = session.state.value
                 val settings = settingsStore.settingsFlow.first()
-                val assistant = settings.getAssistantById(currentConversation.assistantId)
+                val assistantId = session.state.value.assistantId
+                val assistant = settings.getAssistantById(assistantId)
                     ?: settings.getCurrentAssistant()
                 val processedContent = preprocessUserInputParts(content, assistant, conversationId)
                 // 酒馆脚本 sendHook（best-effort：无活跃 WebView 时跳过，超时默认原样）
@@ -681,16 +700,17 @@ class ChatService(
                     role = MessageRole.USER,
                     parts = hookedContent,
                 )
-                val addressedConversation = currentConversation.withUpdatedGroupAddressedState(
-                    assistant = assistant,
-                    userMessage = userMessage,
-                )
-
-                // 添加消息到列表
-                val newConversation = addressedConversation.copy(
-                    messageNodes = addressedConversation.messageNodes + userMessage.toMessageNode(),
-                )
-                saveConversation(conversationId, newConversation)
+                withConversationMutation(conversationId) { currentSession ->
+                    val currentConversation = currentSession.state.value
+                    val addressedConversation = currentConversation.withUpdatedGroupAddressedState(
+                        assistant = assistant,
+                        userMessage = userMessage,
+                    )
+                    val newConversation = addressedConversation.copy(
+                        messageNodes = addressedConversation.messageNodes + userMessage.toMessageNode(),
+                    )
+                    saveConversationUnlocked(conversationId, newConversation, PromptTraceCleanup.None)
+                }
 
                 // 酒馆脚本宿主事件：消息发送前
                 tavernHostEventBus.emit(
@@ -1190,7 +1210,9 @@ class ChatService(
             )
             dynamicContextResult = groupContext.dynamicResult
             val visibleMessages = groupContext.visibleMessages.applyEnhancementPrompt(assistant)
-            val localSpeakerScore = if (effectiveMemberId != null && groupAssistant.assistantType == AssistantType.GROUP) {
+            val localSpeakerScore = if (
+                effectiveMemberId != null && groupAssistant.assistantType == AssistantType.GROUP
+            ) {
                 GroupSpeakerScorer().score(
                     groupAssistant = groupAssistant,
                     messages = conversation.currentMessages,
@@ -1303,7 +1325,9 @@ class ChatService(
                         val invalidNames = allTools
                             .map { it.second }
                             .distinct()
-                            .filter { name -> name.isEmpty() || !name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' } }
+                            .filter { name ->
+                                name.isEmpty() || !name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' }
+                            }
                         if (invalidNames.isNotEmpty()) {
                             addError(
                                 error = IllegalStateException(
@@ -1485,7 +1509,8 @@ class ChatService(
         if (workspace.shellStatus != WorkspaceShellStatus.READY.name) {
             Log.d(
                 TAG,
-                "createWorkspaceToolsIfReady: skip workspace tools, workspace=$workspaceId, status=${workspace.shellStatus}"
+                "createWorkspaceToolsIfReady: skip workspace tools, workspace=$workspaceId, " +
+                    "status=${workspace.shellStatus}",
             )
             return emptyList()
         }
@@ -1510,7 +1535,8 @@ class ChatService(
         return tool.copy(
             output = listOf(
                 UIMessagePart.Text(
-                    """{"status":"cancelled","error":"Generation cancelled by user before tool execution completed."}"""
+                    """{"status":"cancelled","error":"Generation cancelled by user before tool execution """ +
+                        """completed."}"""
                 )
             ),
             approvalState = ToolApprovalState.Denied("Generation cancelled by user")
@@ -1796,11 +1822,9 @@ class ChatService(
     }
 
     suspend fun saveConversation(conversationId: Uuid, conversation: Conversation) {
-        saveConversation(
-            conversationId = conversationId,
-            conversation = conversation,
-            promptTraceCleanup = PromptTraceCleanup.None,
-        )
+        withConversationMutation(conversationId) {
+            saveConversationUnlocked(conversationId, conversation, PromptTraceCleanup.None)
+        }
     }
 
     private suspend fun saveConversationAfterRemovingMessages(
@@ -1808,14 +1832,12 @@ class ChatService(
         before: Conversation,
         after: Conversation,
     ) {
-        saveConversation(
-            conversationId = conversationId,
-            conversation = after,
-            promptTraceCleanup = PromptTraceCleanup.RemovedMessages(before),
-        )
+        withConversationMutation(conversationId) {
+            saveConversationUnlocked(conversationId, after, PromptTraceCleanup.RemovedMessages(before))
+        }
     }
 
-    private suspend fun saveConversation(
+    private suspend fun saveConversationUnlocked(
         conversationId: Uuid,
         conversation: Conversation,
         promptTraceCleanup: PromptTraceCleanup,
@@ -1832,12 +1854,17 @@ class ChatService(
             promptTraceCleanup = promptTraceCleanup,
             promptTraceRepository = promptTraceRepository,
         ) { persistedConversation ->
-            updateConversation(conversationId, persistedConversation)
-            if (!exists) {
-                conversationRepo.insertConversation(persistedConversation)
-            } else {
-                conversationRepo.updateConversation(persistedConversation)
-            }
+            persistConversationThenPublishLive(
+                conversation = persistedConversation,
+                persist = { candidate ->
+                    if (!exists) {
+                        conversationRepo.insertConversation(candidate)
+                    } else {
+                        conversationRepo.updateConversation(candidate)
+                    }
+                },
+                publishLive = { committed -> updateConversation(conversationId, committed) },
+            )
         }
     }
 
@@ -1908,25 +1935,25 @@ class ChatService(
     // ---- 消息操作 ----
 
     /** Selected branch used by the Tavern browser runtime; remains backed by the live conversation session. */
-    fun getTavernRuntimeMessages(conversationId: Uuid): List<UIMessage> =
+    override fun getTavernRuntimeMessages(conversationId: Uuid): List<UIMessage> =
         getConversationFlow(conversationId).value.currentMessages
 
     /** Appends a real message node, persists it, refreshes live state, and emits the matching Tavern event. */
-    suspend fun createTavernRuntimeMessage(
+    override suspend fun createTavernRuntimeMessage(
         conversationId: Uuid,
         role: MessageRole,
         text: String,
     ): UIMessage = tavernRuntimeMessageStore.create(conversationId, role, text)
 
     /** Updates the existing message object in-place; unlike [editMessage], this never creates a swipe. */
-    suspend fun updateTavernRuntimeMessageText(
+    override suspend fun updateTavernRuntimeMessageText(
         conversationId: Uuid,
         messageId: Uuid,
         text: String,
     ): UIMessage? = tavernRuntimeMessageStore.update(conversationId, messageId, text)
 
     /** Deletes an exact selected-branch message using the normal ChatService persistence and cleanup path. */
-    suspend fun deleteTavernRuntimeMessage(conversationId: Uuid, messageId: Uuid): Boolean =
+    override suspend fun deleteTavernRuntimeMessage(conversationId: Uuid, messageId: Uuid): Boolean =
         tavernRuntimeMessageStore.delete(conversationId, messageId)
 
     suspend fun editMessage(
@@ -1941,26 +1968,33 @@ class ChatService(
         val assistant = settings.getAssistantById(currentConversation.assistantId)
             ?: settings.getCurrentAssistant()
         val processedParts = preprocessUserInputParts(parts, assistant, conversationId)
-        var edited = false
-
-        val updatedNodes = currentConversation.messageNodes.map { node ->
-            if (!node.messages.any { it.id == messageId }) {
-                return@map node
+        val edited = withConversationMutation(conversationId) { session ->
+            val latestConversation = session.state.value
+            var found = false
+            val updatedNodes = latestConversation.messageNodes.map { node ->
+                if (!node.messages.any { it.id == messageId }) {
+                    return@map node
+                }
+                found = true
+                node.copy(
+                    messages = node.messages + UIMessage(
+                        role = node.role,
+                        parts = processedParts,
+                    ),
+                    selectIndex = node.messages.size,
+                )
             }
-            edited = true
-
-            node.copy(
-                messages = node.messages + UIMessage(
-                    role = node.role,
-                    parts = processedParts,
-                ),
-                selectIndex = node.messages.size
-            )
+            if (found) {
+                saveConversationUnlocked(
+                    conversationId,
+                    latestConversation.copy(messageNodes = updatedNodes),
+                    PromptTraceCleanup.None,
+                )
+            }
+            found
         }
 
         if (!edited) return
-
-        saveConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
 
         tavernHostEventBus.emit(
             type = TavernHostEventType.MESSAGE_EDITED,
@@ -2026,21 +2060,24 @@ class ChatService(
         messageId: Uuid,
         failIfMissing: Boolean = true,
     ) {
-        val currentConversation = getConversationFlow(conversationId).value
-        val updatedConversation = buildConversationAfterMessageDelete(currentConversation, messageId)
+        val deleted = withConversationMutation(conversationId) { session ->
+            val currentConversation = session.state.value
+            val updatedConversation = buildConversationAfterMessageDelete(currentConversation, messageId)
+                ?: return@withConversationMutation false
+            saveConversationUnlocked(
+                conversationId,
+                updatedConversation,
+                PromptTraceCleanup.RemovedMessages(currentConversation),
+            )
+            true
+        }
 
-        if (updatedConversation == null) {
+        if (!deleted) {
             if (failIfMissing) {
                 throw NotFoundException("Message not found")
             }
             return
         }
-
-        saveConversationAfterRemovingMessages(
-            conversationId = conversationId,
-            before = currentConversation,
-            after = updatedConversation,
-        )
 
         tavernHostEventBus.emit(
             type = TavernHostEventType.MESSAGE_DELETED,
@@ -2297,7 +2334,10 @@ class ChatService(
         val prompt = buildString {
             appendLine("You are a conversation moderator. Decide which character should speak next.")
             if (allowStop) {
-                appendLine("Reply ONLY with a character ID (UUID), or STOP if the current user turn has already been answered enough.")
+                appendLine(
+                    "Reply ONLY with a character ID (UUID), or STOP if the current user turn has already " +
+                        "been answered enough.",
+                )
             } else {
                 appendLine("Reply ONLY with the character ID (UUID).")
             }
