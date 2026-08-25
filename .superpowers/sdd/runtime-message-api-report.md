@@ -112,6 +112,25 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
 
 ## Verification
 
+## Eighth review initialization ownership and deletion pass
+
+- Initialization action now distinguishes token generation from mutation version: a later initializer makes the older
+  loader skip completely, while only a mutation that occurred during the latest loader marks the existing live state
+  ready. The superseded-initializer regression covers this distinction.
+- Runtime mutation admission no longer calls `getOrCreateSession`; it requires the already-bound session, readiness,
+  and an existing repository row inside the mutation lock. Eviction, cleanup, and deletion therefore cannot recreate
+  an empty runtime session or insert a deleted conversation.
+- Conversation deletion is centralized in `ChatService.deleteConversationAtomic`. An active session first revokes
+  readiness, closes under the shared mutation lock, and is removed before repository deletion. Routes, ChatVM, and
+  HistoryVM delegate to it. History bulk delete delegates each conversation as well.
+- Existing-field updates retry once after an evicted/replaced active session; if it is no longer active they use the
+  DAO affected-row update, avoiding a transient false 404. Folder updates return an affected-row Boolean and the web
+  endpoint maps a missing row to 404.
+
+- Focused JVM suite: PASS (`ChatServiceTest` 34, previous runtime gateway/store/scheduler focused suites remain green).
+- `:app:compileDebugKotlin :web:compileDebugKotlin --no-configuration-cache`: PASS.
+- `git diff --check`: PASS.
+
 ## Seventh review lifecycle and exact-message pass
 
 - A stale initialization token from the same still-mapped session no longer leaves Tavern runtime permanently not

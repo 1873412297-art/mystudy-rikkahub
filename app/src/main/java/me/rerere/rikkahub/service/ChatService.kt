@@ -309,7 +309,8 @@ internal fun initializationInstallAction(
 ): InitializationInstallAction = when {
     !sessionIsCurrent || isReady -> InitializationInstallAction.SKIP
     session.canInstallInitialization(token) -> InitializationInstallAction.INSTALL
-    else -> InitializationInstallAction.MARK_READY
+    session.isLatestInitialization(token) -> InitializationInstallAction.MARK_READY
+    else -> InitializationInstallAction.SKIP
 }
 
 internal fun resolveLocalGroupTurnSelection(
@@ -376,10 +377,14 @@ class ChatService(
                 tavernRuntimeReadiness.isReady(conversationId)
 
             override suspend fun <T> mutate(conversationId: Uuid, block: suspend () -> T): T {
-                val session = getOrCreateSession(conversationId)
+                val session = sessions[conversationId] ?: error("CONVERSATION_NOT_READY")
                 return session.withRefSuspend {
                     session.withRuntimeMessageLock {
-                        check(sessions[conversationId] === session && isReady(conversationId)) {
+                        check(
+                            sessions[conversationId] === session &&
+                                isReady(conversationId) &&
+                                conversationRepo.existsConversationById(conversationId)
+                        ) {
                             "CONVERSATION_NOT_READY"
                         }
                         block()
@@ -1981,17 +1986,26 @@ class ChatService(
         transform: (Conversation) -> Conversation,
         updateInactive: suspend () -> Boolean,
     ): Boolean {
-        val session = sessions[conversationId] ?: return updateInactive()
-        return session.withRefSuspend {
-            session.withConversationMutationLock {
-                if (sessions[conversationId] !== session || !conversationRepo.existsConversationById(conversationId)) {
-                    return@withConversationMutationLock false
+        repeat(2) {
+            val session = sessions[conversationId] ?: return updateInactive()
+            val updated = try {
+                session.withRefSuspend {
+                    session.withConversationMutationLock {
+                        if (sessions[conversationId] !== session) return@withConversationMutationLock null
+                        if (!conversationRepo.existsConversationById(conversationId)) {
+                            return@withConversationMutationLock false
+                        }
+                        val next = transform(session.state.value)
+                        saveConversationUnlocked(conversationId, next, PromptTraceCleanup.None)
+                        true
+                    }
                 }
-                val updated = transform(session.state.value)
-                saveConversationUnlocked(conversationId, updated, PromptTraceCleanup.None)
-                true
+            } catch (error: IllegalStateException) {
+                if (error.message == "CONVERSATION_SESSION_CLOSED") null else throw error
             }
+            if (updated != null) return updated
         }
+        return updateInactive()
     }
 
     /**
@@ -2008,6 +2022,28 @@ class ChatService(
             transform = { current -> current.copy(folderId = folderId) },
             updateInactive = { conversationRepo.updateConversationFolderId(conversationId, folderId) },
         )
+
+    /** Removes the live owner before deleting persistence, so late runtime calls cannot recreate this conversation. */
+    suspend fun deleteConversationAtomic(conversationId: Uuid): Boolean {
+        val session = sessions[conversationId]
+        if (session == null) {
+            val conversation = conversationRepo.getConversationById(conversationId) ?: return false
+            conversationRepo.deleteConversation(conversation)
+            return true
+        }
+        return session.withRefSuspend {
+            session.withConversationMutationLock {
+                if (sessions[conversationId] !== session) return@withConversationMutationLock false
+                tavernRuntimeReadiness.clear(conversationId)
+                session.closeLockedForCleanup()
+                sessions.remove(conversationId, session)
+                _sessionsVersion.value++
+                val conversation = conversationRepo.getConversationById(conversationId) ?: return@withConversationMutationLock false
+                conversationRepo.deleteConversation(conversation)
+                true
+            }
+        }
+    }
 
     /**
      * 文件夹内是否存在正在生成回复的会话。

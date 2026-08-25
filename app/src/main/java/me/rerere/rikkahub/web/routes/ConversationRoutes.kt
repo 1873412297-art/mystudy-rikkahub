@@ -154,10 +154,9 @@ fun Route.conversationRoutes(
         // DELETE /api/conversations/{id} - Delete conversation
         delete("/{id}") {
             val uuid = call.parameters["id"].toUuid("conversation id")
-            val conversation = conversationRepo.getConversationById(uuid)
-                ?: throw NotFoundException("Conversation not found")
-
-            conversationRepo.deleteConversation(conversation)
+            if (!chatService.deleteConversationAtomic(uuid)) {
+                throw NotFoundException("Conversation not found")
+            }
             call.respond(HttpStatusCode.NoContent)
         }
 

@@ -375,7 +375,7 @@ class ChatVM(
 
     fun deleteConversation(conversation: Conversation): Job =
         viewModelScope.launch {
-            conversationRepo.deleteConversation(conversation)
+            chatService.deleteConversationAtomic(conversation.id)
         }
 
     fun updatePinnedStatus(conversation: Conversation) {

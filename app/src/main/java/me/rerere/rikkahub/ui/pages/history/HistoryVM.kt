@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -36,14 +37,16 @@ class HistoryVM(
 
     fun deleteConversation(conversation: Conversation) {
         viewModelScope.launch {
-            conversationRepo.deleteConversation(conversation)
+            chatService.deleteConversationAtomic(conversation.id)
         }
     }
 
     fun deleteAllConversations() {
         val assistant = assistant.value ?: return
         viewModelScope.launch {
-            conversationRepo.deleteConversationOfAssistant(assistant.id)
+            conversationRepo.getConversationsOfAssistant(assistant.id).first().forEach { conversation ->
+                chatService.deleteConversationAtomic(conversation.id)
+            }
         }
     }
 

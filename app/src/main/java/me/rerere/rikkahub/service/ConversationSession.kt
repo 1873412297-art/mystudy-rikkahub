@@ -87,6 +87,10 @@ class ConversationSession(
     internal fun canInstallInitialization(token: ConversationInitializationToken): Boolean =
         token.generation == initializationGeneration.get() && token.mutationVersion == mutationVersion.get()
 
+    /** Whether this is the latest loader, even if a live mutation arrived after it started. */
+    internal fun isLatestInitialization(token: ConversationInitializationToken): Boolean =
+        token.generation == initializationGeneration.get()
+
     internal fun markGroupReplyStartedLocked(job: Job?) {
         groupReplyActiveJob = job
     }
@@ -196,9 +200,14 @@ class ConversationSession(
     /** Waits for an admitted mutation, then permanently prevents a later mutation from entering this session. */
     suspend fun closeForCleanup() {
         conversationMutationMutex.withLock {
-            closed.set(true)
-            cleanupLocked()
+            closeLockedForCleanup()
         }
+    }
+
+    /** Must be called while [withConversationMutationLock] is held. */
+    internal fun closeLockedForCleanup() {
+        closed.set(true)
+        cleanupLocked()
     }
 
     private fun scheduleIdleCheck() {

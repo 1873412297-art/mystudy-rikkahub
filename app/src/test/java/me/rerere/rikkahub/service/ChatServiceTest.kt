@@ -131,6 +131,24 @@ class ChatServiceTest {
     }
 
     @Test
+    fun `superseded initializer does not mark the session ready`() {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(conversationId, Conversation.ofId(conversationId), scope, onIdle = {})
+        try {
+            val firstInitializer = session.beginInitialization()
+            session.beginInitialization()
+
+            assertEquals(
+                InitializationInstallAction.SKIP,
+                initializationInstallAction(session, firstInitializer, sessionIsCurrent = true, isReady = false),
+            )
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun `moderator snapshot retains persisted queue order when assistant order differs`() {
         assertEquals(
             listOf(groupMemberB, groupMemberA),
