@@ -49,6 +49,16 @@
   :app:testDebugUnitTest 118 classes / 824 tests green, :app:compileDebugKotlin green. Recorded gaps:
   first-enable risk dialog and grant-confirmation UI not built (grant data model and resolution ready);
   network domain whitelist is data-model only, no network RPC consumes it yet).
-- Current: backup/restore, frontend streaming/error states, and final
-  instrumentation/device audit. Note: script-initiated generation is JVM-verified only; a real-device
-  end-to-end run needs a configured provider and is part of the final device audit.
+- Backup/restore: complete (commit dd7a5e0f; shared TavernHelperBackupIO walks filesDir/tavern-helper
+  (source/ + data/ spill-over payloads) into the backup zip under the FILES item and restores entries with
+  path-traversal guards, wired into both WebDAV and S3 sync chains; script DB records already ride the whole
+  rikka_hub.db DATABASE item. Post-restore integrity: TavernHelperScriptRepository.auditContentIntegrity
+  verifies every script entity's source/data SHA-256 via the mapper + file store, force-disables corrupted
+  scripts and reports them (DAO getAll added); sync chains invoke the audit through an injected suspend lambda
+  only when FILES was restored without DATABASE (a swapped DB leaves the live DAO pointing at the old file —
+  audit deferred to after restart, recorded deviation); corrupted-item surfacing is log + disabled state, no
+  toast UI (recorded deviation); 3 new focused tests, full :app:testDebugUnitTest 120 classes / 827 tests
+  green, :app:compileDebugKotlin green).
+- Current: frontend streaming/error states, and final instrumentation/device audit. Note: script-initiated
+  generation is JVM-verified only; a real-device end-to-end run needs a configured provider and is part of
+  the final device audit.
