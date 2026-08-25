@@ -56,6 +56,7 @@ import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScript
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptFolder
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptNode
 import me.rerere.rikkahub.data.ai.tavernhelper.searchTavernHelperNodes
+import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.EmptyState
 import me.rerere.rikkahub.ui.theme.CustomColors
@@ -73,6 +74,7 @@ internal fun TavernHelperPage(
     val appSettings by vm.settings.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val render = appSettings.tavernHelperRenderSettings
+    val contextAssistantId = assistantId ?: appSettings.getCurrentAssistant().id.toString()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showAdd by rememberSaveable { mutableStateOf(false) }
     var showAddFolder by rememberSaveable { mutableStateOf(false) }
@@ -131,7 +133,7 @@ internal fun TavernHelperPage(
                 scripts = render.allowScripts,
                 network = render.allowNetwork,
                 onEnabled = { vm.updateRenderSettings { old -> old.copy(enabled = it) } },
-                onDepth = { vm.updateRenderSettings { old -> old.copy(depth = it.coerceIn(0, 100)) } },
+                onDepth = { vm.updateRenderSettings { old -> old.copy(depth = it.coerceIn(0, 500)) } },
                 onIgnoreHidden = { vm.updateRenderSettings { old -> old.copy(ignoreHiddenMessages = it) } },
                 onCollapse = { vm.updateRenderSettings { old -> old.copy(collapseFrontendCode = it) } },
                 onStreaming = { vm.updateRenderSettings { old -> old.copy(allowStreaming = it) } },
@@ -143,7 +145,7 @@ internal fun TavernHelperPage(
                 modifier = Modifier.padding(innerPadding),
                 scripts = scripts,
                 selectedScope = selectedScope,
-                assistantId = assistantId,
+                assistantId = contextAssistantId,
                 onScope = vm::selectScope,
                 onImport = { importer.launch(arrayOf("application/json", "text/json", "text/plain")) },
                 onAdd = { showAdd = true },
@@ -223,7 +225,7 @@ internal fun TavernHelperPage(
     pendingTransfer?.let { request ->
         TransferScopeDialog(
             current = selectedScope,
-            assistantId = assistantId,
+            assistantId = contextAssistantId,
             copy = request.copy,
             onDismiss = { pendingTransfer = null },
             onConfirm = { target ->
@@ -270,7 +272,7 @@ private fun RenderSettings(
             Card {
                 ListItem(
                     headlineContent = { Text("渲染深度") },
-                    supportingContent = { Text("0 表示仅最新消息；当前：$depth") },
+                    supportingContent = { Text("0 表示全部已加载消息；当前：$depth") },
                     trailingContent = {
                         Row {
                             TextButton(onClick = { onDepth(depth - 1) }) { Text("−") }

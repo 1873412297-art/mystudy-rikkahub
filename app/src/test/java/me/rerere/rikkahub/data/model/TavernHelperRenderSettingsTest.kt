@@ -19,4 +19,21 @@ class TavernHelperRenderSettingsTest {
         val restored: TavernHelperRenderSettings = JsonInstant.decodeFromString(JsonInstant.encodeToString(changed))
         assertEquals(changed, restored)
     }
+
+    @Test
+    fun `frontend depth zero means all loaded messages and positive values limit newest messages`() {
+        assertTrue(TavernHelperRenderSettings(depth = 0).shouldRenderFrontend(messageDepth = 499, streaming = false))
+        assertTrue(TavernHelperRenderSettings(depth = 2).shouldRenderFrontend(messageDepth = 0, streaming = false))
+        assertTrue(TavernHelperRenderSettings(depth = 2).shouldRenderFrontend(messageDepth = 1, streaming = false))
+        assertFalse(TavernHelperRenderSettings(depth = 2).shouldRenderFrontend(messageDepth = 2, streaming = false))
+    }
+
+    @Test
+    fun `streaming frontend stays source until explicitly enabled`() {
+        assertFalse(TavernHelperRenderSettings().shouldRenderFrontend(messageDepth = 0, streaming = true))
+        assertTrue(
+            TavernHelperRenderSettings(allowStreaming = true)
+                .shouldRenderFrontend(messageDepth = 0, streaming = true),
+        )
+    }
 }

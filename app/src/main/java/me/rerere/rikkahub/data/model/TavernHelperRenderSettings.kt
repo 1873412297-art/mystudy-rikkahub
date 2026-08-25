@@ -12,3 +12,10 @@ data class TavernHelperRenderSettings(
     val allowScripts: Boolean = false,
     val allowNetwork: Boolean = false,
 )
+
+internal fun TavernHelperRenderSettings.shouldRenderFrontend(
+    messageDepth: Int?,
+    streaming: Boolean,
+): Boolean = enabled &&
+    (depth == 0 || messageDepth == null || messageDepth < depth.coerceIn(1, 500)) &&
+    (!streaming || allowStreaming)

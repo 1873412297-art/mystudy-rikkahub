@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import me.rerere.rikkahub.data.model.shouldRenderFrontend
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastForEach
 import androidx.core.net.toUri
@@ -290,8 +291,11 @@ fun MarkdownBlock(
     tavernMessageRole: MessageRole? = null,
     /** 请求头数据源（透传 MarkdownWebView，requestHeaders.get RPC 按需拉取） */
     tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
+    /** 从最新消息起算的楼层深度；用于酒馆助手“渲染深度”限制。 */
+    tavernMessageDepth: Int? = null,
 ) {
-    val frontendRenderingEnabled = LocalSettings.current.tavernHelperRenderSettings.enabled
+    val renderSettings = LocalSettings.current.tavernHelperRenderSettings
+    val frontendRenderingEnabled = renderSettings.shouldRenderFrontend(tavernMessageDepth, streaming)
     val normalizedContent = remember(content) { normalizeRichTextContent(content) }
     val rawSegments = remember(normalizedContent) { parseRichTextSegments(normalizedContent) }
     val segments = remember(rawSegments, frontendRenderingEnabled) {
@@ -382,6 +386,7 @@ fun MarkdownBlock(
                         tavernContextSnapshot = tavernContextSnapshot,
                         tavernMessageRole = tavernMessageRole,
                         tavernHeaderSource = tavernHeaderSource,
+                        tavernMessageDepth = tavernMessageDepth,
                     )
                     RichTextSegment.Kind.STATUS_BLOCK,
                     RichTextSegment.Kind.JSON_PATCH -> MarkdownWebView(

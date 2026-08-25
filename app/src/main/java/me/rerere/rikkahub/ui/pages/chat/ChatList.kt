@@ -393,6 +393,7 @@ private fun ChatListNormal(
                             tavernConversationId = conversation.id,
                             tavernContextSnapshot = tavernContextSnapshot,
                             tavernHeaderSource = tavernHeaderSource,
+                            tavernMessageDepth = lastMessageIndex - index,
                             runtimeState = if (assistant?.assistantType == AssistantType.GROUP) {
                                 conversation.groupRuntimeState
                             } else {

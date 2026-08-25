@@ -141,6 +141,7 @@ fun ChatMessage(
      * ChatList 组装透传，与 tavernContextSnapshot 同路。
      */
     tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
+    tavernMessageDepth: Int? = null,
 ) {
     val message = node.messages[node.selectIndex]
     val tavernCurrentMessage = remember(message) {
@@ -242,6 +243,7 @@ fun ChatMessage(
                     tavernCurrentMessage = tavernCurrentMessage,
                     tavernContextSnapshot = tavernContextSnapshot,
                     tavernHeaderSource = tavernHeaderSource,
+                    tavernMessageDepth = tavernMessageDepth,
                 )
             }
 
@@ -415,6 +417,7 @@ private fun MessagePartsBlock(
     tavernCurrentMessage: kotlinx.serialization.json.JsonElement? = null,
     tavernContextSnapshot: kotlinx.serialization.json.JsonObject? = null,
     tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
+    tavernMessageDepth: Int? = null,
 ) {
     val context = LocalContext.current
     val contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
@@ -543,6 +546,7 @@ private fun MessagePartsBlock(
                                                 tavernContextSnapshot = tavernContextSnapshot,
                                                 tavernMessageRole = role,
                                                 tavernHeaderSource = tavernHeaderSource,
+                                                tavernMessageDepth = tavernMessageDepth,
                                             )
                                         }
                                     }
@@ -570,6 +574,7 @@ private fun MessagePartsBlock(
                                                     tavernContextSnapshot = tavernContextSnapshot,
                                                     tavernMessageRole = role,
                                                     tavernHeaderSource = tavernHeaderSource,
+                                                    tavernMessageDepth = tavernMessageDepth,
                                                 )
                                             }
                                         }
@@ -590,6 +595,7 @@ private fun MessagePartsBlock(
                                             tavernContextSnapshot = tavernContextSnapshot,
                                             tavernMessageRole = role,
                                             tavernHeaderSource = tavernHeaderSource,
+                                            tavernMessageDepth = tavernMessageDepth,
                                             modifier = Modifier
                                                 .animateContentSize()
                                         )
