@@ -59,6 +59,18 @@ class TavernRuntimeScriptTest {
     }
 
     @Test
+    fun `script exposes generation API with cancellable request ids`() {
+        val script = buildTavernRuntimeScript()
+
+        assertTrue(script.contains("callWithId"))
+        assertTrue(script.contains("generation.generate"))
+        assertTrue(script.contains("generation.generateRaw"))
+        assertTrue(script.contains("generation.cancel"))
+        assertTrue(script.contains("generation.cancelAll"))
+        assertTrue(script.contains("requestId"))
+    }
+
+    @Test
     fun `unsupported host capability shims remain callable and dispatch structured RPC methods`() {
         val script = buildTavernRuntimeScript()
 

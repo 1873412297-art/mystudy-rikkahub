@@ -14,4 +14,6 @@ data class TavernRuntimePermissions(
     val allowMacroRegister: Boolean = false,
     /** 允许脚本读取当前模型请求头（含 API key 等敏感信息，默认 false） */
     val allowRequestHeaders: Boolean = false,
+    /** 允许脚本发起模型生成（产生真实 API 调用与费用，默认 false） */
+    val allowGeneration: Boolean = false,
 )

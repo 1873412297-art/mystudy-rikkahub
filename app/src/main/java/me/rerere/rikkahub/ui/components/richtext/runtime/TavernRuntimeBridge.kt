@@ -27,32 +27,46 @@ internal class TavernRuntimeBridge(
 
         val startedAt = System.nanoTime()
         var method = "unknown"
-        val response = try {
+
+        fun deliver(response: TavernRuntimeResponse) {
+            val responseJson = encodeBoundedResponse(response)
+            scriptId?.let { id ->
+                val error = response.error
+                diagnostics.record(
+                    scriptId = id,
+                    level = if (error == null) TavernScriptDiagnosticLevel.INFO else TavernScriptDiagnosticLevel.ERROR,
+                    category = "rpc",
+                    message = if (error == null) "RPC $method completed" else "RPC $method failed",
+                    rpcMethod = redactScriptDiagnostic(method),
+                    durationMs = (System.nanoTime() - startedAt) / 1_000_000,
+                    error = error?.message,
+                )
+            }
+            emitResult(safeCallback, responseJson)
+        }
+
+        try {
             if (requestJson.toByteArray(Charsets.UTF_8).size > MAX_REQUEST_CHARS) {
-                TavernRuntimeResponse.error("unknown", "REQUEST_TOO_LARGE", "Runtime request exceeds the 256KB limit")
+                deliver(
+                    TavernRuntimeResponse.error(
+                        "unknown", "REQUEST_TOO_LARGE", "Runtime request exceeds the 256KB limit"
+                    )
+                )
             } else {
                 val request = RUNTIME_JSON.decodeFromString(TavernRuntimeRequest.serializer(), requestJson)
                 method = request.method
-                controller.dispatch(request)
+                if (method.startsWith("generation.")) {
+                    // 生成类 RPC 走异步通道：结果由 controller 回调送达，不阻塞 JavaBridge 线程
+                    controller.dispatchGeneration(request) { response -> deliver(response) }
+                } else {
+                    deliver(controller.dispatch(request))
+                }
             }
         } catch (e: Exception) {
-            TavernRuntimeResponse.error("unknown", "BAD_REQUEST", e.message ?: "Invalid runtime request")
-        }
-        val responseJson = encodeBoundedResponse(response)
-        scriptId?.let { id ->
-            val error = response.error
-            diagnostics.record(
-                scriptId = id,
-                level = if (error == null) TavernScriptDiagnosticLevel.INFO else TavernScriptDiagnosticLevel.ERROR,
-                category = "rpc",
-                message = if (error == null) "RPC $method completed" else "RPC $method failed",
-                rpcMethod = redactScriptDiagnostic(method),
-                durationMs = (System.nanoTime() - startedAt) / 1_000_000,
-                error = error?.message,
+            deliver(
+                TavernRuntimeResponse.error("unknown", "BAD_REQUEST", e.message ?: "Invalid runtime request")
             )
         }
-
-        emitResult(safeCallback, responseJson)
     }
 
     private fun encodeBoundedResponse(response: TavernRuntimeResponse): String {

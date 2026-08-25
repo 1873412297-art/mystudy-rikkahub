@@ -137,6 +137,7 @@ internal fun MarkdownWebView(
     val context = LocalContext.current
     val settingsStore: SettingsStore = koinInject()
     val chatService: ChatService = koinInject()
+    val providerManager: me.rerere.ai.provider.ProviderManager = koinInject()
     val statusVariableStore: StatusVariableStore = koinInject()
     val tavernHostEventBus: TavernHostEventBus = koinInject()
     val tavernScriptRegistry: TavernScriptRegistry = koinInject()
@@ -182,6 +183,10 @@ internal fun MarkdownWebView(
             // 共享 Koin 单例注册表：WebView 侧注册的宏/命令对发送管线（ChatService）可见
             scriptRegistry = tavernScriptRegistry,
             headerSource = { latestHeaderSource?.invoke() ?: emptyList() },
+            generationGateway = me.rerere.rikkahub.ui.components.richtext.runtime.ProviderBackedTavernGenerationGateway(
+                settingsStore = settingsStore,
+                providerManager = providerManager,
+            ),
         )
     }
     SideEffect {

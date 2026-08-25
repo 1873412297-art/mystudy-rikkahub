@@ -15,7 +15,10 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -38,6 +41,12 @@ private const val MAX_VARIABLE_TOTAL_BYTES = 512 * 1024
 /** sendHook 单次执行超时（best-effort：超时原样返回） */
 private const val SEND_HOOK_TIMEOUT_MS = 500L
 
+/** 生成历史注入的最近消息条数上限 */
+private const val GENERATION_HISTORY_LIMIT = 50
+
+/** 生成消息允许的角色 */
+private val GENERATION_ROLES = setOf("user", "assistant", "system")
+
 internal class TavernRuntimeController(
     conversationId: Uuid? = null,
     private val eventBus: TavernRuntimeEventBus = TavernRuntimeEventBus(),
@@ -49,6 +58,7 @@ internal class TavernRuntimeController(
     hostEventScope: CoroutineScope? = null,
     private val scriptRegistry: TavernScriptRegistry = TavernScriptRegistry(),
     private val headerSource: (() -> List<Pair<String, String>>)? = null,
+    private val generationGateway: TavernRuntimeGenerationGateway = UnsupportedTavernGenerationGateway(),
 ) {
     @Volatile
     private var conversationId: Uuid? = conversationId
@@ -163,6 +173,13 @@ internal class TavernRuntimeController(
                 "world.createBook" -> createWorldBook(request)
                 "world.updateBook" -> updateWorldBook(request)
                 "world.deleteBook" -> deleteWorldBook(request)
+                "generation.cancel" -> cancelGeneration(request)
+                "generation.cancelAll" -> cancelAllGenerations(request)
+                "generation.generate",
+                "generation.generateRaw" -> TavernRuntimeResponse.error(
+                    request.id, "ASYNC_DISPATCH_REQUIRED",
+                    "Generation methods must be dispatched through the async bridge path"
+                )
                 "messages.list" -> listMessages(request)
                 "messages.get" -> getMessage(request)
                 "messages.getCurrent" -> getCurrentMessage(request)
@@ -431,6 +448,126 @@ internal class TavernRuntimeController(
         return withRequiredStringParam(request, "book") { book ->
             TavernRuntimeResponse.success(request.id, JsonPrimitive(worldRepository.deleteBook(book)))
         }
+    }
+
+    // ── 生成（generation.*）：generate/generateRaw 异步执行，经桥接回调响应 ──
+
+    /** 进行中的生成请求 id（同 id 去重） */
+    private val pendingGenerations = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * 生成类 RPC 入口（generation.generate / generateRaw / cancel / cancelAll）。
+     * 所有响应都经 [respond] 回调；同步可判定的错误（权限/参数）立即回调。
+     */
+    fun dispatchGeneration(request: TavernRuntimeRequest, respond: (TavernRuntimeResponse) -> Unit) {
+        try {
+            if (!permissionStore.current().allowScripts) {
+                respond(permissionDenied(request, "Runtime scripts are disabled"))
+                return
+            }
+            when (request.method) {
+                "generation.generate", "generation.generateRaw" -> startGeneration(request, respond)
+                "generation.cancel" -> respond(cancelGeneration(request))
+                "generation.cancelAll" -> respond(cancelAllGenerations(request))
+                else -> respond(unsupportedHostCapability(request))
+            }
+        } catch (e: Exception) {
+            respond(
+                TavernRuntimeResponse.error(
+                    id = request.id,
+                    code = "INTERNAL_ERROR",
+                    message = e.message ?: "Unexpected runtime failure",
+                )
+            )
+        }
+    }
+
+    private fun startGeneration(request: TavernRuntimeRequest, respond: (TavernRuntimeResponse) -> Unit) {
+        if (!permissionStore.current().allowGeneration) {
+            respond(permissionDenied(request, "Generation access is disabled for this script"))
+            return
+        }
+        val raw = request.method == "generation.generateRaw"
+        val useChat = (request.params["useChat"] as? JsonPrimitive)?.booleanOrNull ?: true
+        val messages = resolveGenerationMessages(request, raw = raw, useChat = useChat)
+        if (messages == null) {
+            respond(badRequest(request, "${request.method} requires params.prompt or params.messages"))
+            return
+        }
+        if (!pendingGenerations.add(request.id)) {
+            respond(
+                TavernRuntimeResponse.error(
+                    request.id, "GENERATION_IN_PROGRESS", "A generation with this id is already running"
+                )
+            )
+            return
+        }
+        val params = TavernGenerationParams(
+            requestId = request.id,
+            messages = messages,
+            temperature = (request.params["temperature"] as? JsonPrimitive)?.floatOrNull,
+            maxTokens = (request.params["maxTokens"] as? JsonPrimitive)?.intOrNull,
+        )
+        val started = generationGateway.generate(params) { outcome ->
+            pendingGenerations.remove(request.id)
+            respond(
+                when (outcome) {
+                    is TavernGenerationOutcome.Success ->
+                        TavernRuntimeResponse.success(request.id, outcome.payload)
+                    is TavernGenerationOutcome.Failure ->
+                        TavernRuntimeResponse.error(request.id, outcome.code, outcome.message)
+                }
+            )
+        }
+        if (!started) {
+            pendingGenerations.remove(request.id)
+            respond(unsupportedHostCapability(request))
+        }
+    }
+
+    private fun resolveGenerationMessages(
+        request: TavernRuntimeRequest,
+        raw: Boolean,
+        useChat: Boolean,
+    ): List<TavernGenerationMessage>? {
+        val explicit = (request.params["messages"] as? JsonArray)?.mapNotNull { element ->
+            val obj = element as? JsonObject ?: return@mapNotNull null
+            val role = obj.getString("role")?.lowercase()
+                ?.takeIf { it in GENERATION_ROLES }
+                ?: return@mapNotNull null
+            val text = obj.getString("text") ?: return@mapNotNull null
+            TavernGenerationMessage(role = role, text = text)
+        }
+        if (!explicit.isNullOrEmpty()) return explicit
+        val prompt = request.params.getString("prompt") ?: return null
+        val history = if (!raw && useChat) chatHistoryMessages() else emptyList()
+        return history + TavernGenerationMessage(role = "user", text = prompt)
+    }
+
+    /** 当前会话最近历史（generate 非 raw 且 useChat 时注入；最多 50 条，仅 user/assistant/system） */
+    private fun chatHistoryMessages(): List<TavernGenerationMessage> {
+        val conversationId = conversationId ?: return emptyList()
+        val snapshot = messageGateway.readSnapshot(conversationId) ?: return emptyList()
+        return snapshot.takeLast(GENERATION_HISTORY_LIMIT).mapNotNull { message ->
+            val role = message.role.takeIf { it in GENERATION_ROLES } ?: return@mapNotNull null
+            TavernGenerationMessage(role = role, text = message.text)
+        }
+    }
+
+    private fun cancelGeneration(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowGeneration) {
+            return permissionDenied(request, "Generation access is disabled for this script")
+        }
+        return withRequiredStringParam(request, "id") { id ->
+            TavernRuntimeResponse.success(request.id, JsonPrimitive(generationGateway.cancel(id)))
+        }
+    }
+
+    private fun cancelAllGenerations(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowGeneration) {
+            return permissionDenied(request, "Generation access is disabled for this script")
+        }
+        return TavernRuntimeResponse.success(request.id, JsonPrimitive(generationGateway.cancelAll()))
     }
 
     private fun getCurrentMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {

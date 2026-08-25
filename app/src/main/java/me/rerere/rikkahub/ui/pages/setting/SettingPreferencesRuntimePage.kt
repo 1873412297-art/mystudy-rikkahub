@@ -147,6 +147,14 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                                 updateRuntimePermissions(runtimePermissions.copy(allowRequestHeaders = it))
                             },
                         )
+                        permissionSwitch(
+                            title = "允许发起生成",
+                            description = "允许脚本使用当前助手的聊天模型发起文本生成（会产生真实 API 调用与费用）。默认关闭。",
+                            checked = runtimePermissions.allowGeneration,
+                            onCheckedChange = {
+                                updateRuntimePermissions(runtimePermissions.copy(allowGeneration = it))
+                            },
+                        )
                     }
                 }
             }

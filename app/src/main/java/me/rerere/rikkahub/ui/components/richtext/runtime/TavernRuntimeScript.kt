@@ -4,13 +4,14 @@ internal fun buildTavernRuntimeScript(): String = """
 (function(){
   if (window.TavernHelperCompat) return;
   var seq = 0;
-  function call(method, params) {
+  function call(method, params) { return callWithId(method, params, null); }
+  function callWithId(method, params, forcedId) {
     return new Promise(function(resolve, reject){
       if (!window.TavernRuntimeBridge || typeof window.TavernRuntimeBridge.call !== 'function') {
         reject({ code: 'BRIDGE_MISSING', message: 'TavernRuntimeBridge is not available' });
         return;
       }
-      var id = String(++seq);
+      var id = forcedId || String(++seq);
       var cb = '__rikkahubTavernRuntimeCallback_' + id;
       window[cb] = function(response){
         try {
@@ -203,6 +204,20 @@ internal fun buildTavernRuntimeScript(): String = """
       updateCurrent: function(patch){ return call('messages.updateCurrent', { patch: patch }); },
       delete: function(id){ return call('messages.delete', { id: id }); }
     },
+    generation: {
+      // options: { prompt | messages, useChat?, temperature?, maxTokens?, requestId? }
+      // requestId 用于 generation.cancel(id) 取消单次生成；缺省自动生成
+      generate: function(options){
+        options = options || {};
+        return callWithId('generation.generate', options, options.requestId ? String(options.requestId) : null);
+      },
+      generateRaw: function(options){
+        options = options || {};
+        return callWithId('generation.generateRaw', options, options.requestId ? String(options.requestId) : null);
+      },
+      cancel: function(id){ return call('generation.cancel', { id: id }); },
+      cancelAll: function(){ return call('generation.cancelAll', {}); }
+    },
 
     // ── TavernHelper 风格别名（委托上面的 api.variables，保持单一实现） ──
     eventSource: eventSource,
@@ -238,6 +253,12 @@ internal fun buildTavernRuntimeScript(): String = """
     },
     deleteWorldbook: function(name){
       return api.world.deleteBook(name);
+    },
+    generate: function(options){
+      return api.generation.generate(options).then(function(result){ return result.text; });
+    },
+    generateRaw: function(options){
+      return api.generation.generateRaw(options).then(function(result){ return result.text; });
     }
   };
 
