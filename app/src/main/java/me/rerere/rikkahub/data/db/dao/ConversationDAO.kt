@@ -103,7 +103,7 @@ interface ConversationDAO {
     ): Int
 
     @Query("UPDATE conversationentity SET folder_id = :folderId WHERE id = :id")
-    suspend fun updateFolderId(id: String, folderId: String)
+    suspend fun updateFolderId(id: String, folderId: String): Int
 
     @Query("UPDATE conversationentity SET folder_id = '' WHERE folder_id = :folderId")
     suspend fun clearFolder(folderId: String)

@@ -408,11 +408,11 @@ class ConversationRepository(
     /**
      * 单列更新会话的文件夹归属，folderId 为 null 表示移出文件夹（未归类）。
      */
-    suspend fun updateConversationFolderId(conversationId: Uuid, folderId: Uuid?) {
-        conversationDAO.updateFolderId(
+    suspend fun updateConversationFolderId(conversationId: Uuid, folderId: Uuid?): Boolean {
+        return conversationDAO.updateFolderId(
             id = conversationId.toString(),
             folderId = folderId?.toString() ?: ""
-        )
+        ) > 0
     }
 
     private fun conversationSummaryToConversation(entity: LightConversationEntity): Conversation {

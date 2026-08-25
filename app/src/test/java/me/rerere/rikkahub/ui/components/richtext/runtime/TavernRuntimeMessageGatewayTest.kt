@@ -229,9 +229,11 @@ class TavernRuntimeMessageGatewayTest {
     }
 
     @Test
-    fun `serializer injected current message persists updateCurrent through atomic latest update`() {
+    fun `serializer injected old message persists updateCurrent through its exact id`() {
         val conversationId = Uuid.random()
         var persisted = UIMessage.assistant("before")
+        var latest = UIMessage.assistant("latest")
+        var updatedId: String? = null
         var latestUpdates = 0
         val gateway = object : TavernRuntimeMessageGateway {
             override fun list(conversationId: Uuid): List<TavernRuntimeMessage> = listOf(
@@ -239,8 +241,9 @@ class TavernRuntimeMessageGatewayTest {
                     persisted.id.toString(),
                     persisted.role,
                     persisted.toText(),
-                    isCurrent = true,
+                    isCurrent = false,
                 ),
+                TavernRuntimeMessage(latest.id.toString(), latest.role, latest.toText(), isCurrent = true),
             )
 
             override fun get(conversationId: Uuid, messageId: String): TavernRuntimeMessage? =
@@ -253,12 +256,17 @@ class TavernRuntimeMessageGatewayTest {
                 conversationId: Uuid,
                 messageId: String,
                 text: String,
-            ): TavernRuntimeMessage? = error("updateCurrent must use updateLatest")
+            ): TavernRuntimeMessage? {
+                updatedId = messageId
+                if (messageId != persisted.id.toString()) return null
+                persisted = persisted.copy(parts = listOf(me.rerere.ai.ui.UIMessagePart.Text(text)))
+                return get(conversationId, messageId)
+            }
 
             override fun updateLatest(conversationId: Uuid, text: String): TavernRuntimeMessage? {
                 latestUpdates++
-                persisted = persisted.copy(parts = listOf(me.rerere.ai.ui.UIMessagePart.Text(text)))
-                return get(conversationId, persisted.id.toString())
+                latest = latest.copy(parts = listOf(me.rerere.ai.ui.UIMessagePart.Text(text)))
+                return get(conversationId, latest.id.toString())
             }
 
             override fun delete(conversationId: Uuid, messageId: String): Boolean = false
@@ -275,8 +283,10 @@ class TavernRuntimeMessageGatewayTest {
         )
         val current = controller.dispatch(request("messages.getCurrent"))
 
-        assertEquals(1, latestUpdates)
+        assertEquals(persisted.id.toString(), updatedId)
+        assertEquals(0, latestUpdates)
         assertEquals("after", persisted.toText())
+        assertEquals("latest", latest.toText())
         assertEquals(persisted.id.toString(), updated.result!!.jsonObject.getValue("messageId").jsonPrimitive.content)
         assertEquals("after", updated.result!!.jsonObject.getValue("text").jsonPrimitive.content)
         assertEquals(updated.result, current.result)

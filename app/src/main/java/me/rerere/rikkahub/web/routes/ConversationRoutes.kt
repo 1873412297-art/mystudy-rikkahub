@@ -261,7 +261,9 @@ fun Route.conversationRoutes(
                 }
             }
 
-            chatService.moveConversationToFolder(uuid, targetFolderId)
+            if (!chatService.moveConversationToFolder(uuid, targetFolderId)) {
+                throw NotFoundException("Conversation not found")
+            }
             call.respond(HttpStatusCode.OK, mapOf("status" to "updated"))
         }
 

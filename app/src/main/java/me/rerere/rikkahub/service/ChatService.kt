@@ -295,6 +295,23 @@ internal fun orderedModeratorEligibleMemberIds(
     eligibleMemberIds: List<Uuid>,
 ): List<Uuid> = normalizeGroupMemberQueue(persistedQueue, eligibleMemberIds)
 
+internal enum class InitializationInstallAction {
+    INSTALL,
+    MARK_READY,
+    SKIP,
+}
+
+internal fun initializationInstallAction(
+    session: ConversationSession,
+    token: ConversationInitializationToken,
+    sessionIsCurrent: Boolean,
+    isReady: Boolean,
+): InitializationInstallAction = when {
+    !sessionIsCurrent || isReady -> InitializationInstallAction.SKIP
+    session.canInstallInitialization(token) -> InitializationInstallAction.INSTALL
+    else -> InitializationInstallAction.MARK_READY
+}
+
 internal fun resolveLocalGroupTurnSelection(
     director: GroupDirectorState,
     effectiveStrategy: TurnTakingStrategy,
@@ -436,10 +453,14 @@ class ChatService(
     private val _generationDoneFlow = MutableSharedFlow<Uuid>()
     val generationDoneFlow: SharedFlow<Uuid> = _generationDoneFlow.asSharedFlow()
 
-    fun cleanup() = runCatching {
+    suspend fun cleanup() = runCatching {
         tavernRuntimeReadiness.clearAll()
-        sessions.values.forEach { it.cleanup() }
-        sessions.clear()
+        sessions.entries.toList().forEach { (conversationId, session) ->
+            session.closeForCleanup()
+            if (sessions.remove(conversationId, session)) {
+                _sessionsVersion.value++
+            }
+        }
     }
 
     // ---- Session 管理 ----
@@ -480,8 +501,8 @@ class ChatService(
         }
         if (sessions.remove(conversationId, session)) {
             tavernRuntimeReadiness.clear(conversationId)
-            session.cleanup()
             _sessionsVersion.value++
+            appScope.launch { session.closeForCleanup() }
             Log.i(TAG, "removeSession: $conversationId (remaining: ${sessions.size})")
         }
     }
@@ -631,19 +652,26 @@ class ChatService(
     ) {
         session.withRefSuspend {
             session.withConversationMutationLock {
-                if (
-                    sessions[conversationId] !== session ||
-                    tavernRuntimeReadiness.isReady(conversationId) ||
-                    !session.canInstallInitialization(token)
+                when (
+                    initializationInstallAction(
+                        session = session,
+                        token = token,
+                        sessionIsCurrent = sessions[conversationId] === session,
+                        isReady = tavernRuntimeReadiness.isReady(conversationId),
+                    )
                 ) {
-                    return@withConversationMutationLock
+                    InitializationInstallAction.INSTALL -> {
+                        if (shouldPersist) {
+                            saveConversationUnlocked(conversationId, conversation, promptTraceCleanup)
+                        } else {
+                            updateConversation(conversationId, conversation)
+                        }
+                        tavernRuntimeReadiness.markReady(conversationId)
+                    }
+
+                    InitializationInstallAction.MARK_READY -> tavernRuntimeReadiness.markReady(conversationId)
+                    InitializationInstallAction.SKIP -> Unit
                 }
-                if (shouldPersist) {
-                    saveConversationUnlocked(conversationId, conversation, promptTraceCleanup)
-                } else {
-                    updateConversation(conversationId, conversation)
-                }
-                tavernRuntimeReadiness.markReady(conversationId)
             }
         }
     }
@@ -1974,12 +2002,12 @@ class ChatService(
      * 后续任意 saveConversation(id, state.value) 会用整对象把 folder_id 覆盖回旧值，导致移动丢失。
      * 先改内存可确保这段窗口内的整对象保存也带上新 folderId。
      */
-    suspend fun moveConversationToFolder(conversationId: Uuid, folderId: Uuid?) {
-        if (sessions.containsKey(conversationId)) {
-            updateConversationState(conversationId) { it.copy(folderId = folderId) }
-        }
-        conversationRepo.updateConversationFolderId(conversationId, folderId)
-    }
+    suspend fun moveConversationToFolder(conversationId: Uuid, folderId: Uuid?): Boolean =
+        updateExistingConversationField(
+            conversationId = conversationId,
+            transform = { current -> current.copy(folderId = folderId) },
+            updateInactive = { conversationRepo.updateConversationFolderId(conversationId, folderId) },
+        )
 
     /**
      * 文件夹内是否存在正在生成回复的会话。

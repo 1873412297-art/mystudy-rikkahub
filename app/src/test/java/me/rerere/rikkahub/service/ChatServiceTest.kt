@@ -14,6 +14,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -45,6 +46,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.uuid.Uuid
@@ -111,6 +113,24 @@ class ChatServiceTest {
     }
 
     @Test
+    fun `stale initialization marks the same session ready without replacing its live mutation`() {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(conversationId, Conversation.ofId(conversationId), scope, onIdle = {})
+        try {
+            val token = session.beginInitialization()
+            session.recordConversationMutation()
+
+            assertEquals(
+                InitializationInstallAction.MARK_READY,
+                initializationInstallAction(session, token, sessionIsCurrent = true, isReady = false),
+            )
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun `moderator snapshot retains persisted queue order when assistant order differs`() {
         assertEquals(
             listOf(groupMemberB, groupMemberA),
@@ -151,6 +171,37 @@ class ChatServiceTest {
         }
 
         assertEquals(1, maximumActive.get())
+    }
+
+    @Test
+    fun `cleanup waits for an admitted runtime mutation then rejects a late mutation`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(scope)
+        val entered = CompletableDeferred<Unit>()
+        val allowPersist = CompletableDeferred<Unit>()
+        try {
+            val runtimeMutation = async(Dispatchers.Default) {
+                session.withRuntimeMessageLock {
+                    entered.complete(Unit)
+                    allowPersist.await()
+                }
+            }
+            entered.await()
+            val cleanup = async(Dispatchers.Default) { session.closeForCleanup() }
+            assertNull(withTimeoutOrNull(50) { cleanup.await(); true })
+
+            allowPersist.complete(Unit)
+            runtimeMutation.await()
+            cleanup.await()
+
+            try {
+                session.withRuntimeMessageLock { fail("closed session accepted a runtime mutation") }
+            } catch (_: IllegalStateException) {
+                // Expected: cleanup closed the session before the second mutation could enter.
+            }
+        } finally {
+            scope.cancel()
+        }
     }
 
     @Test

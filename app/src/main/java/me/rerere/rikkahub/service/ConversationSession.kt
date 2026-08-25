@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import me.rerere.rikkahub.data.model.Conversation
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.uuid.Uuid
 
@@ -53,6 +54,7 @@ class ConversationSession(
     private val conversationMutationMutex = Mutex()
     private val initializationGeneration = AtomicLong(0)
     private val mutationVersion = AtomicLong(0)
+    private val closed = AtomicBoolean(false)
     private var groupReplyActiveJob: Job? = null
 
     suspend fun <T> withGroupDirectorLock(block: suspend () -> T): T =
@@ -60,7 +62,10 @@ class ConversationSession(
 
     /** Serializes every persisted conversation read-modify-write, including browser runtime mutations. */
     suspend fun <T> withConversationMutationLock(block: suspend () -> T): T =
-        conversationMutationMutex.withLock { block() }
+        conversationMutationMutex.withLock {
+            check(!closed.get()) { "CONVERSATION_SESSION_CLOSED" }
+            block()
+        }
 
     /** Compatibility name for the browser runtime; it intentionally shares the general mutation lock. */
     suspend fun <T> withRuntimeMessageLock(block: suspend () -> T): T = withConversationMutationLock(block)
@@ -188,6 +193,14 @@ class ConversationSession(
 
     fun getJob(): Job? = _generationJob.value
 
+    /** Waits for an admitted mutation, then permanently prevents a later mutation from entering this session. */
+    suspend fun closeForCleanup() {
+        conversationMutationMutex.withLock {
+            closed.set(true)
+            cleanupLocked()
+        }
+    }
+
     private fun scheduleIdleCheck() {
         idleCheckJob?.cancel()
         idleCheckJob = scope.launch {
@@ -204,6 +217,11 @@ class ConversationSession(
     }
 
     fun cleanup() {
+        closed.set(true)
+        cleanupLocked()
+    }
+
+    private fun cleanupLocked() {
         _generationJob.value?.cancel()
         _generationJob.value = null
         groupReplyActiveJob = null

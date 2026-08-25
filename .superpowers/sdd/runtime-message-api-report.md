@@ -112,6 +112,25 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
 
 ## Verification
 
+## Seventh review lifecycle and exact-message pass
+
+- A stale initialization token from the same still-mapped session no longer leaves Tavern runtime permanently not
+  ready. The loader keeps the newer live state and marks it ready; a replaced session or already-ready session is
+  still ignored. The regression covers the live mutation version advance directly.
+- `messages.updateCurrent` now uses `gateway.update(conversationId, injectedMessageId, text)` whenever the injected
+  serializer payload contains a real persisted ID. The old-message regression has a distinct last message and proves
+  only the injected ID changes. Uninjected runtime calls still use atomic `updateLatest`.
+- Session cleanup waits for an admitted runtime mutation on the shared mutation mutex, then closes that session so a
+  late mutation fails before persistence. `ChatService.cleanup` is suspend and closes each retained session before
+  removing it; session eviction schedules the same close operation without main-thread `runBlocking`.
+- History pin operations now delegate to `ChatService.updatePinnedStatus`. Folder moves use the existing field-mutation
+  path for active sessions and an affected-row DAO update for inactive sessions; web folder move returns 404 when no
+  row exists.
+
+- Focused JVM suite: PASS (`ChatServiceTest` 33, mutation store 9, runtime gateway 14, group scheduler 14).
+- `:app:compileDebugKotlin :web:compileDebugKotlin --no-configuration-cache`: PASS.
+- `git diff --check`: PASS.
+
 ## Sixth review initialization and field-update pass
 
 - `initializeConversation` now reads the repository and renders outside the session mutation mutex, then installs only
@@ -165,3 +184,5 @@ Third review commit: `b881268a fix: harden Tavern runtime message synchronizatio
 Fourth review commit: `fix: serialize ChatService conversation mutations` (this commit).
 
 Sixth review commit: `dd5dd24d fix: guard Tavern conversation initialization`.
+
+Seventh review commit: `fix: close Tavern runtime mutations during cleanup`.
