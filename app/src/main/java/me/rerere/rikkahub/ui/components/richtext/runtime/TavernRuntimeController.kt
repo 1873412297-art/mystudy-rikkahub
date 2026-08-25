@@ -59,6 +59,8 @@ internal class TavernRuntimeController(
     private val scriptRegistry: TavernScriptRegistry = TavernScriptRegistry(),
     private val headerSource: (() -> List<Pair<String, String>>)? = null,
     private val generationGateway: TavernRuntimeGenerationGateway = UnsupportedTavernGenerationGateway(),
+    /** 常驻脚本 id（script 作用域变量的归属；消息前端为 null） */
+    private val scriptId: String? = null,
 ) {
     @Volatile
     private var conversationId: Uuid? = conversationId
@@ -161,6 +163,8 @@ internal class TavernRuntimeController(
                 "variables.set" -> setVariable(request)
                 "variables.list" -> listVariables(request)
                 "variables.delete" -> deleteVariable(request)
+                "variables.replace" -> replaceVariables(request)
+                "variables.update" -> updateVariables(request)
                 "slash.run" -> runSlash(request)
                 "events.emit" -> emitEvent(request)
                 "events.subscribe" -> subscribeHostEvent(request)
@@ -245,7 +249,7 @@ internal class TavernRuntimeController(
     private fun getVariable(request: TavernRuntimeRequest): TavernRuntimeResponse {
         return withRequiredStringParam(request, "key") { key ->
             val scope = resolveScope(request) ?: return@withRequiredStringParam unsupportedScope(request)
-            val value = variableGateway.get(conversationId, scope, key) ?: JsonNull
+            val value = variableGateway.get(conversationId, scope, key, variableOwnerId(scope)) ?: JsonNull
             TavernRuntimeResponse.success(request.id, value)
         }
     }
@@ -262,21 +266,21 @@ internal class TavernRuntimeController(
                     request.id, "VALUE_TOO_LARGE", "Variable value exceeds the 64KB limit"
                 )
             }
-            val merged = variableGateway.list(conversationId, scope).toMutableMap()
+            val merged = variableGateway.list(conversationId, scope, variableOwnerId(scope)).toMutableMap()
             merged[key] = value
             if (JsonObject(merged).utf8ByteSize() > MAX_VARIABLE_TOTAL_BYTES) {
                 return@withRequiredStringParam TavernRuntimeResponse.error(
                     request.id, "QUOTA_EXCEEDED", "Variables exceed the 512KB total limit for scope '$scope'"
                 )
             }
-            variableGateway.set(conversationId, scope, key, value)
+            variableGateway.set(conversationId, scope, key, value, variableOwnerId(scope))
             TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
         }
     }
 
     private fun listVariables(request: TavernRuntimeRequest): TavernRuntimeResponse {
         val scope = resolveScope(request) ?: return unsupportedScope(request)
-        return TavernRuntimeResponse.success(request.id, variableGateway.list(conversationId, scope))
+        return TavernRuntimeResponse.success(request.id, variableGateway.list(conversationId, scope, variableOwnerId(scope)))
     }
 
     private fun deleteVariable(request: TavernRuntimeRequest): TavernRuntimeResponse {
@@ -287,16 +291,78 @@ internal class TavernRuntimeController(
             val scope = resolveScope(request) ?: return@withRequiredStringParam unsupportedScope(request)
             TavernRuntimeResponse.success(
                 request.id,
-                JsonPrimitive(variableGateway.delete(conversationId, scope, key)),
+                JsonPrimitive(variableGateway.delete(conversationId, scope, key, variableOwnerId(scope))),
             )
         }
     }
 
+    private fun replaceVariables(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowVariablesWrite) {
+            return permissionDenied(request, "Variable write access is disabled for this script")
+        }
+        val scope = resolveScope(request) ?: return unsupportedScope(request)
+        val values = request.params["values"] as? JsonObject
+            ?: return badRequest(request, "variables.replace requires params.values object")
+        val oversize = values.entries.firstOrNull { (_, value) -> value.utf8ByteSize() > MAX_VARIABLE_VALUE_BYTES }
+        if (oversize != null) {
+            return TavernRuntimeResponse.error(
+                request.id, "VALUE_TOO_LARGE", "Variable '${oversize.key}' exceeds the 64KB limit"
+            )
+        }
+        if (values.utf8ByteSize() > MAX_VARIABLE_TOTAL_BYTES) {
+            return TavernRuntimeResponse.error(
+                request.id, "QUOTA_EXCEEDED", "Variables exceed the 512KB total limit for scope '$scope'"
+            )
+        }
+        variableGateway.replace(conversationId, scope, values, variableOwnerId(scope))
+        return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
+    }
+
+    private fun updateVariables(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowVariablesWrite) {
+            return permissionDenied(request, "Variable write access is disabled for this script")
+        }
+        val scope = resolveScope(request) ?: return unsupportedScope(request)
+        val values = request.params["values"] as? JsonObject
+            ?: return badRequest(request, "variables.update requires params.values object")
+        val ownerId = variableOwnerId(scope)
+        val merged = variableGateway.list(conversationId, scope, ownerId).toMutableMap()
+        values.forEach { (key, value) ->
+            if (value.utf8ByteSize() > MAX_VARIABLE_VALUE_BYTES) {
+                return TavernRuntimeResponse.error(
+                    request.id, "VALUE_TOO_LARGE", "Variable '$key' exceeds the 64KB limit"
+                )
+            }
+            merged[key] = value
+        }
+        if (JsonObject(merged).utf8ByteSize() > MAX_VARIABLE_TOTAL_BYTES) {
+            return TavernRuntimeResponse.error(
+                request.id, "QUOTA_EXCEEDED", "Variables exceed the 512KB total limit for scope '$scope'"
+            )
+        }
+        variableGateway.replace(conversationId, scope, JsonObject(merged), ownerId)
+        return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
+    }
+
     private fun resolveScope(request: TavernRuntimeRequest): String? {
-        return when (val scope = request.params.getString("scope") ?: TAVERN_VARIABLE_SCOPE_CHAT) {
-            TAVERN_VARIABLE_SCOPE_CHAT, TAVERN_VARIABLE_SCOPE_GLOBAL -> scope
+        val scope = request.params.getString("scope") ?: TAVERN_VARIABLE_SCOPE_CHAT
+        return scope.takeIf { it in TAVERN_VARIABLE_SCOPES }
+    }
+
+    /** script / message 作用域的归属 id；其余作用域恒 null */
+    private fun variableOwnerId(scope: String): String? {
+        return when (scope) {
+            TAVERN_VARIABLE_SCOPE_SCRIPT -> scriptId
+            TAVERN_VARIABLE_SCOPE_MESSAGE -> currentMessageId()
             else -> null
         }
+    }
+
+    /** 当前消息 id：优先宿主注入的当前消息，其次快照末条 */
+    private fun currentMessageId(): String? {
+        (injectedCurrentMessage as? JsonObject)?.get("messageId")?.jsonPrimitive?.content?.let { return it }
+        val conversationId = conversationId ?: return null
+        return messageGateway.readSnapshot(conversationId)?.lastOrNull()?.messageId
     }
 
     private fun unsupportedScope(request: TavernRuntimeRequest): TavernRuntimeResponse {

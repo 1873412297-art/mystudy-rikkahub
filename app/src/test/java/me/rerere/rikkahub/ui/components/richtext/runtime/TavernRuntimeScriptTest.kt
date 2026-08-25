@@ -71,6 +71,16 @@ class TavernRuntimeScriptTest {
     }
 
     @Test
+    fun `script exposes six-scope variable replace and update APIs`() {
+        val script = buildTavernRuntimeScript()
+
+        assertTrue(script.contains("variables.replace"))
+        assertTrue(script.contains("variables.update"))
+        assertTrue(script.contains("replaceVariables"))
+        assertTrue(script.contains("updateVariablesWith"))
+    }
+
+    @Test
     fun `unsupported host capability shims remain callable and dispatch structured RPC methods`() {
         val script = buildTavernRuntimeScript()
 

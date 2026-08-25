@@ -187,6 +187,7 @@ internal fun MarkdownWebView(
                 settingsStore = settingsStore,
                 providerManager = providerManager,
             ),
+            scriptId = tavernScriptId,
         )
     }
     SideEffect {

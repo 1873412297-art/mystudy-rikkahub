@@ -173,7 +173,9 @@ internal fun buildTavernRuntimeScript(): String = """
       get: function(key, scope){ return call('variables.get', { key: key, scope: scope || 'chat' }); },
       set: function(key, value, scope){ return call('variables.set', { key: key, value: value, scope: scope || 'chat' }); },
       list: function(scope){ return call('variables.list', { scope: scope || 'chat' }); },
-      delete: function(key, scope){ return call('variables.delete', { key: key, scope: scope || 'chat' }); }
+      delete: function(key, scope){ return call('variables.delete', { key: key, scope: scope || 'chat' }); },
+      replace: function(vars, scope){ return call('variables.replace', { values: vars || {}, scope: scope || 'chat' }); },
+      update: function(vars, scope){ return call('variables.update', { values: vars || {}, scope: scope || 'chat' }); }
     },
     slash: {
       run: function(command, args){ return call('slash.run', { command: command, args: args || {} }); }
@@ -230,6 +232,15 @@ internal fun buildTavernRuntimeScript(): String = """
       return Promise.all(keys.map(function(key){
         return api.variables.set(key, vars[key], scope);
       })).then(function(){ return true; });
+    },
+    replaceVariables: function(vars, scope){
+      return api.variables.replace(vars, scope);
+    },
+    updateVariablesWith: function(updater, scope){
+      return api.variables.list(scope).then(function(current){
+        var updated = updater(current) || current;
+        return api.variables.replace(updated, scope);
+      });
     },
     getWorldbookNames: function(){
       return api.world.listBooks().then(function(books){
