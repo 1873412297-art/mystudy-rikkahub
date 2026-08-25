@@ -386,6 +386,12 @@ internal class TavernRuntimeController(
         val messages = messageGateway.readSnapshot(conversationId) ?: return conversationNotReady(request)
         val current = messages.lastOrNull()
         if (current != null) return TavernRuntimeResponse.success(request.id, current.toJson())
+        if (!messageGateway.hasPersistentSource) {
+            val fromContext = contextSnapshot?.get("chat")?.jsonArray
+                ?.lastOrNull { it.jsonObject["isCurrent"]?.jsonPrimitive?.boolean == true }
+                ?: contextSnapshot?.get("chat")?.jsonArray?.lastOrNull()
+            if (fromContext != null) return TavernRuntimeResponse.success(request.id, fromContext)
+        }
         return notFound(request, "No current message exists")
     }
 

@@ -159,6 +159,10 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
 - Assistant batch deletion now always lets Room's conditional `id + assistantId` delete decide persisted ownership;
   placeholder session metadata is never trusted. Only a ready live-only session with no Room row is treated as a
   successful close, while an unready placeholder remains `NOT_FOUND`.
+- Final compatibility pass distinguishes an authoritative persistent empty snapshot (`NOT_FOUND`) from a legacy
+  controller without a persistent message source, which may still read its current entry from the context snapshot.
+- Full `:app:testDebugUnitTest :app:assembleDebug` verification: PASS (113 test classes, 786 tests, 0 failures;
+  versionName 2.4.10, versionCode 177).
 - `git diff --check`: PASS.
 
 ## Twelfth review deletion-finalization and current-message pass

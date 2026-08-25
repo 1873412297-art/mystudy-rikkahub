@@ -8,6 +8,9 @@ import kotlin.uuid.Uuid
 
 /** Message operations exposed to Tavern browser scripts for one conversation. */
 internal interface TavernRuntimeMessageGateway {
+    /** True when an empty snapshot is authoritative and must not fall back to a stale context snapshot. */
+    val hasPersistentSource: Boolean get() = false
+
     fun isReady(conversationId: Uuid): Boolean = true
     fun readSnapshot(conversationId: Uuid): List<TavernRuntimeMessage>? =
         list(conversationId).takeIf { isReady(conversationId) }
@@ -80,6 +83,8 @@ internal class InMemoryTavernRuntimeMessageGateway(
 internal class ChatServiceTavernRuntimeMessageGateway(
     private val chatService: TavernRuntimeMessageService,
 ) : TavernRuntimeMessageGateway {
+    override val hasPersistentSource: Boolean = true
+
     override fun isReady(conversationId: Uuid): Boolean = readSnapshot(conversationId) != null
 
     override fun readSnapshot(conversationId: Uuid): List<TavernRuntimeMessage>? = runBlocking {
