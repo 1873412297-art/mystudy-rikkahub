@@ -121,6 +121,22 @@ class TavernRuntimeControllerTest {
             )
         )
         assertEquals(JsonNull, secondValue.result)
+
+        controller.updateConversationId(firstConversation)
+
+        val firstValueAgain = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "get-first-again",
+                method = "variables.get",
+                params = JsonObject(
+                    mapOf(
+                        "scope" to JsonPrimitive("chat"),
+                        "key" to JsonPrimitive("place"),
+                    )
+                ),
+            )
+        )
+        assertEquals("first", firstValueAgain.result!!.jsonPrimitive.content)
     }
 
     @Test

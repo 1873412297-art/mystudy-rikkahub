@@ -66,7 +66,7 @@ import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.ui.activity.SafeModeActivity
 import me.rerere.rikkahub.ui.components.ui.TTSController
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernBrowserRuntimeCoordinator
-import me.rerere.rikkahub.ui.components.richtext.runtime.resolveTavernBrowserRuntimeContext
+import me.rerere.rikkahub.ui.components.richtext.runtime.rememberTavernBrowserRuntimeContext
 import me.rerere.rikkahub.ui.context.LocalASRState
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalSettings
@@ -294,9 +294,9 @@ class RouteActivity : ComponentActivity() {
 
         val backStack = rememberNavBackStack(startScreen)
         SideEffect { this@RouteActivity.navStack = backStack }
-        val tavernBrowserRuntimeContext = resolveTavernBrowserRuntimeContext(
+        val tavernBrowserRuntimeContext = rememberTavernBrowserRuntimeContext(
             backStack = backStack,
-            assistantId = settings.assistantId.toString(),
+            settingsAssistantId = settings.assistantId.toString(),
         )
 
         ShareHandler(backStack)

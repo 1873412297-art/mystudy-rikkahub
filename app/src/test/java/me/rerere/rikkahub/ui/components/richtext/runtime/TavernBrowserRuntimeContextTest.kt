@@ -7,7 +7,7 @@ import org.junit.Test
 
 class TavernBrowserRuntimeContextTest {
     @Test
-    fun `uses the most recent chat while preserving the current assistant selection`() {
+    fun `prefers the active chat assistant over management and settings assistants`() {
         val context = resolveTavernBrowserRuntimeContext(
             backStack = listOf(
                 Screen.Chat("older-chat"),
@@ -15,21 +15,35 @@ class TavernBrowserRuntimeContextTest {
                 Screen.Chat("active-chat"),
                 Screen.TavernHelper("assistant-from-management"),
             ),
-            assistantId = "current-assistant",
+            conversationAssistantId = "assistant-from-active-chat",
+            settingsAssistantId = "assistant-from-settings",
         )
 
         assertEquals("active-chat", context.conversationId)
-        assertEquals("current-assistant", context.assistantId)
+        assertEquals("assistant-from-active-chat", context.assistantId)
     }
 
     @Test
-    fun `keeps no conversation when the navigation stack has no chat`() {
+    fun `uses management assistant when no chat context is available`() {
         val context = resolveTavernBrowserRuntimeContext(
-            backStack = listOf(Screen.Setting, Screen.History),
-            assistantId = "current-assistant",
+            backStack = listOf(Screen.Setting, Screen.TavernHelper("assistant-from-management")),
+            conversationAssistantId = null,
+            settingsAssistantId = "assistant-from-settings",
         )
 
         assertNull(context.conversationId)
-        assertEquals("current-assistant", context.assistantId)
+        assertEquals("assistant-from-management", context.assistantId)
+    }
+
+    @Test
+    fun `uses settings assistant only without chat or management context`() {
+        val context = resolveTavernBrowserRuntimeContext(
+            backStack = listOf(Screen.Setting, Screen.History),
+            conversationAssistantId = null,
+            settingsAssistantId = "assistant-from-settings",
+        )
+
+        assertNull(context.conversationId)
+        assertEquals("assistant-from-settings", context.assistantId)
     }
 }

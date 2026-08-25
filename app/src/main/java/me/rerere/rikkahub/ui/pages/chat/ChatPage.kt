@@ -307,8 +307,7 @@ private fun ChatPageContent(
     val assistant = remember(setting.assistants, conversation.assistantId) {
         setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
     }
-    // Keep the visible buttons aligned with the root-owned runtime session selection.
-    val tavernBrowserScripts = rememberTavernBrowserScripts(setting.assistantId.toString())
+    val tavernBrowserScripts = rememberTavernBrowserScripts(assistant.id.toString())
     val tavernHelperEligible = assistant.tavernCardJson != null || tavernBrowserScripts.isNotEmpty()
     val tavernPromptTraceEligible = remember(assistant, setting.assistants) {
         assistant.isTavernPromptTraceEligible(setting.assistants)

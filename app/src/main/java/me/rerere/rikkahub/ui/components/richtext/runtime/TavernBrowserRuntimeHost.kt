@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -25,6 +26,7 @@ import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScript
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptFolder
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptNode
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptRepository
+import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
 import org.json.JSONObject
 import org.koin.compose.koinInject
@@ -60,11 +62,35 @@ internal data class TavernBrowserRuntimeContext(
 
 internal fun resolveTavernBrowserRuntimeContext(
     backStack: List<NavKey>,
-    assistantId: String?,
-): TavernBrowserRuntimeContext = TavernBrowserRuntimeContext(
-    conversationId = (backStack.lastOrNull { it is Screen.Chat } as? Screen.Chat)?.id,
-    assistantId = assistantId,
-)
+    conversationAssistantId: String?,
+    settingsAssistantId: String?,
+): TavernBrowserRuntimeContext {
+    val chat = backStack.lastOrNull { it is Screen.Chat } as? Screen.Chat
+    val managementAssistantId = (backStack.lastOrNull { it is Screen.TavernHelper } as? Screen.TavernHelper)?.assistantId
+    return TavernBrowserRuntimeContext(
+        conversationId = chat?.id,
+        assistantId = if (chat != null) conversationAssistantId else managementAssistantId ?: settingsAssistantId,
+    )
+}
+
+@Composable
+internal fun rememberTavernBrowserRuntimeContext(
+    backStack: List<NavKey>,
+    settingsAssistantId: String?,
+): TavernBrowserRuntimeContext {
+    val conversationRepository: ConversationRepository = koinInject()
+    val conversationId = (backStack.lastOrNull { it is Screen.Chat } as? Screen.Chat)?.id
+    val conversationAssistantId by produceState<String?>(initialValue = null, key1 = conversationId) {
+        value = conversationId
+            ?.let { runCatching { Uuid.parse(it) }.getOrNull() }
+            ?.let { conversationRepository.getConversationById(it)?.assistantId?.toString() }
+    }
+    return resolveTavernBrowserRuntimeContext(
+        backStack = backStack,
+        conversationAssistantId = conversationAssistantId,
+        settingsAssistantId = settingsAssistantId,
+    )
+}
 
 @Composable
 internal fun rememberTavernBrowserScripts(assistantId: String?): List<TavernHelperScript> {
