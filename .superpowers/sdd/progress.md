@@ -38,6 +38,17 @@
   channel exists yet — recorded deviation), TavernHelper-style replaceVariables/updateVariablesWith aliases in the
   JS shim; 12 new focused tests, full :app:testDebugUnitTest 117 classes / 816 tests green,
   :app:compileDebugKotlin green).
-- Current: fine-grained permissions, backup/restore, frontend streaming/error states, and final
+- Fine-grained permissions: complete (commit a8b79785; new bits allowMessageScripts/allowBrowserScripts
+  (both default true, backward compatible)/allowAssistantWrite (default false) plus allowedNetworkDomains
+  whitelist (empty = unrestricted), TavernScriptPermissionGrant persisted in Settings keyed by scriptId
+  with automatic invalidation when the source SHA-256 no longer matches (SettingsBackedTavernScriptGrantResolver
+  + grant/revoke helpers), permission store merges global defaults with per-script grants on every read
+  (booleans OR, domains union), character/preset variable writes gated on allowAssistantWrite across
+  set/delete/replace/update, message-frontend and resident-browser run bits wired into MarkdownWebView and
+  the browser runtime host, three new settings UI switches; 8 new focused tests, full
+  :app:testDebugUnitTest 118 classes / 824 tests green, :app:compileDebugKotlin green. Recorded gaps:
+  first-enable risk dialog and grant-confirmation UI not built (grant data model and resolution ready);
+  network domain whitelist is data-model only, no network RPC consumes it yet).
+- Current: backup/restore, frontend streaming/error states, and final
   instrumentation/device audit. Note: script-initiated generation is JVM-verified only; a real-device
   end-to-end run needs a configured provider and is part of the final device audit.
