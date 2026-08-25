@@ -63,6 +63,9 @@ internal fun buildTavernBrowserSessionHtml(script: TavernHelperScript): String {
             window.addEventListener('error',function(event){
               if(window.RikkahubScriptBridge)window.RikkahubScriptBridge.lifecycle('runtime_crash',event.message||'未捕获脚本错误');
             });
+            window.addEventListener('unhandledrejection',function(event){
+              if(window.RikkahubScriptBridge)window.RikkahubScriptBridge.lifecycle('runtime_crash',String(event.reason||'未处理 Promise 拒绝'));
+            });
             window.getScriptId=function(){return meta.id;};
             window.getScriptName=function(){return meta.name;};
             window.getScriptInfo=function(){return meta.info;};

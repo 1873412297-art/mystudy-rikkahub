@@ -28,6 +28,7 @@ import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernBrowserSessionRegistry
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernScriptDiagnosticEntry
 import me.rerere.rikkahub.ui.components.richtext.runtime.tavernScriptDiagnostics
+import me.rerere.rikkahub.ui.components.richtext.runtime.redactScriptDiagnostic
 import me.rerere.rikkahub.ui.components.ui.EmptyState
 
 @Composable
@@ -93,10 +94,10 @@ private fun copyScriptLogs(context: Context, entries: List<TavernScriptDiagnosti
         buildString {
             append(entry.timestamp).append(' ')
             append(entry.level).append(' ').append(entry.category).append(' ')
-            append(entry.message)
-            entry.rpcMethod?.let { append(" rpc=").append(it) }
+            append(redactScriptDiagnostic(entry.message))
+            entry.rpcMethod?.let { append(" rpc=").append(redactScriptDiagnostic(it)) }
             entry.durationMs?.let { append(" durationMs=").append(it) }
-            entry.error?.let { append(" error=").append(it) }
+            entry.error?.let { append(" error=").append(redactScriptDiagnostic(it)) }
         }
     }
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

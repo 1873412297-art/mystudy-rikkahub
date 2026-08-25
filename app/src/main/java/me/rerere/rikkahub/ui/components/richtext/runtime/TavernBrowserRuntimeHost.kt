@@ -216,6 +216,17 @@ internal fun TavernBrowserRuntimeHost(
                             error = detail.takeIf { it.isNotBlank() },
                         )
                     },
+                    onWebViewRendererCrashed = { didCrash ->
+                        val detail = if (didCrash) "WebView 渲染进程崩溃" else "WebView 渲染进程被系统终止"
+                        tavernScriptDiagnostics.setStatus(script.id, TavernScriptRuntimeStatus.RUNTIME_CRASH)
+                        tavernScriptDiagnostics.record(
+                            scriptId = script.id,
+                            level = TavernScriptDiagnosticLevel.ERROR,
+                            category = "renderer",
+                            message = detail,
+                            error = detail,
+                        )
+                    },
                     additionalJavascriptInterface = "RikkahubScriptBridge" to scriptBridge,
                 )
             }

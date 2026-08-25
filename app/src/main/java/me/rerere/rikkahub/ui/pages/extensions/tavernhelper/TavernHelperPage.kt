@@ -59,6 +59,7 @@ import me.rerere.rikkahub.data.ai.tavernhelper.searchTavernHelperNodes
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernScriptRuntimeStatus
+import me.rerere.rikkahub.ui.components.richtext.runtime.effectiveTavernScriptStatus
 import me.rerere.rikkahub.ui.components.richtext.runtime.tavernScriptDiagnostics
 import me.rerere.rikkahub.ui.components.richtext.runtime.tavernScriptStatusLabel
 import me.rerere.rikkahub.ui.components.ui.EmptyState
@@ -421,7 +422,7 @@ private fun ScriptNodeCard(
                         "${node.scripts.size} 个脚本"
                     } else {
                         val script = node as TavernHelperScript
-                        "${script.info}\n状态：${tavernScriptStatusLabel(scriptDisplayStatus(script, runtimeStatuses))}"
+                        "${script.info}\n状态：${tavernScriptStatusLabel(effectiveTavernScriptStatus(script.enabled, runtimeStatus = runtimeStatuses[script.id]))}"
                     },
                 )
             },
@@ -433,7 +434,7 @@ private fun ScriptNodeCard(
                 ListItem(
                     headlineContent = { Text(child.name.ifBlank { "未命名脚本" }) },
                     supportingContent = {
-                        Text("状态：${tavernScriptStatusLabel(scriptDisplayStatus(child, runtimeStatuses))}")
+                        Text("状态：${tavernScriptStatusLabel(effectiveTavernScriptStatus(child.enabled, node.enabled, runtimeStatuses[child.id]))}")
                     },
                     trailingContent = { Switch(child.enabled, onCheckedChange = { onEnabled(child, it) }) },
                 )
@@ -464,14 +465,6 @@ private fun ScriptNodeCard(
             IconButton(onClick = { onDelete(node) }) { Icon(HugeIcons.Delete01, "删除") }
         }
     }
-}
-
-private fun scriptDisplayStatus(
-    script: TavernHelperScript,
-    runtimeStatuses: Map<String, TavernScriptRuntimeStatus>,
-): TavernScriptRuntimeStatus = when {
-    !script.enabled -> TavernScriptRuntimeStatus.DISABLED
-    else -> runtimeStatuses[script.id] ?: tavernScriptDiagnostics.statusFor(true, script.id)
 }
 
 private data class TavernHelperTransferRequest(

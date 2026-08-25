@@ -4,6 +4,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class TavernScriptDiagnosticsTest {
     @Test
@@ -42,6 +45,24 @@ class TavernScriptDiagnosticsTest {
     }
 
     @Test
+    fun `redacts JSON cookie basic authorization token api key and custom header values`() {
+        val store = TavernScriptDiagnosticsStore()
+        store.record(
+            scriptId = "one",
+            level = TavernScriptDiagnosticLevel.INFO,
+            category = "console",
+            message = """{"headers":{"Cookie":"session=raw-cookie","Authorization":"Basic dXNlcjpwYXNz","X-Company-Trace":"custom-header-secret"},"api_key":"api-secret","token":"token-secret"}""",
+        )
+
+        val message = store.entries("one").single().message
+        assertFalse(message.contains("raw-cookie"))
+        assertFalse(message.contains("dXNlcjpwYXNz"))
+        assertFalse(message.contains("custom-header-secret"))
+        assertFalse(message.contains("api-secret"))
+        assertFalse(message.contains("token-secret"))
+    }
+
+    @Test
     fun `keeps diagnostics isolated by script and clear affects only selected script`() {
         val store = TavernScriptDiagnosticsStore()
         store.record("one", TavernScriptDiagnosticLevel.INFO, "console", "one-log")
@@ -61,5 +82,44 @@ class TavernScriptDiagnosticsTest {
         assertEquals(TavernScriptRuntimeStatus.DISABLED, store.statusFor(false, "one"))
         assertEquals("超出运行上限", tavernScriptStatusLabel(TavernScriptRuntimeStatus.OVER_LIMIT))
         assertEquals("加载失败", tavernScriptStatusLabel(TavernScriptRuntimeStatus.LOAD_FAILED))
+    }
+
+    @Test
+    fun `folder disabled makes an otherwise running child disabled`() {
+        assertEquals(
+            TavernScriptRuntimeStatus.DISABLED,
+            effectiveTavernScriptStatus(
+                scriptEnabled = true,
+                folderEnabled = false,
+                runtimeStatus = TavernScriptRuntimeStatus.RUNNING,
+            ),
+        )
+    }
+
+    @Test
+    fun `concurrent script updates retain every status log and revision`() {
+        val store = TavernScriptDiagnosticsStore()
+        val workers = 64
+        val ready = CountDownLatch(workers)
+        val start = CountDownLatch(1)
+        val done = CountDownLatch(workers)
+        val executor = Executors.newFixedThreadPool(workers)
+        repeat(workers) { index ->
+            executor.execute {
+                ready.countDown()
+                start.await()
+                store.setStatus("script-$index", TavernScriptRuntimeStatus.RUNNING)
+                store.record("script-$index", TavernScriptDiagnosticLevel.INFO, "console", "log-$index")
+                done.countDown()
+            }
+        }
+        assertTrue(ready.await(5, TimeUnit.SECONDS))
+        start.countDown()
+        assertTrue(done.await(5, TimeUnit.SECONDS))
+        executor.shutdown()
+
+        assertEquals(workers, store.statuses.value.size)
+        assertEquals(workers, store.revision.value)
+        repeat(workers) { index -> assertEquals(listOf("log-$index"), store.entries("script-$index").map { it.message }) }
     }
 }

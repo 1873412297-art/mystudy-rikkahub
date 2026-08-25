@@ -56,3 +56,43 @@ This report is included in the focused diagnostics commit at the final `HEAD` of
 
 - Diagnostics are intentionally process-local, so history is cleared on process death.
 - Existing project-wide Compose/Kotlin deprecation and opt-in warnings remain; this task introduces no build errors.
+
+## Review fix: redaction, concurrency, runtime failure, and folder state
+
+### Correction to initial TDD record
+
+The initial report accurately recorded the two HTML-contract RED runs. It did **not** contain separate pre-implementation RED command records for the first ring-buffer and selection tests; those tests were added after the first implementation. This is a documentation gap in the initial pass, not retroactive RED evidence. The review-fix cases below were written and observed RED before their corresponding production changes.
+
+### RED evidence
+
+1. Added JSON Cookie, Basic Authorization, token/API key, and arbitrary `headers`-container custom-header regression coverage; added the 64-worker concurrent update test; and added the `unhandledrejection` HTML contract. Before production changes, ran:
+
+   ```powershell
+   .\gradlew.bat :app:testDebugUnitTest --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernScriptDiagnosticsTest' --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernBrowserSessionHtmlTest'
+   ```
+
+   Result: expected failures in JSON redaction (`:58`), concurrent state/revision retention (`:109`), and the missing `unhandledrejection` contract (`TavernBrowserSessionHtmlTest.kt:49`).
+
+2. Added the folder-effective-status test before introducing its pure mapping API, then ran:
+
+   ```powershell
+   .\gradlew.bat :app:testDebugUnitTest --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernScriptDiagnosticsTest'
+   ```
+
+   Result: expected test-compilation RED: unresolved `effectiveTavernScriptStatus`, demonstrating the missing pure mapping API.
+
+### GREEN evidence
+
+- `TavernScriptDiagnosticsStore` now uses atomic `MutableStateFlow.update` for status and revision updates; entries remain guarded by the shared lock.
+- Complete JSON objects/arrays are recursively redacted. Any object key containing `header` redacts every contained value, while Authorization, Cookie, API-key, token, secret, and password keys are independently redacted. Regex fallback covers non-JSON header-style strings. Copying applies the same sanitizer again.
+- Session HTML reports `unhandledrejection` as `runtime_crash`. `MarkdownWebView` reports main-frame load errors and safely handles `onRenderProcessGone` by reporting the crash, destroying the dead WebView, and returning `true`.
+- `effectiveTavernScriptStatus` gives a disabled folder precedence over a child's old runtime state.
+
+```powershell
+.\gradlew.bat :app:testDebugUnitTest --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernScriptDiagnosticsTest' --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernBrowserSessionHtmlTest' --tests 'me.rerere.rikkahub.ui.components.richtext.runtime.TavernBrowserScriptSelectionTest'
+# BUILD SUCCESSFUL (10 focused JVM tests)
+```
+
+### Review-fix commit
+
+The review fix is included in the subsequent final `HEAD` commit on `codex/port-private-to-2.4.10`.

@@ -46,6 +46,8 @@ class TavernBrowserSessionHtmlTest {
         assertTrue(html.contains("console.debug"))
         assertTrue(html.contains("console.error"))
         assertTrue(html.contains("lifecycle('paused')"))
+        assertTrue(html.contains("unhandledrejection"))
+        assertTrue(html.contains("runtime_crash"))
         assertTrue(html.contains("script-id"))
     }
 }

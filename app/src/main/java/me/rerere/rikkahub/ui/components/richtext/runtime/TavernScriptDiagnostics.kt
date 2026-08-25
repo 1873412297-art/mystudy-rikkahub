@@ -2,6 +2,12 @@ package me.rerere.rikkahub.ui.components.richtext.runtime
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 internal enum class TavernScriptRuntimeStatus {
     DISABLED,
@@ -73,23 +79,23 @@ internal class TavernScriptDiagnosticsStore(
             scriptEntries.addLast(entry)
             while (scriptEntries.size > MAX_ENTRIES_PER_SCRIPT) scriptEntries.removeFirst()
         }
-        _revision.value += 1
+        _revision.update { it + 1 }
     }
 
     fun setStatus(scriptId: String, status: TavernScriptRuntimeStatus) {
-        _statuses.value = _statuses.value + (scriptId to status)
+        _statuses.update { it + (scriptId to status) }
     }
 
     fun applySelection(activeIds: Set<String>, overLimitIds: Set<String>) {
-        _statuses.value = _statuses.value.toMutableMap().apply {
+        _statuses.update { old -> old.toMutableMap().apply {
             overLimitIds.forEach { put(it, TavernScriptRuntimeStatus.OVER_LIMIT) }
             activeIds.forEach { id -> if (this[id] == TavernScriptRuntimeStatus.OVER_LIMIT) put(id, TavernScriptRuntimeStatus.PAUSED) }
-        }
+        } }
     }
 
     fun clear(scriptId: String) {
         synchronized(lock) { entries.remove(scriptId) }
-        _revision.value += 1
+        _revision.update { it + 1 }
     }
 
     companion object {
@@ -109,8 +115,42 @@ internal fun tavernScriptStatusLabel(status: TavernScriptRuntimeStatus): String 
     TavernScriptRuntimeStatus.OVER_LIMIT -> "超出运行上限"
 }
 
-internal fun redactScriptDiagnostic(value: String): String = value
-    .replace(Regex("(?i)(authorization\\s*[:=]\\s*(?:bearer\\s+)?)[^\\s,;]+"), "$1[已隐藏]")
-    .replace(Regex("(?i)(bearer\\s+)[A-Za-z0-9._~+/-]+"), "$1[已隐藏]")
+internal fun effectiveTavernScriptStatus(
+    scriptEnabled: Boolean,
+    folderEnabled: Boolean = true,
+    runtimeStatus: TavernScriptRuntimeStatus? = null,
+): TavernScriptRuntimeStatus = when {
+    !folderEnabled || !scriptEnabled -> TavernScriptRuntimeStatus.DISABLED
+    else -> runtimeStatus ?: TavernScriptRuntimeStatus.PAUSED
+}
+
+internal fun redactScriptDiagnostic(value: String): String = redactJsonDiagnostic(value) ?: value
+    .replace(Regex("(?i)(authorization\\s*[:=]\\s*)(?:basic|bearer)\\s+[^\\s,;]+"), "$1[已隐藏]")
+    .replace(Regex("(?i)(authorization\\s*[:=]\\s*)[^\\s,;]+"), "$1[已隐藏]")
     .replace(Regex("(?i)(cookie\\s*[:=]\\s*)[^\\r\\n]+"), "$1[已隐藏]")
-    .replace(Regex("(?i)((?:x-api-key|api[_-]?key|token|secret|password)\\s*[:=]\\s*)[^\\s,;]+"), "$1[已隐藏]")
+    .replace(Regex("(?i)((?:x-[a-z0-9-]+|x-api-key|api[_ -]?key|token|secret|password)\\s*[:=]\\s*)[^\\s,;]+"), "$1[已隐藏]")
+    .replace(Regex("(?i)(bearer\\s+)[A-Za-z0-9._~+/-]+"), "$1[已隐藏]")
+
+private fun redactJsonDiagnostic(value: String): String? = runCatching {
+    Json.parseToJsonElement(value)
+}.getOrNull()?.takeIf { it is JsonObject || it is JsonArray }?.let {
+    redactJsonElement(it).toString()
+}
+
+private fun redactJsonElement(element: JsonElement, redactAllValues: Boolean = false): JsonElement = when (element) {
+    is JsonObject -> JsonObject(element.mapValues { (key, child) ->
+        val headerContainer = key.contains("header", ignoreCase = true)
+        when {
+            redactAllValues || key.isSensitiveDiagnosticKey() -> JsonPrimitive("[已隐藏]")
+            else -> redactJsonElement(child, headerContainer)
+        }
+    })
+    is JsonArray -> JsonArray(element.map { redactJsonElement(it, redactAllValues) })
+    else -> if (redactAllValues) JsonPrimitive("[已隐藏]") else element
+}
+
+private fun String.isSensitiveDiagnosticKey(): Boolean = lowercase().let { key ->
+    key == "authorization" || key == "cookie" ||
+        key.contains("api_key") || key.contains("api-key") || key.contains("api key") ||
+        key.contains("token") || key.contains("secret") || key.contains("password")
+}
