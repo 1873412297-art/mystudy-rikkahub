@@ -60,6 +60,16 @@ internal data class TavernBrowserRuntimeContext(
     val assistantId: String?,
 )
 
+internal data class TavernBrowserConversationAssistantResolution(
+    val sourceConversationId: String?,
+    val assistantId: String?,
+)
+
+internal fun assistantIdForActiveConversation(
+    activeConversationId: String?,
+    resolution: TavernBrowserConversationAssistantResolution,
+): String? = resolution.assistantId.takeIf { resolution.sourceConversationId == activeConversationId }
+
 internal fun resolveTavernBrowserRuntimeContext(
     backStack: List<NavKey>,
     conversationAssistantId: String?,
@@ -69,7 +79,7 @@ internal fun resolveTavernBrowserRuntimeContext(
     val managementAssistantId = (backStack.lastOrNull { it is Screen.TavernHelper } as? Screen.TavernHelper)?.assistantId
     return TavernBrowserRuntimeContext(
         conversationId = chat?.id,
-        assistantId = if (chat != null) conversationAssistantId else managementAssistantId ?: settingsAssistantId,
+        assistantId = conversationAssistantId ?: managementAssistantId ?: settingsAssistantId,
     )
 }
 
@@ -80,14 +90,23 @@ internal fun rememberTavernBrowserRuntimeContext(
 ): TavernBrowserRuntimeContext {
     val conversationRepository: ConversationRepository = koinInject()
     val conversationId = (backStack.lastOrNull { it is Screen.Chat } as? Screen.Chat)?.id
-    val conversationAssistantId by produceState<String?>(initialValue = null, key1 = conversationId) {
-        value = conversationId
+    val conversationAssistantResolution by produceState(
+        initialValue = TavernBrowserConversationAssistantResolution(null, null),
+        key1 = conversationId,
+    ) {
+        val assistantId = conversationId
             ?.let { runCatching { Uuid.parse(it) }.getOrNull() }
-            ?.let { conversationRepository.getConversationById(it)?.assistantId?.toString() }
+            ?.let { runCatching { conversationRepository.getConversationById(it) }.getOrNull() }
+            ?.assistantId
+            ?.toString()
+        value = TavernBrowserConversationAssistantResolution(conversationId, assistantId)
     }
     return resolveTavernBrowserRuntimeContext(
         backStack = backStack,
-        conversationAssistantId = conversationAssistantId,
+        conversationAssistantId = assistantIdForActiveConversation(
+            activeConversationId = conversationId,
+            resolution = conversationAssistantResolution,
+        ),
         settingsAssistantId = settingsAssistantId,
     )
 }
