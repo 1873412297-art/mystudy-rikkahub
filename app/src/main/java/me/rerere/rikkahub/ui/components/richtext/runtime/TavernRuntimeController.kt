@@ -158,6 +158,11 @@ internal class TavernRuntimeController(
                 "world.getEntries" -> getWorldEntries(request)
                 "world.upsertEntry" -> upsertWorldEntry(request)
                 "world.deleteEntry" -> deleteWorldEntry(request)
+                "world.listBooks" -> listWorldBooks(request)
+                "world.getBook" -> getWorldBook(request)
+                "world.createBook" -> createWorldBook(request)
+                "world.updateBook" -> updateWorldBook(request)
+                "world.deleteBook" -> deleteWorldBook(request)
                 "messages.list" -> listMessages(request)
                 "messages.get" -> getMessage(request)
                 "messages.getCurrent" -> getCurrentMessage(request)
@@ -341,6 +346,13 @@ internal class TavernRuntimeController(
     }
 
     private fun getWorldEntries(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        val book = request.params.getString("book")?.takeIf { it.isNotBlank() }
+        if (book != null) {
+            val found = worldRepository.getBook(book)
+                ?: return notFound(request, "Worldbook not found")
+            val entries = found["entries"] as? JsonArray ?: JsonArray(emptyList())
+            return TavernRuntimeResponse.success(request.id, entries)
+        }
         return TavernRuntimeResponse.success(request.id, JsonArray(worldRepository.listEntries()))
     }
 
@@ -362,6 +374,62 @@ internal class TavernRuntimeController(
         }
         return withRequiredStringParam(request, "id") { id ->
             TavernRuntimeResponse.success(request.id, JsonPrimitive(worldRepository.deleteEntry(id)))
+        }
+    }
+
+    private fun listWorldBooks(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        return TavernRuntimeResponse.success(request.id, JsonArray(worldRepository.listBooks()))
+    }
+
+    private fun getWorldBook(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        return withRequiredStringParam(request, "book") { book ->
+            val found = worldRepository.getBook(book)
+                ?: return@withRequiredStringParam notFound(request, "Worldbook not found")
+            TavernRuntimeResponse.success(request.id, found)
+        }
+    }
+
+    private fun createWorldBook(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowWorldWrite) {
+            return permissionDenied(request, "World write access is disabled for this script")
+        }
+        val name = request.params.getString("name")?.takeIf { it.isNotBlank() }
+            ?: return badRequest(request, "world.createBook requires params.name")
+        val entries = (request.params["entries"] as? JsonArray)
+            ?.mapNotNull { it as? JsonObject }
+            ?: emptyList()
+        val created = worldRepository.createBook(name, entries)
+            ?: return TavernRuntimeResponse.error(
+                request.id, "ALREADY_EXISTS", "Worldbook already exists: $name"
+            )
+        return TavernRuntimeResponse.success(request.id, created)
+    }
+
+    private fun updateWorldBook(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowWorldWrite) {
+            return permissionDenied(request, "World write access is disabled for this script")
+        }
+        val patch = request.params["patch"] as? JsonObject
+            ?: return badRequest(request, "world.updateBook requires params.patch object")
+        return withRequiredStringParam(request, "book") { book ->
+            val updated = worldRepository.updateBook(book, patch)
+                ?: return@withRequiredStringParam if (worldRepository.getBook(book) == null) {
+                    notFound(request, "Worldbook not found")
+                } else {
+                    TavernRuntimeResponse.error(
+                        request.id, "ALREADY_EXISTS", "Worldbook name is already in use"
+                    )
+                }
+            TavernRuntimeResponse.success(request.id, updated)
+        }
+    }
+
+    private fun deleteWorldBook(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowWorldWrite) {
+            return permissionDenied(request, "World write access is disabled for this script")
+        }
+        return withRequiredStringParam(request, "book") { book ->
+            TavernRuntimeResponse.success(request.id, JsonPrimitive(worldRepository.deleteBook(book)))
         }
     }
 

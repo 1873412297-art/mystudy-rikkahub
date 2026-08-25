@@ -42,6 +42,23 @@ class TavernRuntimeScriptTest {
     }
 
     @Test
+    fun `script exposes worldbook CRUD and TavernHelper style worldbook aliases`() {
+        val script = buildTavernRuntimeScript()
+
+        assertTrue(script.contains("world.listBooks"))
+        assertTrue(script.contains("world.getBook"))
+        assertTrue(script.contains("world.createBook"))
+        assertTrue(script.contains("world.updateBook"))
+        assertTrue(script.contains("world.deleteBook"))
+        assertTrue(script.contains("getWorldbookNames"))
+        assertTrue(script.contains("getWorldbook"))
+        assertTrue(script.contains("createWorldbook"))
+        assertTrue(script.contains("replaceWorldbook"))
+        assertTrue(script.contains("updateWorldbookWith"))
+        assertTrue(script.contains("deleteWorldbook"))
+    }
+
+    @Test
     fun `unsupported host capability shims remain callable and dispatch structured RPC methods`() {
         val script = buildTavernRuntimeScript()
 

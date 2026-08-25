@@ -185,9 +185,14 @@ internal fun buildTavernRuntimeScript(): String = """
       unsubscribe: function(name){ return call('events.unsubscribe', { name: name }); }
     },
     world: {
-      getEntries: function(){ return call('world.getEntries', {}); },
+      getEntries: function(book){ return call('world.getEntries', book ? { book: book } : {}); },
       upsertEntry: function(entry){ return call('world.upsertEntry', { entry: entry }); },
-      deleteEntry: function(id){ return call('world.deleteEntry', { id: id }); }
+      deleteEntry: function(id){ return call('world.deleteEntry', { id: id }); },
+      listBooks: function(){ return call('world.listBooks', {}); },
+      getBook: function(book){ return call('world.getBook', { book: book }); },
+      createBook: function(name, entries){ return call('world.createBook', { name: name, entries: entries || [] }); },
+      updateBook: function(book, patch){ return call('world.updateBook', { book: book, patch: patch || {} }); },
+      deleteBook: function(book){ return call('world.deleteBook', { book: book }); }
     },
     messages: {
       list: function(){ return call('messages.list', {}); },
@@ -210,6 +215,29 @@ internal fun buildTavernRuntimeScript(): String = """
       return Promise.all(keys.map(function(key){
         return api.variables.set(key, vars[key], scope);
       })).then(function(){ return true; });
+    },
+    getWorldbookNames: function(){
+      return api.world.listBooks().then(function(books){
+        return books.map(function(book){ return book.name; });
+      });
+    },
+    getWorldbook: function(name){
+      return api.world.getBook(name).then(function(book){ return book.entries || []; });
+    },
+    createWorldbook: function(name, entries){
+      return api.world.createBook(name, entries || []).then(function(){ return true; });
+    },
+    replaceWorldbook: function(name, entries){
+      return api.world.updateBook(name, { entries: entries || [] }).then(function(){ return true; });
+    },
+    updateWorldbookWith: function(name, updater){
+      return api.world.getBook(name).then(function(book){
+        var updated = updater(book.entries || []);
+        return api.world.updateBook(name, { entries: updated || [] }).then(function(){ return updated || []; });
+      });
+    },
+    deleteWorldbook: function(name){
+      return api.world.deleteBook(name);
     }
   };
 
