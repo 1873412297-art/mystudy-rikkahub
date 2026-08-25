@@ -190,8 +190,13 @@ internal fun buildTavernRuntimeScript(): String = """
       deleteEntry: function(id){ return call('world.deleteEntry', { id: id }); }
     },
     messages: {
+      list: function(){ return call('messages.list', {}); },
+      get: function(id){ return call('messages.get', { id: id }); },
       getCurrent: function(){ return call('messages.getCurrent', {}); },
-      updateCurrent: function(patch){ return call('messages.updateCurrent', { patch: patch }); }
+      create: function(role, text){ return call('messages.create', { role: role, text: text }); },
+      update: function(id, text){ return call('messages.update', { id: id, text: text }); },
+      updateCurrent: function(patch){ return call('messages.updateCurrent', { patch: patch }); },
+      delete: function(id){ return call('messages.delete', { id: id }); }
     },
 
     // ── TavernHelper 风格别名（委托上面的 api.variables，保持单一实现） ──

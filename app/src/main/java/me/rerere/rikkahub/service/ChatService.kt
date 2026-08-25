@@ -1856,6 +1856,69 @@ class ChatService(
 
     // ---- 消息操作 ----
 
+    /** Selected branch used by the Tavern browser runtime; remains backed by the live conversation session. */
+    fun getTavernRuntimeMessages(conversationId: Uuid): List<UIMessage> =
+        getConversationFlow(conversationId).value.currentMessages
+
+    /** Appends a real message node, persists it, refreshes live state, and emits the matching Tavern event. */
+    suspend fun createTavernRuntimeMessage(
+        conversationId: Uuid,
+        role: MessageRole,
+        text: String,
+    ): UIMessage {
+        require(role == MessageRole.USER || role == MessageRole.ASSISTANT || role == MessageRole.SYSTEM)
+        val message = UIMessage(role = role, parts = listOf(UIMessagePart.Text(text)))
+        val currentConversation = getConversationFlow(conversationId).value
+        saveConversation(
+            conversationId,
+            currentConversation.copy(messageNodes = currentConversation.messageNodes + message.toMessageNode()),
+        )
+        tavernHostEventBus.emit(
+            type = if (role == MessageRole.USER) TavernHostEventType.MESSAGE_SENT else TavernHostEventType.MESSAGE_RECEIVED,
+            conversationId = conversationId,
+            payload = buildJsonObject {
+                put("messageId", message.id.toString())
+                put("role", role.name.lowercase())
+                put("preview", text.take(500))
+            },
+        )
+        return message
+    }
+
+    /** Updates the existing message object in-place; unlike [editMessage], this never creates a swipe. */
+    suspend fun updateTavernRuntimeMessageText(
+        conversationId: Uuid,
+        messageId: Uuid,
+        text: String,
+    ): UIMessage? {
+        val currentConversation = getConversationFlow(conversationId).value
+        var updatedMessage: UIMessage? = null
+        val updatedNodes = currentConversation.messageNodes.map { node ->
+            node.copy(messages = node.messages.map { message ->
+                if (message.id == messageId) {
+                    message.replaceRuntimeMessageText(text).also { updatedMessage = it }
+                } else {
+                    message
+                }
+            })
+        }
+        val result = updatedMessage ?: return null
+        saveConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
+        tavernHostEventBus.emit(
+            type = TavernHostEventType.MESSAGE_EDITED,
+            conversationId = conversationId,
+            payload = buildJsonObject { put("messageId", result.id.toString()) },
+        )
+        return result
+    }
+
+    /** Deletes an exact selected-branch message using the normal ChatService persistence and cleanup path. */
+    suspend fun deleteTavernRuntimeMessage(conversationId: Uuid, messageId: Uuid): Boolean {
+        if (getTavernRuntimeMessages(conversationId).none { it.id == messageId }) return false
+        deleteMessage(conversationId, messageId, failIfMissing = false)
+        return true
+    }
+
     suspend fun editMessage(
         conversationId: Uuid,
         messageId: Uuid,
@@ -2274,6 +2337,20 @@ class ChatService(
             localFallback
         }
     }
+}
+
+/** Replaces text while retaining the same message ID, role, attachments, annotations, and metadata. */
+internal fun UIMessage.replaceRuntimeMessageText(text: String): UIMessage {
+    var replaced = false
+    val updatedParts = parts.map { part ->
+        if (!replaced && part is UIMessagePart.Text) {
+            replaced = true
+            part.copy(text = text)
+        } else {
+            part
+        }
+    }
+    return copy(parts = if (replaced) updatedParts else listOf(UIMessagePart.Text(text)) + updatedParts)
 }
 
 /**

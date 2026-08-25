@@ -39,8 +39,10 @@ import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
 import me.rerere.rikkahub.data.ai.status.TavernHostEventType
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeBridge
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeController
+import me.rerere.rikkahub.ui.components.richtext.runtime.ChatServiceTavernRuntimeMessageGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimePermissionStore
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsBackedTavernWorldRepository
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernVariableGateway
@@ -134,6 +136,7 @@ internal fun MarkdownWebView(
 ) {
     val context = LocalContext.current
     val settingsStore: SettingsStore = koinInject()
+    val chatService: ChatService = koinInject()
     val statusVariableStore: StatusVariableStore = koinInject()
     val tavernHostEventBus: TavernHostEventBus = koinInject()
     val tavernScriptRegistry: TavernScriptRegistry = koinInject()
@@ -173,6 +176,7 @@ internal fun MarkdownWebView(
                 statusVariableStore = statusVariableStore,
                 settingsGateway = SettingsStoreTavernVariableGateway(settingsStore),
             ),
+            messageGateway = ChatServiceTavernRuntimeMessageGateway(chatService),
             hostEventFlow = tavernHostEventBus.events,
             hostEventScope = runtimeCoroutineScope,
             // 共享 Koin 单例注册表：WebView 侧注册的宏/命令对发送管线（ChatService）可见

@@ -23,6 +23,7 @@ import kotlinx.serialization.json.put
 import me.rerere.rikkahub.data.ai.slash.MacroExpandContext
 import me.rerere.rikkahub.data.ai.slash.TavernScriptRegistry
 import me.rerere.rikkahub.data.ai.status.TavernHostEvent
+import me.rerere.ai.core.MessageRole
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.uuid.Uuid
@@ -43,6 +44,7 @@ internal class TavernRuntimeController(
     private val worldRepository: TavernWorldRepository = TavernRuntimeWorldStore(),
     private val permissionStore: TavernRuntimePermissionStore = TavernRuntimePermissionStore(),
     private val variableGateway: TavernRuntimeVariableGateway = InMemoryTavernRuntimeVariableGateway(),
+    private val messageGateway: TavernRuntimeMessageGateway = InMemoryTavernRuntimeMessageGateway(),
     hostEventFlow: SharedFlow<TavernHostEvent>? = null,
     hostEventScope: CoroutineScope? = null,
     private val scriptRegistry: TavernScriptRegistry = TavernScriptRegistry(),
@@ -53,7 +55,7 @@ internal class TavernRuntimeController(
 
     // dispatch 在 WebView JavaBridge 线程上读，setContext/setCurrentMessage 在宿主线程上写
     @Volatile
-    private var currentMessage: JsonElement = JsonNull
+    private var injectedCurrentMessage: JsonElement? = null
 
     /** 宿主推送的上下文快照（SillyTavern.getContext 数据源） */
     @Volatile
@@ -113,7 +115,7 @@ internal class TavernRuntimeController(
 
     /** 宿主注入当前消息 JSON（messages.getCurrent 的数据源） */
     fun setCurrentMessage(message: JsonElement) {
-        currentMessage = message
+        injectedCurrentMessage = message
     }
 
     /**
@@ -153,8 +155,13 @@ internal class TavernRuntimeController(
                 "world.getEntries" -> getWorldEntries(request)
                 "world.upsertEntry" -> upsertWorldEntry(request)
                 "world.deleteEntry" -> deleteWorldEntry(request)
+                "messages.list" -> listMessages(request)
+                "messages.get" -> getMessage(request)
                 "messages.getCurrent" -> getCurrentMessage(request)
+                "messages.create" -> createMessage(request)
+                "messages.update" -> updateMessage(request)
                 "messages.updateCurrent" -> updateCurrentMessage(request)
+                "messages.delete" -> deleteMessage(request)
                 "macros.register" -> registerMacro(request)
                 "macros.remove" -> removeMacro(request)
                 "macros.list" -> listMacros(request)
@@ -353,18 +360,122 @@ internal class TavernRuntimeController(
     }
 
     private fun getCurrentMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        injectedCurrentMessage?.let { return TavernRuntimeResponse.success(request.id, it) }
+        val current = conversationId?.let { messageGateway.list(it).lastOrNull() }
+        if (current != null) return TavernRuntimeResponse.success(request.id, current.toJson())
         val fromContext = contextSnapshot?.get("chat")?.jsonArray
             ?.lastOrNull { it.jsonObject["isCurrent"]?.jsonPrimitive?.boolean == true }
             ?: contextSnapshot?.get("chat")?.jsonArray?.lastOrNull()
-        return TavernRuntimeResponse.success(request.id, fromContext ?: currentMessage)
+        if (fromContext != null) return TavernRuntimeResponse.success(request.id, fromContext)
+        return TavernRuntimeResponse.success(request.id, JsonNull)
     }
 
     private fun updateCurrentMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {
         if (!permissionStore.current().allowMessageWrite) {
             return permissionDenied(request, "Message write access is disabled for this script")
         }
-        currentMessage = request.params["patch"] ?: JsonNull
-        return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
+        val text = (request.params["patch"] as? JsonObject)?.getString("text")
+            ?: return badRequest(request, "messages.updateCurrent requires params.patch.text")
+        injectedCurrentMessage?.let { injected ->
+            val objectMessage = injected as? JsonObject
+                ?: return badRequest(request, "Injected current message cannot be patched")
+            val updated = buildJsonObject {
+                objectMessage.forEach { (key, value) -> put(key, value) }
+                put("text", text)
+            }
+            injectedCurrentMessage = updated
+            return TavernRuntimeResponse.success(request.id, updated)
+        }
+        val conversationId = activeConversationId(request) ?: return noActiveConversation(request)
+        val current = messageGateway.list(conversationId).lastOrNull()
+            ?: return notFound(request, "No current message exists")
+        val updated = messageGateway.update(conversationId, current.messageId, text)
+            ?: return notFound(request, "Message not found")
+        return TavernRuntimeResponse.success(request.id, updated.toJson())
+    }
+
+    private fun listMessages(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        val conversationId = activeConversationId(request) ?: return noActiveConversation(request)
+        return TavernRuntimeResponse.success(
+            request.id,
+            JsonArray(messageGateway.list(conversationId).map { it.toJson() }),
+        )
+    }
+
+    private fun getMessage(request: TavernRuntimeRequest): TavernRuntimeResponse = withMessageId(request) { messageId ->
+        val conversationId = activeConversationId(request) ?: return@withMessageId noActiveConversation(request)
+        val message = messageGateway.get(conversationId, messageId) ?: return@withMessageId notFound(request, "Message not found")
+        TavernRuntimeResponse.success(request.id, message.toJson())
+    }
+
+    private fun createMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowMessageWrite) {
+            return permissionDenied(request, "Message write access is disabled for this script")
+        }
+        val conversationId = activeConversationId(request) ?: return noActiveConversation(request)
+        val role = when (request.params.getString("role")) {
+            "user" -> MessageRole.USER
+            "assistant" -> MessageRole.ASSISTANT
+            "system" -> MessageRole.SYSTEM
+            null -> return badRequest(request, "messages.create requires params.role")
+            else -> return badRequest(request, "messages.create supports user, assistant, and system roles")
+        }
+        val text = request.params.getString("text")
+            ?.takeIf { it.isNotBlank() }
+            ?: return badRequest(request, "messages.create requires params.text")
+        return TavernRuntimeResponse.success(request.id, messageGateway.create(conversationId, role, text).toJson())
+    }
+
+    private fun updateMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowMessageWrite) {
+            return permissionDenied(request, "Message write access is disabled for this script")
+        }
+        return withMessageId(request) { messageId ->
+            val conversationId = activeConversationId(request) ?: return@withMessageId noActiveConversation(request)
+            val text = request.params.getString("text")
+                ?.takeIf { it.isNotBlank() }
+                ?: return@withMessageId badRequest(request, "messages.update requires params.text")
+            val updated = messageGateway.update(conversationId, messageId, text)
+                ?: return@withMessageId notFound(request, "Message not found")
+            TavernRuntimeResponse.success(request.id, updated.toJson())
+        }
+    }
+
+    private fun deleteMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        if (!permissionStore.current().allowMessageWrite) {
+            return permissionDenied(request, "Message write access is disabled for this script")
+        }
+        return withMessageId(request) { messageId ->
+            val conversationId = activeConversationId(request) ?: return@withMessageId noActiveConversation(request)
+            if (!messageGateway.delete(conversationId, messageId)) {
+                return@withMessageId notFound(request, "Message not found")
+            }
+            TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
+        }
+    }
+
+    private inline fun withMessageId(
+        request: TavernRuntimeRequest,
+        block: (String) -> TavernRuntimeResponse,
+    ): TavernRuntimeResponse {
+        val id = request.params.getString("id")?.takeIf { it.isNotBlank() }
+            ?: return badRequest(request, "${request.method} requires params.id")
+        return block(id)
+    }
+
+    private fun activeConversationId(request: TavernRuntimeRequest): Uuid? = conversationId
+
+    private fun noActiveConversation(request: TavernRuntimeRequest): TavernRuntimeResponse =
+        TavernRuntimeResponse.error(request.id, "NO_ACTIVE_CONVERSATION", "No active conversation is bound to this script")
+
+    private fun notFound(request: TavernRuntimeRequest, message: String): TavernRuntimeResponse =
+        TavernRuntimeResponse.error(request.id, "NOT_FOUND", message)
+
+    private fun TavernRuntimeMessage.toJson(): JsonObject = buildJsonObject {
+        put("messageId", messageId)
+        put("role", role)
+        put("text", text)
+        put("isCurrent", isCurrent)
     }
 
     private fun badRequest(request: TavernRuntimeRequest, message: String): TavernRuntimeResponse {
