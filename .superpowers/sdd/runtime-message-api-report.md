@@ -33,7 +33,7 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
 
 ## Concerns
 
-- The existing JVM test infrastructure has no lightweight constructible `ChatService`/Room fixture, so persistence and host-event dispatch are asserted through the production call chain and focused pure/controller tests rather than a new end-to-end Room test. Device/instrumented verification remains advisable.
+- Runtime calls now return `CONVERSATION_NOT_READY` until `initializeConversation` completes; mutations are serialized by the per-session runtime-message mutex and only emit events after persistence succeeds.
 
 ## Commit
 

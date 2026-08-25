@@ -8,6 +8,7 @@ import kotlin.uuid.Uuid
 
 /** Message operations exposed to Tavern browser scripts for one conversation. */
 internal interface TavernRuntimeMessageGateway {
+    fun isReady(conversationId: Uuid): Boolean = true
     fun list(conversationId: Uuid): List<TavernRuntimeMessage>
 
     fun get(conversationId: Uuid, messageId: String): TavernRuntimeMessage?
@@ -63,20 +64,23 @@ internal class InMemoryTavernRuntimeMessageGateway(
 internal class ChatServiceTavernRuntimeMessageGateway(
     private val chatService: ChatService,
 ) : TavernRuntimeMessageGateway {
-    override fun list(conversationId: Uuid): List<TavernRuntimeMessage> =
-        chatService.getTavernRuntimeMessages(conversationId).map(::toRuntimeMessage)
+    override fun isReady(conversationId: Uuid): Boolean = chatService.isTavernRuntimeConversationReady(conversationId)
+    override fun list(conversationId: Uuid): List<TavernRuntimeMessage> {
+        val messages = chatService.getTavernRuntimeMessages(conversationId)
+        return messages.mapIndexed { index, message -> toRuntimeMessage(message, index == messages.lastIndex) }
+    }
 
     override fun get(conversationId: Uuid, messageId: String): TavernRuntimeMessage? =
         list(conversationId).firstOrNull { it.messageId == messageId }
 
     override fun create(conversationId: Uuid, role: MessageRole, text: String): TavernRuntimeMessage = runBlocking {
-        toRuntimeMessage(chatService.createTavernRuntimeMessage(conversationId, role, text))
+        toRuntimeMessage(chatService.createTavernRuntimeMessage(conversationId, role, text), true)
     }
 
     override fun update(conversationId: Uuid, messageId: String, text: String): TavernRuntimeMessage? {
         val id = runCatching { Uuid.parse(messageId) }.getOrNull() ?: return null
         return runBlocking { chatService.updateTavernRuntimeMessageText(conversationId, id, text) }
-            ?.let(::toRuntimeMessage)
+            ?.let { toRuntimeMessage(it, true) }
     }
 
     override fun delete(conversationId: Uuid, messageId: String): Boolean {
@@ -84,10 +88,10 @@ internal class ChatServiceTavernRuntimeMessageGateway(
         return runBlocking { chatService.deleteTavernRuntimeMessage(conversationId, id) }
     }
 
-    private fun toRuntimeMessage(message: UIMessage): TavernRuntimeMessage = TavernRuntimeMessage(
+    private fun toRuntimeMessage(message: UIMessage, isCurrent: Boolean): TavernRuntimeMessage = TavernRuntimeMessage(
         messageId = message.id.toString(),
         messageRole = message.role,
         text = message.toText(),
-        isCurrent = true,
+        isCurrent = isCurrent,
     )
 }

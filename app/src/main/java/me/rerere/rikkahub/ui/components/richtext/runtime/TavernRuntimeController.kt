@@ -361,7 +361,9 @@ internal class TavernRuntimeController(
 
     private fun getCurrentMessage(request: TavernRuntimeRequest): TavernRuntimeResponse {
         injectedCurrentMessage?.let { return TavernRuntimeResponse.success(request.id, it) }
-        val current = conversationId?.let { messageGateway.list(it).lastOrNull() }
+        val conversationId = activeConversationId(request) ?: return noActiveConversation(request)
+        if (!messageGateway.isReady(conversationId)) return conversationNotReady(request)
+        val current = messageGateway.list(conversationId).lastOrNull()
         if (current != null) return TavernRuntimeResponse.success(request.id, current.toJson())
         val fromContext = contextSnapshot?.get("chat")?.jsonArray
             ?.lastOrNull { it.jsonObject["isCurrent"]?.jsonPrimitive?.boolean == true }
@@ -387,6 +389,7 @@ internal class TavernRuntimeController(
             return TavernRuntimeResponse.success(request.id, updated)
         }
         val conversationId = activeConversationId(request) ?: return noActiveConversation(request)
+        if (!messageGateway.isReady(conversationId)) return conversationNotReady(request)
         val current = messageGateway.list(conversationId).lastOrNull()
             ?: return notFound(request, "No current message exists")
         val updated = messageGateway.update(conversationId, current.messageId, text)
@@ -396,6 +399,7 @@ internal class TavernRuntimeController(
 
     private fun listMessages(request: TavernRuntimeRequest): TavernRuntimeResponse {
         val conversationId = activeConversationId(request) ?: return noActiveConversation(request)
+        if (!messageGateway.isReady(conversationId)) return conversationNotReady(request)
         return TavernRuntimeResponse.success(
             request.id,
             JsonArray(messageGateway.list(conversationId).map { it.toJson() }),
@@ -404,6 +408,7 @@ internal class TavernRuntimeController(
 
     private fun getMessage(request: TavernRuntimeRequest): TavernRuntimeResponse = withMessageId(request) { messageId ->
         val conversationId = activeConversationId(request) ?: return@withMessageId noActiveConversation(request)
+        if (!messageGateway.isReady(conversationId)) return@withMessageId conversationNotReady(request)
         val message = messageGateway.get(conversationId, messageId) ?: return@withMessageId notFound(request, "Message not found")
         TavernRuntimeResponse.success(request.id, message.toJson())
     }
@@ -413,6 +418,7 @@ internal class TavernRuntimeController(
             return permissionDenied(request, "Message write access is disabled for this script")
         }
         val conversationId = activeConversationId(request) ?: return noActiveConversation(request)
+        if (!messageGateway.isReady(conversationId)) return conversationNotReady(request)
         val role = when (request.params.getString("role")) {
             "user" -> MessageRole.USER
             "assistant" -> MessageRole.ASSISTANT
@@ -432,6 +438,7 @@ internal class TavernRuntimeController(
         }
         return withMessageId(request) { messageId ->
             val conversationId = activeConversationId(request) ?: return@withMessageId noActiveConversation(request)
+            if (!messageGateway.isReady(conversationId)) return@withMessageId conversationNotReady(request)
             val text = request.params.getString("text")
                 ?.takeIf { it.isNotBlank() }
                 ?: return@withMessageId badRequest(request, "messages.update requires params.text")
@@ -447,6 +454,7 @@ internal class TavernRuntimeController(
         }
         return withMessageId(request) { messageId ->
             val conversationId = activeConversationId(request) ?: return@withMessageId noActiveConversation(request)
+            if (!messageGateway.isReady(conversationId)) return@withMessageId conversationNotReady(request)
             if (!messageGateway.delete(conversationId, messageId)) {
                 return@withMessageId notFound(request, "Message not found")
             }
@@ -467,6 +475,9 @@ internal class TavernRuntimeController(
 
     private fun noActiveConversation(request: TavernRuntimeRequest): TavernRuntimeResponse =
         TavernRuntimeResponse.error(request.id, "NO_ACTIVE_CONVERSATION", "No active conversation is bound to this script")
+
+    private fun conversationNotReady(request: TavernRuntimeRequest): TavernRuntimeResponse =
+        TavernRuntimeResponse.error(request.id, "CONVERSATION_NOT_READY", "The active conversation has not loaded yet")
 
     private fun notFound(request: TavernRuntimeRequest, message: String): TavernRuntimeResponse =
         TavernRuntimeResponse.error(request.id, "NOT_FOUND", message)

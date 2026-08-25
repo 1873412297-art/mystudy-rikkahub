@@ -44,10 +44,13 @@ class ConversationSession(
     val isInUse: Boolean get() = refCount.get() > 0 || isGenerating
 
     private val groupDirectorMutex = Mutex()
+    private val runtimeMessageMutex = Mutex()
     private var groupReplyActiveJob: Job? = null
 
     suspend fun <T> withGroupDirectorLock(block: suspend () -> T): T =
         groupDirectorMutex.withLock { block() }
+
+    suspend fun <T> withRuntimeMessageLock(block: suspend () -> T): T = runtimeMessageMutex.withLock { block() }
 
     internal fun markGroupReplyStartedLocked(job: Job?) {
         groupReplyActiveJob = job

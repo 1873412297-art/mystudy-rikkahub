@@ -306,6 +306,7 @@ class ChatService(
 
     // 统一会话管理
     private val sessions = ConcurrentHashMap<Uuid, ConversationSession>()
+    private val tavernRuntimeReady = ConcurrentHashMap.newKeySet<Uuid>()
     private val _sessionsVersion = MutableStateFlow(0L)
 
     // 错误状态
@@ -406,6 +407,8 @@ class ChatService(
         return getOrCreateSession(conversationId).state
     }
 
+    fun isTavernRuntimeConversationReady(conversationId: Uuid): Boolean = conversationId in tavernRuntimeReady
+
     fun getGenerationJobStateFlow(conversationId: Uuid): Flow<Job?> {
         val session = sessions[conversationId] ?: return flowOf(null)
         return session.generationJob
@@ -494,6 +497,7 @@ class ChatService(
                 .copy(statusVariables = statusVariableStore.getValue(conversationId))
             updateConversation(conversationId, newConversation)
         }
+        tavernRuntimeReady += conversationId
     }
 
     // ---- 发送消息 ----
@@ -1866,23 +1870,16 @@ class ChatService(
         role: MessageRole,
         text: String,
     ): UIMessage {
-        require(role == MessageRole.USER || role == MessageRole.ASSISTANT || role == MessageRole.SYSTEM)
-        val message = UIMessage(role = role, parts = listOf(UIMessagePart.Text(text)))
-        val currentConversation = getConversationFlow(conversationId).value
-        saveConversation(
-            conversationId,
-            currentConversation.copy(messageNodes = currentConversation.messageNodes + message.toMessageNode()),
-        )
-        tavernHostEventBus.emit(
-            type = if (role == MessageRole.USER) TavernHostEventType.MESSAGE_SENT else TavernHostEventType.MESSAGE_RECEIVED,
-            conversationId = conversationId,
-            payload = buildJsonObject {
-                put("messageId", message.id.toString())
-                put("role", role.name.lowercase())
-                put("preview", text.take(500))
-            },
-        )
-        return message
+        return getOrCreateSession(conversationId).withRuntimeMessageLock {
+            check(isTavernRuntimeConversationReady(conversationId)) { "CONVERSATION_NOT_READY" }
+            require(role == MessageRole.USER || role == MessageRole.ASSISTANT || role == MessageRole.SYSTEM)
+            val message = UIMessage(role = role, parts = listOf(UIMessagePart.Text(text)))
+            val currentConversation = getConversationFlow(conversationId).value
+            saveConversation(conversationId, currentConversation.copy(messageNodes = currentConversation.messageNodes + message.toMessageNode()))
+            tavernHostEventBus.emit(if (role == MessageRole.USER) TavernHostEventType.MESSAGE_SENT else TavernHostEventType.MESSAGE_RECEIVED, conversationId,
+                buildJsonObject { put("messageId", message.id.toString()); put("role", role.name.lowercase()); put("preview", text.take(500)) })
+            message
+        }
     }
 
     /** Updates the existing message object in-place; unlike [editMessage], this never creates a swipe. */
@@ -1891,32 +1888,31 @@ class ChatService(
         messageId: Uuid,
         text: String,
     ): UIMessage? {
-        val currentConversation = getConversationFlow(conversationId).value
-        var updatedMessage: UIMessage? = null
-        val updatedNodes = currentConversation.messageNodes.map { node ->
-            node.copy(messages = node.messages.map { message ->
-                if (message.id == messageId) {
-                    message.replaceRuntimeMessageText(text).also { updatedMessage = it }
-                } else {
-                    message
-                }
-            })
+        return getOrCreateSession(conversationId).withRuntimeMessageLock {
+            check(isTavernRuntimeConversationReady(conversationId)) { "CONVERSATION_NOT_READY" }
+            val currentConversation = getConversationFlow(conversationId).value
+            var updatedMessage: UIMessage? = null
+            val updatedNodes = currentConversation.messageNodes.map { node ->
+                if (node.currentMessage.id != messageId) node else node.copy(messages = node.messages.map { message ->
+                    if (message.id == messageId) message.replaceRuntimeMessageText(text).also { updatedMessage = it } else message
+                })
+            }
+            val result = updatedMessage ?: return@withRuntimeMessageLock null
+            saveConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
+            tavernHostEventBus.emit(TavernHostEventType.MESSAGE_EDITED, conversationId,
+                buildJsonObject { put("messageId", result.id.toString()) })
+            result
         }
-        val result = updatedMessage ?: return null
-        saveConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
-        tavernHostEventBus.emit(
-            type = TavernHostEventType.MESSAGE_EDITED,
-            conversationId = conversationId,
-            payload = buildJsonObject { put("messageId", result.id.toString()) },
-        )
-        return result
     }
 
     /** Deletes an exact selected-branch message using the normal ChatService persistence and cleanup path. */
     suspend fun deleteTavernRuntimeMessage(conversationId: Uuid, messageId: Uuid): Boolean {
-        if (getTavernRuntimeMessages(conversationId).none { it.id == messageId }) return false
-        deleteMessage(conversationId, messageId, failIfMissing = false)
-        return true
+        return getOrCreateSession(conversationId).withRuntimeMessageLock {
+            check(isTavernRuntimeConversationReady(conversationId)) { "CONVERSATION_NOT_READY" }
+            if (getTavernRuntimeMessages(conversationId).none { it.id == messageId }) return@withRuntimeMessageLock false
+            deleteMessage(conversationId, messageId, failIfMissing = false)
+            true
+        }
     }
 
     suspend fun editMessage(

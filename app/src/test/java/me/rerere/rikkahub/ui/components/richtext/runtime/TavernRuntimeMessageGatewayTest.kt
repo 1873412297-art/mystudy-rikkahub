@@ -113,6 +113,14 @@ class TavernRuntimeMessageGatewayTest {
     }
 
     @Test
+    fun `getCurrent without injected message requires an active conversation`() {
+        val response = TavernRuntimeController().dispatch(request("messages.getCurrent"))
+
+        assertFalse(response.ok)
+        assertEquals("NO_ACTIVE_CONVERSATION", response.error!!.code)
+    }
+
+    @Test
     fun `runtime script exposes every TavernHelper message function through TH`() {
         val script = buildTavernRuntimeScript()
 

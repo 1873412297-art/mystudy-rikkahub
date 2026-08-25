@@ -355,7 +355,7 @@ class TavernRuntimeScriptApiTest {
     fun `messages getCurrent returns host injected message`() {
         val controller = TavernRuntimeController()
         val before = controller.dispatch(TavernRuntimeRequest(id = "m1", method = "messages.getCurrent"))
-        assertEquals(JsonNull, before.result)
+        assertEquals("NO_ACTIVE_CONVERSATION", before.error!!.code)
 
         controller.setCurrentMessage(buildJsonObject { put("id", "msg-1") })
         val after = controller.dispatch(TavernRuntimeRequest(id = "m2", method = "messages.getCurrent"))
