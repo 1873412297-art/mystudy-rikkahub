@@ -15,8 +15,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation3.runtime.NavKey
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.uuid.Uuid
+import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScope
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScopeType
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScript
@@ -51,6 +53,19 @@ internal object TavernBrowserSessionRegistry {
     }
 }
 
+internal data class TavernBrowserRuntimeContext(
+    val conversationId: String?,
+    val assistantId: String?,
+)
+
+internal fun resolveTavernBrowserRuntimeContext(
+    backStack: List<NavKey>,
+    assistantId: String?,
+): TavernBrowserRuntimeContext = TavernBrowserRuntimeContext(
+    conversationId = (backStack.lastOrNull { it is Screen.Chat } as? Screen.Chat)?.id,
+    assistantId = assistantId,
+)
+
 @Composable
 internal fun rememberTavernBrowserScripts(assistantId: String?): List<TavernHelperScript> {
     val repository: TavernHelperScriptRepository = koinInject()
@@ -76,13 +91,26 @@ internal fun rememberTavernBrowserScripts(assistantId: String?): List<TavernHelp
     }
 }
 
+/**
+ * Keeps browser scripts alive at the navigation root, independently of an individual chat entry.
+ */
+@Composable
+internal fun TavernBrowserRuntimeCoordinator(context: TavernBrowserRuntimeContext) {
+    TavernBrowserRuntimeHost(
+        scripts = rememberTavernBrowserScripts(context.assistantId),
+        conversationId = context.conversationId,
+    )
+}
+
 @Composable
 internal fun TavernBrowserRuntimeHost(
     scripts: List<TavernHelperScript>,
-    conversationId: String,
+    conversationId: String?,
 ) {
     val repository: TavernHelperScriptRepository = koinInject()
-    val conversationUuid = remember(conversationId) { runCatching { Uuid.parse(conversationId) }.getOrNull() }
+    val conversationUuid = remember(conversationId) {
+        conversationId?.let { runCatching { Uuid.parse(it) }.getOrNull() }
+    }
     Box(modifier = Modifier.size(1.dp)) {
         scripts.forEach { script ->
             key(script.id, script.content.hashCode()) {

@@ -102,7 +102,6 @@ import me.rerere.rikkahub.ui.pages.tavern.console.TavernPromptConsoleEntry
 import me.rerere.rikkahub.utils.ImageUtils
 import me.rerere.rikkahub.utils.base64Decode
 import me.rerere.rikkahub.utils.isAllowedFileType
-import me.rerere.rikkahub.ui.components.richtext.runtime.TavernBrowserRuntimeHost
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernBrowserScriptButtons
 import me.rerere.rikkahub.ui.components.richtext.runtime.rememberTavernBrowserScripts
 import me.rerere.rikkahub.utils.navigateToChatPage
@@ -308,7 +307,8 @@ private fun ChatPageContent(
     val assistant = remember(setting.assistants, conversation.assistantId) {
         setting.getAssistantById(conversation.assistantId) ?: setting.getCurrentAssistant()
     }
-    val tavernBrowserScripts = rememberTavernBrowserScripts(assistant.id.toString())
+    // Keep the visible buttons aligned with the root-owned runtime session selection.
+    val tavernBrowserScripts = rememberTavernBrowserScripts(setting.assistantId.toString())
     val tavernHelperEligible = assistant.tavernCardJson != null || tavernBrowserScripts.isNotEmpty()
     val tavernPromptTraceEligible = remember(assistant, setting.assistants) {
         assistant.isTavernPromptTraceEligible(setting.assistants)
@@ -564,10 +564,6 @@ private fun ChatPageContent(
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-            TavernBrowserRuntimeHost(
-                scripts = tavernBrowserScripts,
-                conversationId = conversation.id.toString(),
-            )
             // 动态状态栏（HUD）：最近一条含状态块的 assistant 消息的状态
             StatusHudBar(
                 conversation = conversation,

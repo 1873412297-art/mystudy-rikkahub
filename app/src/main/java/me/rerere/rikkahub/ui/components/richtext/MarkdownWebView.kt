@@ -158,7 +158,7 @@ internal fun MarkdownWebView(
     val runtimeCoroutineScope = rememberCoroutineScope()
     // headerSource 每次 RPC 调用读最新透传 lambda（assistant/model 头变化即时生效，不重建 controller）
     val latestHeaderSource by rememberUpdatedState(tavernHeaderSource)
-    val runtimeController = remember(settingsStore, tavernConversationId) {
+    val runtimeController = remember(settingsStore) {
         TavernRuntimeController(
             conversationId = tavernConversationId,
             worldRepository = SettingsBackedTavernWorldRepository(
@@ -176,8 +176,11 @@ internal fun MarkdownWebView(
             headerSource = { latestHeaderSource?.invoke() ?: emptyList() },
         )
     }
-    // controller 重建（tavernConversationId 变化）或离开组合时，取消旧 controller 的
-    // 宿主事件收集 job，避免旧 job 泄漏到组合结束才取消、期间继续向无人消费的 SharedFlow 空发
+    SideEffect {
+        runtimeController.updateConversationId(tavernConversationId)
+    }
+    // controller 离开组合时取消宿主事件收集 job，避免 job 泄漏到组合结束才取消、
+    // 期间继续向无人消费的 SharedFlow 空发。会话切换仅更新 controller 的绑定，不重建 WebView。
     DisposableEffect(runtimeController) {
         onDispose {
             runtimeController.cancelHostEventCollection()

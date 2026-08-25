@@ -32,27 +32,28 @@ internal interface TavernRuntimeVariableGateway {
  * 纯内存实现：controller 的缺省网关，用于无存储注入的场景（如预览与单元测试）。
  */
 internal class InMemoryTavernRuntimeVariableGateway : TavernRuntimeVariableGateway {
-    private val chatVariables = linkedMapOf<String, JsonElement>()
+    private val chatVariables = linkedMapOf<Uuid?, MutableMap<String, JsonElement>>()
     private val globalVariables = linkedMapOf<String, JsonElement>()
 
-    private fun storeFor(scope: String): MutableMap<String, JsonElement> {
-        return if (scope == TAVERN_VARIABLE_SCOPE_GLOBAL) globalVariables else chatVariables
+    private fun storeFor(conversationId: Uuid?, scope: String): MutableMap<String, JsonElement> {
+        return if (scope == TAVERN_VARIABLE_SCOPE_GLOBAL) globalVariables
+        else chatVariables.getOrPut(conversationId) { linkedMapOf() }
     }
 
     override fun get(conversationId: Uuid?, scope: String, key: String): JsonElement? {
-        return storeFor(scope)[key]
+        return storeFor(conversationId, scope)[key]
     }
 
     override fun list(conversationId: Uuid?, scope: String): JsonObject {
-        return JsonObject(storeFor(scope).toMap())
+        return JsonObject(storeFor(conversationId, scope).toMap())
     }
 
     override fun set(conversationId: Uuid?, scope: String, key: String, value: JsonElement) {
-        storeFor(scope)[key] = value
+        storeFor(conversationId, scope)[key] = value
     }
 
     override fun delete(conversationId: Uuid?, scope: String, key: String): Boolean {
-        return storeFor(scope).remove(key) != null
+        return storeFor(conversationId, scope).remove(key) != null
     }
 }
 

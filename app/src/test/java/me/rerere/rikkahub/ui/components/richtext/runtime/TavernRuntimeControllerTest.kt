@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -78,6 +79,48 @@ class TavernRuntimeControllerTest {
 
         assertTrue(setResponse.ok)
         assertEquals("1", getResponse.result!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `switching the active conversation moves chat variables to that conversation`() {
+        val firstConversation = Uuid.random()
+        val secondConversation = Uuid.random()
+        val controller = TavernRuntimeController(
+            conversationId = firstConversation,
+            permissionStore = TavernRuntimePermissionStore(
+                initial = TavernRuntimePermissions(allowVariablesWrite = true)
+            ),
+        )
+
+        controller.dispatch(
+            TavernRuntimeRequest(
+                id = "set-first",
+                method = "variables.set",
+                params = JsonObject(
+                    mapOf(
+                        "scope" to JsonPrimitive("chat"),
+                        "key" to JsonPrimitive("place"),
+                        "value" to JsonPrimitive("first"),
+                    )
+                ),
+            )
+        )
+
+        controller.updateConversationId(secondConversation)
+
+        val secondValue = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "get-second",
+                method = "variables.get",
+                params = JsonObject(
+                    mapOf(
+                        "scope" to JsonPrimitive("chat"),
+                        "key" to JsonPrimitive("place"),
+                    )
+                ),
+            )
+        )
+        assertEquals(JsonNull, secondValue.result)
     }
 
     @Test

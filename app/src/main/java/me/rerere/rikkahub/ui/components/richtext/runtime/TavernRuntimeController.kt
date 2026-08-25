@@ -38,7 +38,7 @@ private const val MAX_VARIABLE_TOTAL_BYTES = 512 * 1024
 private const val SEND_HOOK_TIMEOUT_MS = 500L
 
 internal class TavernRuntimeController(
-    private val conversationId: Uuid? = null,
+    conversationId: Uuid? = null,
     private val eventBus: TavernRuntimeEventBus = TavernRuntimeEventBus(),
     private val worldRepository: TavernWorldRepository = TavernRuntimeWorldStore(),
     private val permissionStore: TavernRuntimePermissionStore = TavernRuntimePermissionStore(),
@@ -48,6 +48,9 @@ internal class TavernRuntimeController(
     private val scriptRegistry: TavernScriptRegistry = TavernScriptRegistry(),
     private val headerSource: (() -> List<Pair<String, String>>)? = null,
 ) {
+    @Volatile
+    private var conversationId: Uuid? = conversationId
+
     // dispatch 在 WebView JavaBridge 线程上读，setContext/setCurrentMessage 在宿主线程上写
     @Volatile
     private var currentMessage: JsonElement = JsonNull
@@ -99,6 +102,13 @@ internal class TavernRuntimeController(
     fun cancelHostEventCollection() {
         hostEventJob?.cancel()
         hostEventJob = null
+    }
+
+    /**
+     * Rebinds this persistent browser session to the active chat without replacing its WebView.
+     */
+    fun updateConversationId(conversationId: Uuid?) {
+        this.conversationId = conversationId
     }
 
     /** 宿主注入当前消息 JSON（messages.getCurrent 的数据源） */
