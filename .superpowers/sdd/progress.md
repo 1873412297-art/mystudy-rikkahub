@@ -1,0 +1,11 @@
+# JS-Slash-Runner Native Integration Progress
+
+- Foundation batch: complete (commits 77b5114d..7fd3fccb; design, rendering, codec, persistence, management, runtime, card import/export, trust invalidation)
+- Inline frontend height regression: complete (commit cbcc2d48; JVM red-green, full Android unit/build, Huawei device screenshot and interaction evidence)
+- Script tree reorder and cross-scope move/copy: complete (commit b562a7e2; transaction-backed persistence and JVM coverage).
+- Render depth/streaming enforcement and main-entry assistant scope: complete (commit 969c5633; targeted tests, full Android unit suite and APK build green).
+- Root-owned browser runtime and safe conversation rebinding: complete (commits 3e09ea88..1a193f6b; 32 focused tests, Kotlin compile, three review rounds, final review clean).
+- Runtime status and diagnostics: complete (commits 3856f8cc..b533a99b; 500-entry per-script logs, redaction, console/lifecycle capture, over-limit status, native log page, targeted renderer recovery, final review no runtime findings; historical initial RED evidence gap recorded).
+- Structured unsupported RPC and diagnostics: complete (commits 04333968..f4fa9e9d; exact errors, callable shims, UTF-8 request/response caps, per-script RPC timing, final review clean).
+- Persistent runtime message API: complete (commits 81456f1e..a64f4bf3; selected-branch list/get/current/create/update/delete, exact-ID persistence, shared conversation mutation locking, lifecycle/readiness and assistant-deletion safety, 83 focused tests, final review approved).
+- Current: full build/device lifecycle verification, then remaining real compatibility APIs and permissions.
