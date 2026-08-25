@@ -29,7 +29,7 @@ class TavernRuntimeMessageGatewayTest {
 
         assertEquals(listOf("one", "two"), messages.map { it.messageId })
         assertEquals(listOf("user", "assistant"), messages.map { it.role })
-        assertTrue(messages.all { it.isCurrent })
+        assertEquals(listOf(false, true), messages.map { it.isCurrent })
         assertEquals("selected", gateway.get(conversationId, "two")?.text)
     }
 

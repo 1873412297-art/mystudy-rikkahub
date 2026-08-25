@@ -307,6 +307,51 @@ class ChatService(
     // 统一会话管理
     private val sessions = ConcurrentHashMap<Uuid, ConversationSession>()
     private val tavernRuntimeReady = ConcurrentHashMap.newKeySet<Uuid>()
+    private val tavernRuntimeMessageStore by lazy {
+        TavernRuntimeMessageMutationStore(object : TavernRuntimeMessagePersistenceAdapter {
+            override fun isReady(conversationId: Uuid): Boolean =
+                conversationId in tavernRuntimeReady
+
+            override suspend fun <T> mutate(conversationId: Uuid, block: suspend () -> T): T {
+                val session = getOrCreateSession(conversationId)
+                return session.withRefSuspend {
+                    session.withRuntimeMessageLock {
+                        check(sessions[conversationId] === session && isReady(conversationId)) {
+                            "CONVERSATION_NOT_READY"
+                        }
+                        block()
+                    }
+                }
+            }
+
+            override fun currentConversation(conversationId: Uuid): Conversation =
+                getConversationFlow(conversationId).value
+
+            override suspend fun persist(conversationId: Uuid, conversation: Conversation) {
+                saveConversation(conversationId, conversation)
+            }
+
+            override suspend fun persistAfterMessageRemoval(
+                conversationId: Uuid,
+                before: Conversation,
+                after: Conversation,
+            ) {
+                saveConversationAfterRemovingMessages(conversationId, before, after)
+            }
+
+            override fun emit(event: TavernRuntimeMessageMutationEvent) {
+                tavernHostEventBus.emit(
+                    type = event.type,
+                    conversationId = event.conversationId,
+                    payload = buildJsonObject {
+                        put("messageId", event.message.id.toString())
+                        put("role", event.message.role.name.lowercase())
+                        put("preview", event.message.toText().take(500))
+                    },
+                )
+            }
+        })
+    }
     private val _sessionsVersion = MutableStateFlow(0L)
 
     // 错误状态
@@ -1871,51 +1916,18 @@ class ChatService(
         conversationId: Uuid,
         role: MessageRole,
         text: String,
-    ): UIMessage {
-        return getOrCreateSession(conversationId).withRuntimeMessageLock {
-            check(isTavernRuntimeConversationReady(conversationId)) { "CONVERSATION_NOT_READY" }
-            require(role == MessageRole.USER || role == MessageRole.ASSISTANT || role == MessageRole.SYSTEM)
-            val message = UIMessage(role = role, parts = listOf(UIMessagePart.Text(text)))
-            val currentConversation = getConversationFlow(conversationId).value
-            saveConversation(conversationId, currentConversation.copy(messageNodes = currentConversation.messageNodes + message.toMessageNode()))
-            tavernHostEventBus.emit(if (role == MessageRole.USER) TavernHostEventType.MESSAGE_SENT else TavernHostEventType.MESSAGE_RECEIVED, conversationId,
-                buildJsonObject { put("messageId", message.id.toString()); put("role", role.name.lowercase()); put("preview", text.take(500)) })
-            message
-        }
-    }
+    ): UIMessage = tavernRuntimeMessageStore.create(conversationId, role, text)
 
     /** Updates the existing message object in-place; unlike [editMessage], this never creates a swipe. */
     suspend fun updateTavernRuntimeMessageText(
         conversationId: Uuid,
         messageId: Uuid,
         text: String,
-    ): UIMessage? {
-        return getOrCreateSession(conversationId).withRuntimeMessageLock {
-            check(isTavernRuntimeConversationReady(conversationId)) { "CONVERSATION_NOT_READY" }
-            val currentConversation = getConversationFlow(conversationId).value
-            var updatedMessage: UIMessage? = null
-            val updatedNodes = currentConversation.messageNodes.map { node ->
-                if (node.currentMessage.id != messageId) node else node.copy(messages = node.messages.map { message ->
-                    if (message.id == messageId) message.replaceRuntimeMessageText(text).also { updatedMessage = it } else message
-                })
-            }
-            val result = updatedMessage ?: return@withRuntimeMessageLock null
-            saveConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
-            tavernHostEventBus.emit(TavernHostEventType.MESSAGE_EDITED, conversationId,
-                buildJsonObject { put("messageId", result.id.toString()) })
-            result
-        }
-    }
+    ): UIMessage? = tavernRuntimeMessageStore.update(conversationId, messageId, text)
 
     /** Deletes an exact selected-branch message using the normal ChatService persistence and cleanup path. */
-    suspend fun deleteTavernRuntimeMessage(conversationId: Uuid, messageId: Uuid): Boolean {
-        return getOrCreateSession(conversationId).withRuntimeMessageLock {
-            check(isTavernRuntimeConversationReady(conversationId)) { "CONVERSATION_NOT_READY" }
-            if (getTavernRuntimeMessages(conversationId).none { it.id == messageId }) return@withRuntimeMessageLock false
-            deleteMessage(conversationId, messageId, failIfMissing = false)
-            true
-        }
-    }
+    suspend fun deleteTavernRuntimeMessage(conversationId: Uuid, messageId: Uuid): Boolean =
+        tavernRuntimeMessageStore.delete(conversationId, messageId)
 
     suspend fun editMessage(
         conversationId: Uuid,
@@ -2335,20 +2347,6 @@ class ChatService(
             localFallback
         }
     }
-}
-
-/** Replaces text while retaining the same message ID, role, attachments, annotations, and metadata. */
-internal fun UIMessage.replaceRuntimeMessageText(text: String): UIMessage {
-    var replaced = false
-    val updatedParts = parts.map { part ->
-        if (!replaced && part is UIMessagePart.Text) {
-            replaced = true
-            part.copy(text = text)
-        } else {
-            part
-        }
-    }
-    return copy(parts = if (replaced) updatedParts else listOf(UIMessagePart.Text(text)) + updatedParts)
 }
 
 /**

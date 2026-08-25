@@ -37,8 +37,12 @@ internal class InMemoryTavernRuntimeMessageGateway(
         messages.toMutableList()
     }
 
-    override fun list(conversationId: Uuid): List<TavernRuntimeMessage> =
-        messagesByConversation[conversationId].orEmpty().toList()
+    override fun list(conversationId: Uuid): List<TavernRuntimeMessage> {
+        val messages = messagesByConversation[conversationId].orEmpty()
+        return messages.mapIndexed { index, message ->
+            message.copy(isCurrent = index == messages.lastIndex)
+        }
+    }
 
     override fun get(conversationId: Uuid, messageId: String): TavernRuntimeMessage? =
         list(conversationId).firstOrNull { it.messageId == messageId }
