@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 import me.rerere.rikkahub.data.db.entity.TavernHelperScriptEntity
 
@@ -64,4 +65,16 @@ interface TavernHelperScriptDAO {
 
     @Query("DELETE FROM tavern_helper_script WHERE tombstone = 1")
     suspend fun purgeTombstones()
+
+    @Transaction
+    suspend fun transferNode(
+        deletedId: String?,
+        updatedAt: Long,
+        sourceEntities: List<TavernHelperScriptEntity>,
+        targetEntities: List<TavernHelperScriptEntity>,
+    ) {
+        deletedId?.let { markDeleted(it, updatedAt) }
+        if (sourceEntities.isNotEmpty()) upsertAll(sourceEntities)
+        upsertAll(targetEntities)
+    }
 }

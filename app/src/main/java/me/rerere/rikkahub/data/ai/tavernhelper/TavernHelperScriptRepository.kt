@@ -82,6 +82,37 @@ internal class TavernHelperScriptRepository(
         dao.markDeleted(id, now())
     }
 
+    suspend fun reorder(scope: TavernHelperScope, nodeId: String, offset: Int) {
+        val reordered = reorderTavernHelperNodes(mapper.toTrees(dao.getScope(scope.type.name, scope.id)), nodeId, offset)
+        dao.upsertAll(reordered.flatMapIndexed { index, node -> mapper.toEntities(node, scope, index) })
+    }
+
+    suspend fun transfer(
+        source: TavernHelperScope,
+        target: TavernHelperScope,
+        nodeId: String,
+        copy: Boolean,
+    ) {
+        require(source != target || copy) { "移动目标不能与当前作用域相同" }
+        val detached = detachTavernHelperNode(
+            mapper.toTrees(dao.getScope(source.type.name, source.id)),
+            nodeId,
+        )
+        val original = detached.node ?: error("脚本节点不存在")
+        val transferred = if (copy) original.copyForTavernHelperTransfer() else original
+        val targetOrder = dao.nextTopLevelOrder(target.type.name, target.id)
+        val sourceEntities = if (copy) emptyList() else detached.remaining.flatMapIndexed { index, node ->
+            mapper.toEntities(node, source, index)
+        }
+        val targetEntities = mapper.toEntities(transferred, target, targetOrder)
+        dao.transferNode(
+            deletedId = nodeId.takeUnless { copy },
+            updatedAt = now(),
+            sourceEntities = sourceEntities,
+            targetEntities = targetEntities,
+        )
+    }
+
     private fun TavernHelperScriptNode.withEnabledState(prior: Map<String, TavernHelperScript>): TavernHelperScriptNode = when (this) {
         is TavernHelperScript -> copy(enabled = prior[id]?.takeIf { it.content == content }?.enabled ?: false)
         is TavernHelperScriptFolder -> copy(

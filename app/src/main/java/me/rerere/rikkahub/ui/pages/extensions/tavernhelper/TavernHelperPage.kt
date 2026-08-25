@@ -81,6 +81,7 @@ internal fun TavernHelperPage(
     var pendingExportJson by remember { mutableStateOf<String?>(null) }
     var confirmScripts by rememberSaveable { mutableStateOf(false) }
     var pendingEnable by remember { mutableStateOf<TavernHelperScriptNode?>(null) }
+    var pendingTransfer by remember { mutableStateOf<TavernHelperTransferRequest?>(null) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -155,6 +156,8 @@ internal fun TavernHelperPage(
                 onDelete = vm::delete,
                 onEdit = { editing = it },
                 onDuplicate = vm::duplicate,
+                onReorder = vm::reorder,
+                onTransfer = { node, copy -> pendingTransfer = TavernHelperTransferRequest(node, copy) },
                 onExport = { node ->
                     pendingExportJson = vm.exportJson(node)
                     val prefix = if (node is TavernHelperScriptFolder) "酒馆助手脚本文件夹" else "酒馆助手脚本"
@@ -215,6 +218,18 @@ internal fun TavernHelperPage(
                 }) { Text("信任并启用") }
             },
             dismissButton = { TextButton(onClick = { pendingEnable = null }) { Text("取消") } },
+        )
+    }
+    pendingTransfer?.let { request ->
+        TransferScopeDialog(
+            current = selectedScope,
+            assistantId = assistantId,
+            copy = request.copy,
+            onDismiss = { pendingTransfer = null },
+            onConfirm = { target ->
+                vm.transfer(request.node, target, request.copy)
+                pendingTransfer = null
+            },
         )
     }
     error?.let { message ->
@@ -300,6 +315,8 @@ private fun ScriptList(
     onDelete: (TavernHelperScriptNode) -> Unit,
     onEdit: (TavernHelperScript) -> Unit,
     onDuplicate: (TavernHelperScriptNode) -> Unit,
+    onReorder: (TavernHelperScriptNode, Int) -> Unit,
+    onTransfer: (TavernHelperScriptNode, Boolean) -> Unit,
     onExport: (TavernHelperScriptNode) -> Unit,
 ) {
     val searchResult = remember(scripts, search) { searchTavernHelperNodes(scripts, search) }
@@ -350,7 +367,7 @@ private fun ScriptList(
             item { EmptyState(icon = HugeIcons.Puzzle, title = "暂无脚本", hint = "新增或导入脚本后会显示在这里") }
         }
         items(searchResult.nodes, key = { it.id }) { node ->
-            ScriptNodeCard(node, onEnabled, onDelete, onEdit, onDuplicate, onExport)
+            ScriptNodeCard(node, onEnabled, onDelete, onEdit, onDuplicate, onReorder, onTransfer, onExport)
         }
     }
 }
@@ -362,6 +379,8 @@ private fun ScriptNodeCard(
     onDelete: (TavernHelperScriptNode) -> Unit,
     onEdit: (TavernHelperScript) -> Unit,
     onDuplicate: (TavernHelperScriptNode) -> Unit,
+    onReorder: (TavernHelperScriptNode, Int) -> Unit,
+    onTransfer: (TavernHelperScriptNode, Boolean) -> Unit,
     onExport: (TavernHelperScriptNode) -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -382,23 +401,70 @@ private fun ScriptNodeCard(
                     headlineContent = { Text(child.name.ifBlank { "未命名脚本" }) },
                     trailingContent = { Switch(child.enabled, onCheckedChange = { onEnabled(child, it) }) },
                 )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = { onReorder(child, -1) }) { Text("上移") }
+                    TextButton(onClick = { onReorder(child, 1) }) { Text("下移") }
                     TextButton(onClick = { onEdit(child) }) { Text("编辑") }
                     TextButton(onClick = { onDuplicate(child) }) { Text("复制") }
+                    TextButton(onClick = { onTransfer(child, false) }) { Text("移动") }
+                    TextButton(onClick = { onTransfer(child, true) }) { Text("跨域复制") }
                     TextButton(onClick = { onExport(child) }) { Text("导出") }
                     IconButton(onClick = { onDelete(child) }) { Icon(HugeIcons.Delete01, "删除") }
                 }
             }
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = { onReorder(node, -1) }) { Text("上移") }
+            TextButton(onClick = { onReorder(node, 1) }) { Text("下移") }
             if (node is TavernHelperScript) {
                 TextButton(onClick = { onEdit(node) }) { Text("编辑") }
             }
             TextButton(onClick = { onDuplicate(node) }) { Text("复制") }
+            TextButton(onClick = { onTransfer(node, false) }) { Text("移动") }
+            TextButton(onClick = { onTransfer(node, true) }) { Text("跨域复制") }
             TextButton(onClick = { onExport(node) }) { Text("导出") }
             IconButton(onClick = { onDelete(node) }) { Icon(HugeIcons.Delete01, "删除") }
         }
     }
+}
+
+private data class TavernHelperTransferRequest(
+    val node: TavernHelperScriptNode,
+    val copy: Boolean,
+)
+
+@Composable
+private fun TransferScopeDialog(
+    current: TavernHelperScope,
+    assistantId: String?,
+    copy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (TavernHelperScope) -> Unit,
+) {
+    val targets = buildList {
+        add(TavernHelperScope(TavernHelperScopeType.GLOBAL) to "全局")
+        assistantId?.let { id ->
+            add(TavernHelperScope(TavernHelperScopeType.CHARACTER, id) to "角色卡")
+            add(TavernHelperScope(TavernHelperScopeType.ASSISTANT, id) to "助手/预设")
+        }
+    }.filterNot { it.first == current }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (copy) "复制到其他作用域" else "移动到其他作用域") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (targets.isEmpty()) {
+                    Text("请从聊天快捷入口进入，以选择当前角色卡或助手作用域。")
+                } else {
+                    targets.forEach { (scope, label) ->
+                        Button(modifier = Modifier.fillMaxWidth(), onClick = { onConfirm(scope) }) { Text(label) }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable

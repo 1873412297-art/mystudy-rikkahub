@@ -130,6 +130,22 @@ internal class TavernHelperVM(
         }
     }
 
+    fun reorder(node: TavernHelperScriptNode, offset: Int) {
+        val selectedScope = scope.value
+        viewModelScope.launch {
+            runCatching { repository.reorder(selectedScope, node.id, offset) }
+                .onFailure { error.value = it.message ?: "排序失败" }
+        }
+    }
+
+    fun transfer(node: TavernHelperScriptNode, target: TavernHelperScope, copy: Boolean) {
+        val selectedScope = scope.value
+        viewModelScope.launch {
+            runCatching { repository.transfer(selectedScope, target, node.id, copy) }
+                .onFailure { error.value = it.message ?: if (copy) "跨作用域复制失败" else "移动失败" }
+        }
+    }
+
     fun updateRenderSettings(update: (TavernHelperRenderSettings) -> TavernHelperRenderSettings) {
         viewModelScope.launch {
             settingsStore.update { current ->
