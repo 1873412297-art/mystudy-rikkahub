@@ -70,6 +70,23 @@
   832 tests green, :app:assembleDebug green. Recorded deviation: the spec's "mount only after root structure
   parseable" streaming gate is not separately implemented — the existing segment diff already tolerates partial
   structure, so no extra gate was added.)
-- Current: final instrumentation/device audit only. Note: script-initiated
-  generation is JVM-verified only; a real-device end-to-end run needs a configured provider and is part of
-  the final device audit.
+- Final device audit: complete (2026-08-26, Huawei MNA-AL00 XHD0223523008702, debug package
+  me.rerere.rikkahub.debug, arm64 APK of this branch). Verified end to end on the real device:
+  install + launch with no FATAL; tavern helper management page (render tab with 流式期间渲染/运行前端脚本/
+  允许 HTTPS 网络资源 switches, scripts tab) lists the smoke script with live 状态：运行中; the per-script
+  diagnostics log page shows lifecycle loading/loaded/running/paused and RPC events.subscribe entries;
+  chat-page script button tap -> TavernBrowserSessionRegistry.emitButton -> session WebView DOM dispatch
+  -> eventOn handler -> replaceVariables -> RikkahubScriptBridge.replaceData -> repository -> Room
+  (data_inline updated, verified by reading the DB together with its -wal file — main-file-only reads
+  miss uncheckpointed writes); an injected ```html message part renders as an inline frontend WebView
+  with correct content and height (screenshot audit-frontend-conv.png). Audit finding fixed in
+  f2771724: the browser-session diagnostics console capture wrapped debug/info/warn/error but not
+  console.log, so script log output was invisible; console.log now captured as INFO. Test-data repairs
+  during the audit (not app bugs): history list is assistant-scoped, so the legacy conversation only
+  appeared after repointing its assistant_id at the current 道家仙子美母 assistant; the 2.4.12 update
+  dialog overlays the UI on every cold start and blocked early probe taps. Audit limitations:
+  generation.* end-to-end not run — all 22 configured providers on the device have empty API keys;
+  the streaming throttle and frontend error card are JVM-verified only (no live stream / main-frame
+  failure was injected). Regression after the audit fix: :app:testDebugUnitTest 121 classes / 832
+  tests green, :app:compileDebugKotlin + :app:assembleDebug green, final APK reinstalled clean.
+- All planned work items are complete.
