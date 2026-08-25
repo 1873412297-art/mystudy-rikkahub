@@ -2,6 +2,7 @@ package me.rerere.rikkahub.service
 
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -35,6 +36,7 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.datastore.DisplaySetting
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.ai.status.StatusVariableStore
+import me.rerere.rikkahub.data.ai.status.JsonPatchOp
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.data.model.toMessageNode
@@ -208,6 +210,35 @@ class ChatServiceTest {
     }
 
     @Test
+    fun `initialization candidate renders variables in a temporary store before publish`() = runBlocking {
+        val conversationId = Uuid.random()
+        val globalStore = StatusVariableStore()
+        val initialVariables = buildJsonObject { put("hp", 10) }
+        globalStore.init(conversationId, initialVariables)
+
+        val candidate = renderInitializationStatusCandidate(conversationId, initialVariables) { temporaryStore ->
+            temporaryStore.applyPatch(
+                conversationId,
+                listOf(JsonPatchOp(op = "replace", path = "/hp", value = JsonPrimitive(20))),
+            )
+            UIMessage.assistant("<StatusPlaceHolderImpl/>")
+        }
+
+        assertEquals("<StatusPlaceHolderImpl/>", candidate.value.toText())
+        assertEquals("20", candidate.statusVariables["hp"]!!.jsonPrimitive.content)
+        assertEquals(initialVariables, globalStore.getValue(conversationId))
+
+        applyInitializedStatusVariables(
+            action = InitializationInstallAction.INSTALL,
+            store = globalStore,
+            conversationId = conversationId,
+            variables = candidate.statusVariables,
+        )
+
+        assertEquals(candidate.statusVariables, globalStore.getValue(conversationId))
+    }
+
+    @Test
     fun `assistant conversation deletion uses a stable session lock order`() {
         val firstId = Uuid.parse("00000000-0000-4000-8000-000000000003")
         val secondId = Uuid.parse("00000000-0000-4000-8000-000000000001")
@@ -224,7 +255,7 @@ class ChatServiceTest {
         val secondId = Uuid.parse("00000000-0000-4000-8000-000000000002")
         val attempted = mutableListOf<Uuid>()
 
-        val deleted = deleteAssistantConversationIds(
+        val result = deleteAssistantConversationIds(
             conversationIds = listOf(firstId, secondId),
             delete = { conversationId ->
                 attempted += conversationId
@@ -232,8 +263,28 @@ class ChatServiceTest {
             },
         )
 
-        assertFalse(deleted)
+        assertFalse(result.succeeded)
         assertEquals(listOf(firstId, secondId), attempted)
+    }
+
+    @Test
+    fun `assistant deletion records a thrown failure and continues later conversations`() = runBlocking {
+        val firstId = Uuid.parse("00000000-0000-4000-8000-000000000001")
+        val secondId = Uuid.parse("00000000-0000-4000-8000-000000000002")
+        val attempted = mutableListOf<Uuid>()
+
+        val result = deleteAssistantConversationIds(
+            conversationIds = listOf(firstId, secondId),
+            delete = { conversationId ->
+                attempted += conversationId
+                if (conversationId == firstId) error("delete failed")
+                true
+            },
+        )
+
+        assertEquals(listOf(firstId, secondId), attempted)
+        assertEquals(setOf(firstId), result.failedConversationIds)
+        assertTrue(result.errors.getValue(firstId).message!!.contains("delete failed"))
     }
 
     @Test

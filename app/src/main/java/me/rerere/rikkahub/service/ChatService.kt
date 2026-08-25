@@ -329,20 +329,51 @@ internal fun applyInitializedStatusVariables(
 internal fun orderedAssistantConversationDeletionIds(conversationIds: Collection<Uuid>): List<Uuid> =
     conversationIds.sortedBy(Uuid::toString)
 
+internal data class AssistantConversationDeletionResult(
+    val failedConversationIds: Set<Uuid>,
+    val errors: Map<Uuid, Throwable>,
+) {
+    val succeeded: Boolean get() = failedConversationIds.isEmpty()
+}
+
 internal suspend fun deleteAssistantConversationIds(
     conversationIds: List<Uuid>,
     delete: suspend (Uuid) -> Boolean,
-): Boolean {
-    var allDeleted = true
+): AssistantConversationDeletionResult {
+    val failedConversationIds = linkedSetOf<Uuid>()
+    val errors = linkedMapOf<Uuid, Throwable>()
     conversationIds.forEach { conversationId ->
-        if (!delete(conversationId)) allDeleted = false
+        try {
+            if (!delete(conversationId)) failedConversationIds += conversationId
+        } catch (error: Throwable) {
+            failedConversationIds += conversationId
+            errors[conversationId] = error
+        }
     }
-    return allDeleted
+    return AssistantConversationDeletionResult(failedConversationIds, errors)
 }
 
 /** A missing row may only be inserted by an initialized new conversation or an explicit creator. */
 internal fun canPersistConversation(exists: Boolean, isReady: Boolean, allowCreate: Boolean): Boolean =
     exists || isReady || allowCreate
+
+internal data class InitializationStatusCandidate<T>(
+    val value: T,
+    val statusVariables: JsonObject,
+)
+
+internal suspend fun <T> renderInitializationStatusCandidate(
+    conversationId: Uuid,
+    initialStatusVariables: JsonObject,
+    render: suspend (StatusVariableStore) -> T,
+): InitializationStatusCandidate<T> {
+    val temporaryStore = StatusVariableStore()
+    temporaryStore.init(conversationId, initialStatusVariables)
+    return InitializationStatusCandidate(
+        value = render(temporaryStore),
+        statusVariables = temporaryStore.getValue(conversationId),
+    )
+}
 
 internal fun resolveLocalGroupTurnSelection(
     director: GroupDirectorState,
@@ -401,6 +432,7 @@ class ChatService(
 
     // 统一会话管理
     private val sessions = ConcurrentHashMap<Uuid, ConversationSession>()
+    private val deletingAssistantIds = ConcurrentHashMap.newKeySet<Uuid>()
     private val tavernRuntimeReadiness = TavernRuntimeConversationReadiness()
     private val tavernRuntimeMessageStore by lazy {
         TavernRuntimeMessageMutationStore(object : TavernRuntimeMessagePersistenceAdapter {
@@ -505,10 +537,27 @@ class ChatService(
         conversationId: Uuid,
         block: suspend (ConversationSession) -> T,
     ): T {
-        val session = getOrCreateSession(conversationId)
-        return session.withRefSuspend {
-            mutateConversation(session) { block(session) }
+        repeat(2) {
+            val session = getOrCreateSession(conversationId)
+            if (session.state.value.assistantId in deletingAssistantIds) {
+                throw IllegalStateException("ASSISTANT_DELETION_IN_PROGRESS")
+            }
+            try {
+                return session.withRefSuspend {
+                    session.withConversationMutationLock {
+                        if (sessions[conversationId] !== session) {
+                            throw IllegalStateException("CONVERSATION_SESSION_REPLACED")
+                        }
+                        block(session)
+                    }
+                }
+            } catch (error: IllegalStateException) {
+                if (error.message !in setOf("CONVERSATION_SESSION_CLOSED", "CONVERSATION_SESSION_REPLACED")) {
+                    throw error
+                }
+            }
         }
+        throw IllegalStateException("CONVERSATION_SESSION_REPLACED")
     }
 
     private fun getOrCreateSession(conversationId: Uuid): ConversationSession {
@@ -607,6 +656,7 @@ class ChatService(
         val initializationToken = session.beginInitialization()
         val conversation = conversationRepo.getConversationById(conversationId)
         if (conversation != null) {
+            if (conversation.assistantId in deletingAssistantIds) return
             settingsStore.updateAssistant(conversation.assistantId)
             val settings = settingsStore.settingsFlowRaw.first()
             val assistant = settings.getAssistantById(conversation.assistantId)
@@ -650,18 +700,24 @@ class ChatService(
             // 新建对话, 并添加预设消息
             val currentSettings = settingsStore.settingsFlowRaw.first()
             val assistant = currentSettings.getCurrentAssistant()
-            val presetMessages = renderPresetMessages(
+            if (assistant.id in deletingAssistantIds) return
+            val presetCandidate = renderInitializationStatusCandidate(
                 conversationId = conversationId,
-                settings = currentSettings,
-                assistant = assistant,
-                allowStatusVariableMutations = false,
-            )
+                initialStatusVariables = JsonObject(emptyMap()),
+            ) { temporaryStore ->
+                renderPresetMessages(
+                    conversationId = conversationId,
+                    settings = currentSettings,
+                    assistant = assistant,
+                    statusVariableStore = temporaryStore,
+                )
+            }
             val newConversation = Conversation.ofId(
                 id = conversationId,
                 assistantId = assistant.id,
                 newConversation = true
-            ).updateCurrentMessages(presetMessages)
-                .copy(statusVariables = JsonObject(emptyMap()))
+            ).updateCurrentMessages(presetCandidate.value)
+                .copy(statusVariables = presetCandidate.statusVariables)
             installInitializedConversation(
                 conversationId = conversationId,
                 session = session,
@@ -727,15 +783,20 @@ class ChatService(
         val messages = conversation.currentMessages
         if (!messages.hasUnrenderedStatusInstructions()) return conversation
 
-        val renderedMessages = renderPresetMessages(
+        val candidate = renderInitializationStatusCandidate(
             conversationId = conversationId,
-            settings = settings,
-            assistant = assistant,
-            messages = messages,
-            allowStatusVariableMutations = false,
-        )
-        return conversation.updateCurrentMessages(renderedMessages)
-            .copy(statusVariables = conversation.statusVariables)
+            initialStatusVariables = conversation.statusVariables,
+        ) { temporaryStore ->
+            renderPresetMessages(
+                conversationId = conversationId,
+                settings = settings,
+                assistant = assistant,
+                messages = messages,
+                statusVariableStore = temporaryStore,
+            )
+        }
+        return conversation.updateCurrentMessages(candidate.value)
+            .copy(statusVariables = candidate.statusVariables)
     }
 
     private fun List<UIMessage>.hasUnrenderedStatusInstructions(): Boolean {
@@ -753,6 +814,7 @@ class ChatService(
         settings: me.rerere.rikkahub.data.datastore.Settings,
         assistant: Assistant,
         messages: List<UIMessage> = assistant.presetMessages,
+        statusVariableStore: StatusVariableStore? = null,
         allowStatusVariableMutations: Boolean = true,
     ): List<UIMessage> {
         val presetMessages = messages
@@ -773,6 +835,7 @@ class ChatService(
             assistant = assistant,
             settings = settings,
             conversationId = conversationId,
+            statusVariableStore = statusVariableStore,
             allowStatusVariableMutations = allowStatusVariableMutations,
         )
     }
@@ -2087,10 +2150,17 @@ class ChatService(
      * Closes every live assistant conversation through the same atomic deletion path before its assistant is removed.
      */
     suspend fun deleteConversationsOfAssistantAtomic(assistantId: Uuid): Boolean {
-        val conversationIds = orderedAssistantConversationDeletionIds(
-            conversationRepo.getConversationsOfAssistant(assistantId).first().map { it.id },
-        )
-        return deleteAssistantConversationIds(conversationIds, ::deleteConversationAtomic)
+        if (!deletingAssistantIds.add(assistantId)) return false
+        return try {
+            val repositoryIds = conversationRepo.getConversationsOfAssistant(assistantId).first().map { it.id }
+            val liveSessionIds = sessions.values
+                .filter { it.state.value.assistantId == assistantId }
+                .map { it.id }
+            val conversationIds = orderedAssistantConversationDeletionIds(repositoryIds + liveSessionIds)
+            deleteAssistantConversationIds(conversationIds, ::deleteConversationAtomic).succeeded
+        } finally {
+            deletingAssistantIds.remove(assistantId)
+        }
     }
 
     /**
@@ -2159,6 +2229,7 @@ class ChatService(
         allowCreate: Boolean = false,
     ) {
         val exists = conversationRepo.existsConversationById(conversation.id)
+        if (conversation.assistantId in deletingAssistantIds) return
         if (!canPersistConversation(exists, tavernRuntimeReadiness.isReady(conversationId), allowCreate)) {
             return
         }

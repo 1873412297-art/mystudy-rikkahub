@@ -112,6 +112,21 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
 
 ## Verification
 
+## Tenth review initialization rendering and assistant deletion gate pass
+
+- Initialization now renders stored/preset status instructions against a temporary `StatusVariableStore` seeded from
+  the persisted variables. `UpdateVariable` patches therefore contribute to candidate status HTML and the candidate
+  `Conversation.statusVariables`, but no losing loader can write the global store. Only the accepted `INSTALL` branch
+  publishes the candidate once; `MARK_READY` keeps the live variable state.
+- Every `withConversationMutation` admission retains its captured session, confirms it is still the mapped instance
+  inside the shared lock, and retries a replacement/closed session once before failing. This prevents an old session
+  from writing a newer session after eviction.
+- Assistant batch deletion now unions repository IDs with live-only sessions for that assistant, processes stable
+  IDs through `deleteConversationAtomic`, and installs a scoped deletion gate. Initializers and persistence reject
+  gated assistants, while `finally` always removes the gate. Per-conversation exceptions are collected and later
+  conversations are still attempted; AssistantVM only removes the assistant after a fully successful batch.
+- Focused JVM suite: PASS (`ChatServiceTest`, mutation store, runtime gateway, and status transformer tests).
+
 ## Ninth review initialization variables, assistant deletion, and injected-current pass
 
 - Persisted status variables are now initialized only in the winning `INSTALL` branch while holding the session

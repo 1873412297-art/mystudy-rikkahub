@@ -2,6 +2,7 @@ package me.rerere.rikkahub.data.ai.transformers
 
 import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
+import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.ai.trace.PromptTraceRecorder
@@ -22,6 +23,8 @@ class TransformerContext(
     val workspaceCwd: String? = null,
     /** 当前对话的 ID，状态变量 transformer 用它读写 conversation.statusVariables */
     val conversationId: Uuid? = null,
+    /** Optional per-render store used to build initialization candidates without publishing side effects. */
+    val statusVariableStore: StatusVariableStore? = null,
     /** Initial history rendering must not apply stale status patches to the live conversation store. */
     val allowStatusVariableMutations: Boolean = true,
     val promptTraceSession: PromptTraceRecorder? = null,
@@ -108,6 +111,7 @@ suspend fun List<UIMessage>.visualTransforms(
     assistant: Assistant,
     settings: Settings,
     conversationId: Uuid? = null,
+    statusVariableStore: StatusVariableStore? = null,
     allowStatusVariableMutations: Boolean = true,
 ): List<UIMessage> {
     val ctx = TransformerContext(
@@ -116,6 +120,7 @@ suspend fun List<UIMessage>.visualTransforms(
         assistant,
         settings,
         conversationId = conversationId,
+        statusVariableStore = statusVariableStore,
         allowStatusVariableMutations = allowStatusVariableMutations,
     )
     return transformers.fold(this) { acc, transformer ->
