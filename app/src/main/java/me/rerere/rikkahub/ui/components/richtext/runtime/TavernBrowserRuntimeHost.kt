@@ -31,6 +31,7 @@ import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptFolder
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptNode
 import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptRepository
 import me.rerere.rikkahub.data.repository.ConversationRepository
+import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.ui.components.richtext.MarkdownWebView
 import org.json.JSONObject
 import org.koin.compose.koinInject
@@ -180,6 +181,8 @@ internal fun rememberTavernBrowserRuntimeContext(
 @Composable
 internal fun rememberTavernBrowserScripts(assistantId: String?): List<TavernHelperScript> {
     val repository: TavernHelperScriptRepository = koinInject()
+    val settingsStore: SettingsStore = koinInject()
+    val appSettings by settingsStore.settingsFlow.collectAsStateWithLifecycle()
     val globalFlow = remember(repository) {
         repository.observe(TavernHelperScope(TavernHelperScopeType.GLOBAL))
     }
@@ -197,8 +200,15 @@ internal fun rememberTavernBrowserScripts(assistantId: String?): List<TavernHelp
         ?.collectAsStateWithLifecycle(initialValue = emptyList())
         ?: remember { androidx.compose.runtime.mutableStateOf(emptyList()) }
 
-    val selection = remember(global, character, assistant) {
-        selectTavernBrowserScripts(global, character, assistant)
+    // 常驻浏览器脚本运行位关闭时不创建任何会话（总开关 allowScripts 之外的细粒度位）
+    val browserScriptsAllowed = appSettings.runtimePermissions.allowScripts &&
+        appSettings.runtimePermissions.allowBrowserScripts
+    val selection = remember(global, character, assistant, browserScriptsAllowed) {
+        if (browserScriptsAllowed) {
+            selectTavernBrowserScripts(global, character, assistant)
+        } else {
+            TavernBrowserScriptSelection(active = emptyList(), overLimit = emptyList())
+        }
     }
     LaunchedEffect(selection) {
         tavernScriptDiagnostics.applySelection(

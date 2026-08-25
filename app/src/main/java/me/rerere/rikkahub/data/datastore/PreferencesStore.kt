@@ -150,6 +150,7 @@ class SettingsStore(
         val TAVERN_RUNTIME_PERMISSIONS = stringPreferencesKey("tavern_runtime_permissions")
         val TAVERN_GLOBAL_VARIABLES = stringPreferencesKey("tavern_global_variables")
         val TAVERN_SCRIPT_VARIABLES = stringPreferencesKey("tavern_script_variables")
+        val TAVERN_SCRIPT_PERMISSION_GRANTS = stringPreferencesKey("tavern_script_permission_grants")
         val TAVERN_HELPER_RENDER_SETTINGS = stringPreferencesKey("tavern_helper_render_settings")
 
         // 备份提醒
@@ -252,6 +253,9 @@ class SettingsStore(
                 tavernScriptVariables = preferences[TAVERN_SCRIPT_VARIABLES]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: JsonObject(emptyMap()),
+                tavernScriptPermissionGrants = preferences[TAVERN_SCRIPT_PERMISSION_GRANTS]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: emptyMap(),
                 tavernHelperRenderSettings = preferences[TAVERN_HELPER_RENDER_SETTINGS]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: TavernHelperRenderSettings(),
@@ -426,6 +430,7 @@ class SettingsStore(
             preferences[TAVERN_RUNTIME_PERMISSIONS] = JsonInstant.encodeToString(settings.runtimePermissions)
             preferences[TAVERN_GLOBAL_VARIABLES] = JsonInstant.encodeToString(settings.tavernGlobalVariables)
             preferences[TAVERN_SCRIPT_VARIABLES] = JsonInstant.encodeToString(settings.tavernScriptVariables)
+            preferences[TAVERN_SCRIPT_PERMISSION_GRANTS] = JsonInstant.encodeToString(settings.tavernScriptPermissionGrants)
             preferences[TAVERN_HELPER_RENDER_SETTINGS] = JsonInstant.encodeToString(settings.tavernHelperRenderSettings)
             preferences[WEB_SERVER_ENABLED] = settings.webServerEnabled
             preferences[WEB_SERVER_PORT] = settings.webServerPort
@@ -575,6 +580,8 @@ data class Settings(
     val tavernGlobalVariables: JsonObject = JsonObject(emptyMap()),
     /** 酒馆脚本变量（script 作用域）：scriptId → 变量表 */
     val tavernScriptVariables: JsonObject = JsonObject(emptyMap()),
+    /** 脚本哈希级权限授权：scriptId → 授权记录（源码哈希变化后自动失效） */
+    val tavernScriptPermissionGrants: Map<String, me.rerere.rikkahub.data.model.TavernScriptPermissionGrant> = emptyMap(),
     val tavernHelperRenderSettings: TavernHelperRenderSettings = TavernHelperRenderSettings(),
     val webServerEnabled: Boolean = false,
     val webServerPort: Int = 8080,

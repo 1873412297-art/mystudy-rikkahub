@@ -244,7 +244,8 @@ internal fun MarkdownWebView(
     }
 
     val useIframeSandbox = isRawHtml || looksLikeHtmlDocument(content)
-    val allowFrontendScripts = !applyTavernFrontendPolicy || appSettings.tavernHelperRenderSettings.allowScripts
+    val allowFrontendScripts = (!applyTavernFrontendPolicy || appSettings.tavernHelperRenderSettings.allowScripts) &&
+        appSettings.runtimePermissions.allowMessageScripts
     val allowFrontendNetwork = !applyTavernFrontendPolicy || appSettings.tavernHelperRenderSettings.allowNetwork
     val maxHeightPx = maxHeightDp?.let { with(density) { it.dp.toPx().toInt() } }
     // baseKey 不含 content：路径/主题/角色/卡样式变化才整文档重载

@@ -296,7 +296,10 @@ class TavernRuntimeVariableScopesTest {
         return TavernRuntimeController(
             conversationId = conversationId,
             permissionStore = TavernRuntimePermissionStore(
-                initial = TavernRuntimePermissions(allowVariablesWrite = true)
+                initial = TavernRuntimePermissions(
+                    allowVariablesWrite = true,
+                    allowAssistantWrite = true,
+                )
             ),
             variableGateway = gateway,
         )

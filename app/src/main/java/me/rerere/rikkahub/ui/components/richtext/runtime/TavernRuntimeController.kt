@@ -260,6 +260,9 @@ internal class TavernRuntimeController(
         }
         return withRequiredStringParam(request, "key") { key ->
             val scope = resolveScope(request) ?: return@withRequiredStringParam unsupportedScope(request)
+            if (isAssistantScope(scope) && !permissionStore.current().allowAssistantWrite) {
+                return@withRequiredStringParam assistantWriteDenied(request)
+            }
             val value = request.params["value"] ?: JsonNull
             if (value.utf8ByteSize() > MAX_VARIABLE_VALUE_BYTES) {
                 return@withRequiredStringParam TavernRuntimeResponse.error(
@@ -289,6 +292,9 @@ internal class TavernRuntimeController(
         }
         return withRequiredStringParam(request, "key") { key ->
             val scope = resolveScope(request) ?: return@withRequiredStringParam unsupportedScope(request)
+            if (isAssistantScope(scope) && !permissionStore.current().allowAssistantWrite) {
+                return@withRequiredStringParam assistantWriteDenied(request)
+            }
             TavernRuntimeResponse.success(
                 request.id,
                 JsonPrimitive(variableGateway.delete(conversationId, scope, key, variableOwnerId(scope))),
@@ -301,6 +307,9 @@ internal class TavernRuntimeController(
             return permissionDenied(request, "Variable write access is disabled for this script")
         }
         val scope = resolveScope(request) ?: return unsupportedScope(request)
+        if (isAssistantScope(scope) && !permissionStore.current().allowAssistantWrite) {
+            return assistantWriteDenied(request)
+        }
         val values = request.params["values"] as? JsonObject
             ?: return badRequest(request, "variables.replace requires params.values object")
         val oversize = values.entries.firstOrNull { (_, value) -> value.utf8ByteSize() > MAX_VARIABLE_VALUE_BYTES }
@@ -323,6 +332,9 @@ internal class TavernRuntimeController(
             return permissionDenied(request, "Variable write access is disabled for this script")
         }
         val scope = resolveScope(request) ?: return unsupportedScope(request)
+        if (isAssistantScope(scope) && !permissionStore.current().allowAssistantWrite) {
+            return assistantWriteDenied(request)
+        }
         val values = request.params["values"] as? JsonObject
             ?: return badRequest(request, "variables.update requires params.values object")
         val ownerId = variableOwnerId(scope)
@@ -342,6 +354,15 @@ internal class TavernRuntimeController(
         }
         variableGateway.replace(conversationId, scope, JsonObject(merged), ownerId)
         return TavernRuntimeResponse.success(request.id, JsonPrimitive(true))
+    }
+
+    /** character/preset 作用域写入会修改当前助手模型，需 allowAssistantWrite 权限 */
+    private fun isAssistantScope(scope: String): Boolean {
+        return scope == TAVERN_VARIABLE_SCOPE_CHARACTER || scope == TAVERN_VARIABLE_SCOPE_PRESET
+    }
+
+    private fun assistantWriteDenied(request: TavernRuntimeRequest): TavernRuntimeResponse {
+        return permissionDenied(request, "Assistant/preset write access is disabled for this script")
     }
 
     private fun resolveScope(request: TavernRuntimeRequest): String? {
