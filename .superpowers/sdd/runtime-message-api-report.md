@@ -313,6 +313,6 @@ Twelfth review commit: `fix: finalize Tavern assistant deletion atomically` (cur
 - New deterministic JVM regressions cover declined persistence without events, cancellation after a first
   NonCancellable commit, cancellation-safe gate release while its mutex is occupied, and admitted-versus-late runtime
   cleanup ordering.
-- Focused JVM suite: PASS (`ChatServiceTest` 54, `TavernRuntimeMessageMutationStoreTest` 10,
+- Focused JVM suite: PASS (`ChatServiceTest` 55, `TavernRuntimeMessageMutationStoreTest` 10,
   `TavernRuntimeConversationReadinessTest` 1, and `TavernRuntimeMessageGatewayTest` 17; 0 failures).
 - `:app:compileDebugKotlin :web:compileDebugKotlin --no-configuration-cache`: PASS.

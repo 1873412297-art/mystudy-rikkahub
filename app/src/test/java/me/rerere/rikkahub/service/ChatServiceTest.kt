@@ -681,6 +681,31 @@ class ChatServiceTest {
     }
 
     @Test
+    fun `cancelled runtime mutation releases its admission so cleanup can drain`() = runBlocking {
+        val lifecycle = TavernRuntimeMutationLifecycle()
+        val mutationLock = Mutex()
+        val entered = CompletableDeferred<Unit>()
+        var references = 0
+        val mutation = async(Dispatchers.Default) {
+            lifecycle.mutate(
+                canMutate = { true },
+                acquireSession = { references++ },
+                releaseSession = { references-- },
+                withSessionMutationLock = { block -> mutationLock.withLock { block() } },
+            ) {
+                entered.complete(Unit)
+                awaitCancellation()
+            }
+        }
+
+        entered.await()
+        mutation.cancelAndJoin()
+
+        withTimeout(500) { lifecycle.closeAdmissionsAndAwait() }
+        assertEquals(0, references)
+    }
+
+    @Test
     fun `normal full save and runtime create cannot overwrite each other`() = runBlocking {
         val conversationId = Uuid.random()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

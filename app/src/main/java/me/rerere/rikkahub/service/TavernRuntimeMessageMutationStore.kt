@@ -1,8 +1,10 @@
 package me.rerere.rikkahub.service
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -59,11 +61,16 @@ internal class TavernRuntimeMutationLifecycle {
                 block()
             }
         } finally {
-            releaseSession()
-            mutex.withLock {
-                check(admittedMutations > 0)
-                admittedMutations--
-                if (admittedMutations == 0) admissionsDrained.complete(Unit)
+            withContext(NonCancellable) {
+                try {
+                    releaseSession()
+                } finally {
+                    mutex.withLock {
+                        check(admittedMutations > 0)
+                        admittedMutations--
+                        if (admittedMutations == 0) admissionsDrained.complete(Unit)
+                    }
+                }
             }
         }
     }
