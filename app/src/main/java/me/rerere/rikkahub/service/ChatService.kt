@@ -5,6 +5,8 @@ import android.content.Context
 import android.util.Log
 import androidx.core.net.toUri
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -347,10 +349,12 @@ data class AssistantDeletionResult(
 internal suspend fun runAssistantDeletionGate(
     assistantId: Uuid,
     deletingAssistantIds: MutableSet<Uuid>,
+    gateMutex: Mutex = Mutex(),
     deleteConversations: suspend () -> Boolean,
     finalizeAssistantDeletion: suspend () -> Unit,
 ): AssistantDeletionResult {
-    if (!deletingAssistantIds.add(assistantId)) return AssistantDeletionResult(succeeded = false)
+    val acquired = gateMutex.withLock { deletingAssistantIds.add(assistantId) }
+    if (!acquired) return AssistantDeletionResult(succeeded = false)
     return try {
         if (!deleteConversations()) return AssistantDeletionResult(succeeded = false)
         try {
@@ -362,7 +366,9 @@ internal suspend fun runAssistantDeletionGate(
             AssistantDeletionResult(succeeded = false, finalizeError = error)
         }
     } finally {
-        deletingAssistantIds.remove(assistantId)
+        withContext(NonCancellable) {
+            gateMutex.withLock { deletingAssistantIds.remove(assistantId) }
+        }
     }
 }
 
@@ -404,6 +410,7 @@ internal suspend fun deleteAssistantConversationIds(
     val failedConversationIds = linkedSetOf<Uuid>()
     val errors = linkedMapOf<Uuid, Throwable>()
     conversationIds.forEach { conversationId ->
+        currentCoroutineContext().ensureActive()
         try {
             if (!delete(conversationId)) failedConversationIds += conversationId
         } catch (error: CancellationException) {
@@ -508,6 +515,7 @@ class ChatService(
     private val deletingAssistantIds = ConcurrentHashMap.newKeySet<Uuid>()
     private val assistantDeletionGateMutex = Mutex()
     private val tavernRuntimeReadiness = TavernRuntimeConversationReadiness()
+    private val tavernRuntimeMutationLifecycle = TavernRuntimeMutationLifecycle()
     private val tavernRuntimeMessageStore by lazy {
         TavernRuntimeMessageMutationStore(object : TavernRuntimeMessagePersistenceAdapter {
             override fun isReady(conversationId: Uuid): Boolean =
@@ -515,33 +523,36 @@ class ChatService(
 
             override suspend fun <T> mutate(conversationId: Uuid, block: suspend () -> T): T {
                 val session = sessions[conversationId] ?: error("CONVERSATION_NOT_READY")
-                return session.withRefSuspend {
-                    session.withRuntimeMessageLock {
-                        check(
-                            sessions[conversationId] === session &&
-                                isReady(conversationId) &&
-                                conversationRepo.existsConversationById(conversationId)
-                        ) {
+                return tavernRuntimeMutationLifecycle.mutate(
+                    canMutate = {
+                        sessions[conversationId] === session &&
+                            isReady(conversationId)
+                    },
+                    acquireSession = session::acquire,
+                    releaseSession = session::release,
+                    withSessionMutationLock = session::withRuntimeMessageLock,
+                    block = {
+                        check(conversationRepo.existsConversationById(conversationId)) {
                             "CONVERSATION_NOT_READY"
                         }
                         block()
-                    }
-                }
+                    },
+                )
             }
 
             override fun currentConversation(conversationId: Uuid): Conversation =
                 getConversationFlow(conversationId).value
 
-            override suspend fun persist(conversationId: Uuid, conversation: Conversation) {
-                saveConversationUnlocked(conversationId, conversation, PromptTraceCleanup.None)
+            override suspend fun persist(conversationId: Uuid, conversation: Conversation): Boolean {
+                return saveConversationUnlocked(conversationId, conversation, PromptTraceCleanup.None)
             }
 
             override suspend fun persistAfterMessageRemoval(
                 conversationId: Uuid,
                 before: Conversation,
                 after: Conversation,
-            ) {
-                saveConversationUnlocked(
+            ): Boolean {
+                return saveConversationUnlocked(
                     conversationId,
                     after,
                     PromptTraceCleanup.RemovedMessages(before),
@@ -595,9 +606,11 @@ class ChatService(
     private val _generationDoneFlow = MutableSharedFlow<Uuid>()
     val generationDoneFlow: SharedFlow<Uuid> = _generationDoneFlow.asSharedFlow()
 
-    suspend fun cleanup() = runCatching {
-        tavernRuntimeReadiness.clearAll()
-        sessions.entries.toList().forEach { (conversationId, session) ->
+    suspend fun cleanup() {
+        tavernRuntimeMutationLifecycle.closeAdmissionsAndAwait()
+        val sessionsToClose = sessions.entries.toList()
+        sessionsToClose.forEach { (conversationId, session) ->
+            tavernRuntimeReadiness.clear(conversationId)
             session.closeForCleanup()
             if (sessions.remove(conversationId, session)) {
                 _sessionsVersion.value++
@@ -2352,7 +2365,9 @@ class ChatService(
                 }
             }
         } finally {
-            assistantDeletionGateMutex.withLock { deletingAssistantIds.remove(assistantId) }
+            withContext(NonCancellable) {
+                assistantDeletionGateMutex.withLock { deletingAssistantIds.remove(assistantId) }
+            }
         }
     }
 

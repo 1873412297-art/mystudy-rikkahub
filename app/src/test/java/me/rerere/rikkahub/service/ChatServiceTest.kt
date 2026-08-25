@@ -23,6 +23,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.provider.BuiltInTools
@@ -311,6 +313,43 @@ class ChatServiceTest {
     }
 
     @Test
+    fun `assistant deletion observes cancellation after a non cancellable first commit`() = runBlocking {
+        val firstId = Uuid.parse("00000000-0000-4000-8000-000000000001")
+        val secondId = Uuid.parse("00000000-0000-4000-8000-000000000002")
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val firstCommitStarted = CompletableDeferred<Unit>()
+        val finishFirstCommit = CompletableDeferred<Unit>()
+        val attempted = mutableListOf<Uuid>()
+        try {
+            val deletion = scope.async {
+                deleteAssistantConversationIds(listOf(firstId, secondId)) { conversationId ->
+                    attempted += conversationId
+                    if (conversationId == firstId) {
+                        withContext(NonCancellable) {
+                            firstCommitStarted.complete(Unit)
+                            finishFirstCommit.await()
+                        }
+                    }
+                    true
+                }
+            }
+            firstCommitStarted.await()
+            deletion.cancel()
+            finishFirstCommit.complete(Unit)
+
+            try {
+                deletion.await()
+                fail("cancellation should stop before the second conversation")
+            } catch (_: CancellationException) {
+                // Expected: the first committed, then the loop sees cancellation before the next id.
+            }
+            assertEquals(listOf(firstId), attempted)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun `assistant deletion treats a moved conversation as a safe skip`() {
         assertTrue(isAssistantBatchDeleteSuccess(ConversationDeleteResult.MOVED))
         assertTrue(isAssistantBatchDeleteSuccess(ConversationDeleteResult.DELETED))
@@ -393,6 +432,51 @@ class ChatServiceTest {
         assertFalse(result.succeeded)
         assertTrue(result.finalizeError!!.message!!.contains("settings deletion failed"))
         assertFalse(assistantId in deleting)
+    }
+
+    @Test
+    fun `assistant deletion clears its gate when cancelled finalizer waits for the gate mutex`() = runBlocking {
+        val assistantId = Uuid.random()
+        val deleting = linkedSetOf<Uuid>()
+        val gateMutex = Mutex()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val finalizerStarted = CompletableDeferred<Unit>()
+        val finishFinalizer = CompletableDeferred<Unit>()
+        try {
+            val deletion = scope.async {
+                runAssistantDeletionGate(
+                    assistantId = assistantId,
+                    deletingAssistantIds = deleting,
+                    gateMutex = gateMutex,
+                    deleteConversations = { true },
+                    finalizeAssistantDeletion = {
+                        withContext(NonCancellable) {
+                            finalizerStarted.complete(Unit)
+                            finishFinalizer.await()
+                        }
+                    },
+                )
+            }
+            finalizerStarted.await()
+            gateMutex.lock()
+            deletion.cancel()
+            finishFinalizer.complete(Unit)
+            assertTrue(assistantId in deleting)
+            gateMutex.unlock()
+
+            withTimeout(500) {
+                while (assistantId in deleting) delay(1)
+            }
+            assertFalse(assistantId in deleting)
+            try {
+                deletion.await()
+                fail("cancellation should propagate after the gate is released")
+            } catch (_: CancellationException) {
+                // Expected.
+            }
+        } finally {
+            scope.cancel()
+        }
     }
 
     @Test
@@ -536,6 +620,67 @@ class ChatServiceTest {
     }
 
     @Test
+    fun `runtime lifecycle lets admitted persistence finish before cleanup rejects late mutation`() = runBlocking {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(conversationId, Conversation.ofId(conversationId), scope, onIdle = {})
+        val lifecycle = TavernRuntimeMutationLifecycle()
+        val mutationLock = Mutex()
+        val enteredMutation = CompletableDeferred<Unit>()
+        val releaseMutation = CompletableDeferred<Unit>()
+        val admissionsClosed = CompletableDeferred<Unit>()
+        val persisted = mutableListOf<String>()
+        val events = mutableListOf<String>()
+        var ready = true
+        try {
+            val admitted = async(Dispatchers.Default) {
+                lifecycle.mutate(
+                    canMutate = { ready },
+                    acquireSession = {},
+                    releaseSession = {},
+                    withSessionMutationLock = { block -> mutationLock.withLock { block() } },
+                ) {
+                    enteredMutation.complete(Unit)
+                    releaseMutation.await()
+                    persisted += "saved"
+                    events += "MESSAGE_SENT"
+                }
+            }
+            enteredMutation.await()
+            val cleanup = async(Dispatchers.Default) {
+                lifecycle.closeAdmissionsAndAwait { admissionsClosed.complete(Unit) }
+                ready = false
+                session.closeForCleanup()
+            }
+            admissionsClosed.await()
+            val lateError = async(Dispatchers.Default) {
+                try {
+                    lifecycle.mutate(
+                        canMutate = { ready },
+                        acquireSession = {},
+                        releaseSession = {},
+                        withSessionMutationLock = { block -> mutationLock.withLock { block() } },
+                    ) { fail("late mutation entered") }
+                    null
+                } catch (error: IllegalStateException) {
+                    error
+                }
+            }.await()
+
+            assertEquals("CONVERSATION_NOT_READY", lateError?.message)
+            assertNull(withTimeoutOrNull(50) { cleanup.await(); true })
+            releaseMutation.complete(Unit)
+            admitted.await()
+            cleanup.await()
+
+            assertEquals(listOf("saved"), persisted)
+            assertEquals(listOf("MESSAGE_SENT"), events)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun `normal full save and runtime create cannot overwrite each other`() = runBlocking {
         val conversationId = Uuid.random()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -557,17 +702,18 @@ class ChatServiceTest {
 
             override fun currentConversation(conversationId: Uuid): Conversation = session.state.value
 
-            override suspend fun persist(conversationId: Uuid, conversation: Conversation) {
+            override suspend fun persist(conversationId: Uuid, conversation: Conversation): Boolean {
                 runtimeEnteredPersist.complete(Unit)
                 allowRuntimePersist.await()
                 session.state.value = conversation
+                return true
             }
 
             override suspend fun persistAfterMessageRemoval(
                 conversationId: Uuid,
                 before: Conversation,
                 after: Conversation,
-            ) = persist(conversationId, after)
+            ): Boolean = persist(conversationId, after)
 
             override fun emit(event: TavernRuntimeMessageMutationEvent) = Unit
         })

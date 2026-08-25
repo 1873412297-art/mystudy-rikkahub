@@ -25,15 +25,16 @@ class TavernRuntimeConversationReadinessTest {
 
             override fun currentConversation(conversationId: Uuid): Conversation = persisted
 
-            override suspend fun persist(conversationId: Uuid, conversation: Conversation) {
+            override suspend fun persist(conversationId: Uuid, conversation: Conversation): Boolean {
                 persisted = conversation
+                return true
             }
 
             override suspend fun persistAfterMessageRemoval(
                 conversationId: Uuid,
                 before: Conversation,
                 after: Conversation,
-            ) = persist(conversationId, after)
+            ): Boolean = persist(conversationId, after)
 
             override fun emit(event: TavernRuntimeMessageMutationEvent) = Unit
         })

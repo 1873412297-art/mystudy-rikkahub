@@ -295,3 +295,24 @@ Tenth review commit: `85cb8517 fix: preserve Tavern initialization candidates`.
 Eleventh review commit: `fix: guard Tavern assistant ownership deletion` (current HEAD).
 
 Twelfth review commit: `fix: finalize Tavern assistant deletion atomically` (current HEAD).
+
+## Thirteenth review cancellation and runtime-cleanup pass
+
+- Assistant batch deletion checks `currentCoroutineContext().ensureActive()` immediately before every conversation.
+  A cancellation that arrives while the current deletion performs its NonCancellable database commit therefore lets
+  that commit finish but prevents the next ID from starting.
+- Both the production assistant-deletion gate and its focused helper release their gate with
+  `withContext(NonCancellable)` before taking the gate mutex. A cancelled finalizer cannot strand an assistant in the
+  deleting set, including when another coroutine temporarily holds that mutex.
+- Browser-runtime mutations now enter a production lifecycle admission gate. Cleanup atomically stops new admissions,
+  waits for admitted writes to leave their shared session lock, then clears readiness and closes/removes sessions.
+  An admitted write retains the ready state through persistence, live-state publication, and host-event emission; a
+  later call receives `CONVERSATION_NOT_READY` without recreating a session.
+- The runtime persistence adapter now returns a Boolean. `create`, `update`, `updateLatest`, and `delete` reject a
+  false result as `CONVERSATION_NOT_READY` before emitting an event.
+- New deterministic JVM regressions cover declined persistence without events, cancellation after a first
+  NonCancellable commit, cancellation-safe gate release while its mutex is occupied, and admitted-versus-late runtime
+  cleanup ordering.
+- Focused JVM suite: PASS (`ChatServiceTest` 54, `TavernRuntimeMessageMutationStoreTest` 10,
+  `TavernRuntimeConversationReadinessTest` 1, and `TavernRuntimeMessageGatewayTest` 17; 0 failures).
+- `:app:compileDebugKotlin :web:compileDebugKotlin --no-configuration-cache`: PASS.

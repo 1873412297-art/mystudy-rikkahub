@@ -1,5 +1,8 @@
 package me.rerere.rikkahub.service
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -26,6 +29,56 @@ internal class TavernRuntimeConversationReadiness {
     fun clearAll() {
         readyConversationIds.clear()
     }
+}
+
+/**
+ * Coordinates shutdown with browser-runtime writes. Closing admissions leaves already admitted mutations free to
+ * take their session lock, persist, update live state, and emit their event before a caller closes sessions.
+ */
+internal class TavernRuntimeMutationLifecycle {
+    private val mutex = Mutex()
+    private var mutationsOpen = true
+    private var admittedMutations = 0
+    private var admissionsDrained = completedDeferred()
+
+    suspend fun <T> mutate(
+        canMutate: () -> Boolean,
+        acquireSession: () -> Unit,
+        releaseSession: () -> Unit,
+        withSessionMutationLock: suspend (suspend () -> T) -> T,
+        block: suspend () -> T,
+    ): T {
+        mutex.withLock {
+            check(mutationsOpen && canMutate()) { "CONVERSATION_NOT_READY" }
+            acquireSession()
+            if (admittedMutations++ == 0) admissionsDrained = CompletableDeferred()
+        }
+        try {
+            return withSessionMutationLock {
+                check(canMutate()) { "CONVERSATION_NOT_READY" }
+                block()
+            }
+        } finally {
+            releaseSession()
+            mutex.withLock {
+                check(admittedMutations > 0)
+                admittedMutations--
+                if (admittedMutations == 0) admissionsDrained.complete(Unit)
+            }
+        }
+    }
+
+    /** Atomically stops later admissions and waits until every earlier admission has left its session lock. */
+    suspend fun closeAdmissionsAndAwait(onAdmissionsClosed: () -> Unit = {}) {
+        val drain = mutex.withLock {
+            mutationsOpen = false
+            onAdmissionsClosed()
+            admissionsDrained
+        }
+        drain.await()
+    }
+
+    private fun completedDeferred(): CompletableDeferred<Unit> = CompletableDeferred<Unit>().also { it.complete(Unit) }
 }
 
 /** The real ChatService surface consumed by the browser-runtime gateway. */
@@ -60,13 +113,14 @@ internal interface TavernRuntimeMessagePersistenceAdapter {
 
     fun currentConversation(conversationId: Uuid): Conversation
 
-    suspend fun persist(conversationId: Uuid, conversation: Conversation)
+    /** False means the live conversation is no longer writable; callers must not emit an event. */
+    suspend fun persist(conversationId: Uuid, conversation: Conversation): Boolean
 
     suspend fun persistAfterMessageRemoval(
         conversationId: Uuid,
         before: Conversation,
         after: Conversation,
-    )
+    ): Boolean
 
     fun emit(event: TavernRuntimeMessageMutationEvent)
 }
@@ -91,10 +145,10 @@ internal class TavernRuntimeMessageMutationStore(
             require(role == MessageRole.USER || role == MessageRole.ASSISTANT || role == MessageRole.SYSTEM)
             val message = UIMessage(role = role, parts = listOf(UIMessagePart.Text(text)))
             val conversation = persistence.currentConversation(conversationId)
-            persistence.persist(
+            check(persistence.persist(
                 conversationId,
                 conversation.copy(messageNodes = conversation.messageNodes + message.toMessageNode()),
-            )
+            )) { "CONVERSATION_NOT_READY" }
             persistence.emit(
                 TavernRuntimeMessageMutationEvent(
                     type = if (role == MessageRole.USER) {
@@ -128,7 +182,9 @@ internal class TavernRuntimeMessageMutationStore(
                 }
             }
             val result = updated ?: return@mutate null
-            persistence.persist(conversationId, conversation.copy(messageNodes = nodes))
+            check(persistence.persist(conversationId, conversation.copy(messageNodes = nodes))) {
+                "CONVERSATION_NOT_READY"
+            }
             persistence.emit(
                 TavernRuntimeMessageMutationEvent(TavernHostEventType.MESSAGE_EDITED, conversationId, result),
             )
@@ -154,7 +210,9 @@ internal class TavernRuntimeMessageMutationStore(
             }
         }
         val result = updated ?: return@mutate null
-        persistence.persist(conversationId, conversation.copy(messageNodes = nodes))
+        check(persistence.persist(conversationId, conversation.copy(messageNodes = nodes))) {
+            "CONVERSATION_NOT_READY"
+        }
         persistence.emit(
             TavernRuntimeMessageMutationEvent(TavernHostEventType.MESSAGE_EDITED, conversationId, result),
         )
@@ -178,11 +236,11 @@ internal class TavernRuntimeMessageMutationStore(
                 )
             }
         }
-        persistence.persistAfterMessageRemoval(
+        check(persistence.persistAfterMessageRemoval(
             conversationId = conversationId,
             before = conversation,
             after = conversation.copy(messageNodes = nodes),
-        )
+        )) { "CONVERSATION_NOT_READY" }
         persistence.emit(
             TavernRuntimeMessageMutationEvent(
                 TavernHostEventType.MESSAGE_DELETED,

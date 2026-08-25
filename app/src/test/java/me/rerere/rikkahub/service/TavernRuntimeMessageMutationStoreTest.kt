@@ -180,6 +180,20 @@ class TavernRuntimeMessageMutationStoreTest {
     }
 
     @Test
+    fun `declined persistence rejects create without an event`() = runBlocking {
+        val conversationId = Uuid.random()
+        val persistence = TestRuntimeMessagePersistence(conversationId)
+        val store = TavernRuntimeMessageMutationStore(persistence)
+        persistence.rejectWrites = true
+
+        val failure = runCatching { store.create(conversationId, MessageRole.USER, "not committed") }
+
+        assertEquals("CONVERSATION_NOT_READY", failure.exceptionOrNull()?.message)
+        assertTrue(persistence.persisted.messageNodes.isEmpty())
+        assertTrue(persistence.events.isEmpty())
+    }
+
+    @Test
     fun `update selected branch preserves identity role attachments annotations and metadata without a swipe`() =
         runBlocking {
             val conversationId = Uuid.random()
@@ -226,6 +240,7 @@ private class TestRuntimeMessagePersistence(
     var ready = true
     var evictBeforeBlock = false
     var failWrites = false
+    var rejectWrites = false
     var removalPersists = 0
     var beforePersist: suspend () -> Unit = {}
     val events = mutableListOf<String>()
@@ -246,19 +261,21 @@ private class TestRuntimeMessagePersistence(
 
     override fun currentConversation(conversationId: Uuid): Conversation = persisted
 
-    override suspend fun persist(conversationId: Uuid, conversation: Conversation) {
+    override suspend fun persist(conversationId: Uuid, conversation: Conversation): Boolean {
         beforePersist()
         check(!failWrites) { "write failed" }
+        if (rejectWrites) return false
         durable.live.value = conversation
+        return true
     }
 
     override suspend fun persistAfterMessageRemoval(
         conversationId: Uuid,
         before: Conversation,
         after: Conversation,
-    ) {
+    ): Boolean {
         removalPersists++
-        persist(conversationId, after)
+        return persist(conversationId, after)
     }
 
     override fun emit(event: TavernRuntimeMessageMutationEvent) {
