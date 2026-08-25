@@ -373,6 +373,7 @@ class ChatService(
             return
         }
         if (sessions.remove(conversationId, session)) {
+            tavernRuntimeReady.remove(conversationId)
             session.cleanup()
             _sessionsVersion.value++
             Log.i(TAG, "removeSession: $conversationId (remaining: ${sessions.size})")
@@ -497,6 +498,7 @@ class ChatService(
                 .copy(statusVariables = statusVariableStore.getValue(conversationId))
             updateConversation(conversationId, newConversation)
         }
+        // Mark ready only after the loaded conversation has been installed into the live session.
         tavernRuntimeReady += conversationId
     }
 

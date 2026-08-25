@@ -179,6 +179,9 @@ internal class TavernRuntimeController(
                 else -> unsupportedHostCapability(request)
             }
         } catch (e: Exception) {
+            if (e is IllegalStateException && e.message == "CONVERSATION_NOT_READY") {
+                return conversationNotReady(request)
+            }
             TavernRuntimeResponse.error(
                 id = request.id,
                 code = "INTERNAL_ERROR",

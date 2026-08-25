@@ -80,7 +80,10 @@ internal class ChatServiceTavernRuntimeMessageGateway(
     override fun update(conversationId: Uuid, messageId: String, text: String): TavernRuntimeMessage? {
         val id = runCatching { Uuid.parse(messageId) }.getOrNull() ?: return null
         return runBlocking { chatService.updateTavernRuntimeMessageText(conversationId, id, text) }
-            ?.let { toRuntimeMessage(it, true) }
+            ?.let { message ->
+                val selected = chatService.getTavernRuntimeMessages(conversationId)
+                toRuntimeMessage(message, selected.lastOrNull()?.id == message.id)
+            }
     }
 
     override fun delete(conversationId: Uuid, messageId: String): Boolean {
