@@ -28,6 +28,16 @@
   MarkdownWebView, TavernHelper-style generate/generateRaw aliases returning text plus api.generation with
   requestId-based cancellation in the JS shim; 8 new focused tests, full :app:testDebugUnitTest 116 classes /
   804 tests green, :app:compileDebugKotlin green).
-- Current: six variable scopes, fine-grained permissions, backup/restore, frontend streaming/error states,
-  and final instrumentation/device audit. Note: script-initiated generation is JVM-verified only; a real-device
+- Six-scope variables: complete (commit bcdca87a; global/character/preset/chat/message/script scopes on get/set/
+  delete/list plus whole-scope variables.replace and merging variables.update RPCs, allowVariablesWrite gating and
+  the existing 64KB/512KB quotas, owner-id routing (script→scriptId from the controller, message→injected current
+  message id, other scopes owner-agnostic), character/preset persisted into the current Assistant.tavernVariables
+  JSON namespaces (preset anchored to the assistant because RikkaHub has no standalone preset entity — recorded
+  deviation), script persisted into Settings.tavernScriptVariables keyed by scriptId (message frontends stay null
+  and fall into the __ephemeral__ bucket), message scope held in per-conversation gateway memory (no persistence
+  channel exists yet — recorded deviation), TavernHelper-style replaceVariables/updateVariablesWith aliases in the
+  JS shim; 12 new focused tests, full :app:testDebugUnitTest 117 classes / 816 tests green,
+  :app:compileDebugKotlin green).
+- Current: fine-grained permissions, backup/restore, frontend streaming/error states, and final
+  instrumentation/device audit. Note: script-initiated generation is JVM-verified only; a real-device
   end-to-end run needs a configured provider and is part of the final device audit.
