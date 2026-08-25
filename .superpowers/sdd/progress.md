@@ -8,4 +8,10 @@
 - Runtime status and diagnostics: complete (commits 3856f8cc..b533a99b; 500-entry per-script logs, redaction, console/lifecycle capture, over-limit status, native log page, targeted renderer recovery, final review no runtime findings; historical initial RED evidence gap recorded).
 - Structured unsupported RPC and diagnostics: complete (commits 04333968..f4fa9e9d; exact errors, callable shims, UTF-8 request/response caps, per-script RPC timing, final review clean).
 - Persistent runtime message API: complete (commits 81456f1e..a64f4bf3; selected-branch list/get/current/create/update/delete, exact-ID persistence, shared conversation mutation locking, lifecycle/readiness and assistant-deletion safety, 83 focused tests, final review approved).
-- Current: full build/device lifecycle verification, then remaining real compatibility APIs and permissions.
+- Huawei device lifecycle verification: complete for the native management entry and persistent message API. The
+  script host now calls the two-argument Android JavaScript lifecycle bridge, and an initialized unsaved conversation
+  may be persisted by its first runtime mutation without weakening deleted-conversation protection. A real
+  `messages.create` appeared in the existing chat, survived process restart, was read back by exact ID, and was then
+  removed through `messages.delete`; the crash log buffer remained empty.
+- Current: remaining real compatibility APIs (worldbook and generation), six variable scopes, fine-grained
+  permissions, backup/restore, frontend streaming/error states, and final instrumentation/device audit.

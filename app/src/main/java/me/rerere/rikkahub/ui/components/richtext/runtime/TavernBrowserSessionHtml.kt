@@ -46,7 +46,7 @@ internal fun buildTavernBrowserSessionHtml(script: TavernHelperScript): String {
             function clone(value){return value===undefined?undefined:JSON.parse(JSON.stringify(value));}
             function emitLifecycle(name){
               document.dispatchEvent(new CustomEvent('th:'+name,{detail:{script_id:meta.id},bubbles:true}));
-              if(window.RikkahubScriptBridge)window.RikkahubScriptBridge.lifecycle(name.toLowerCase().replace('script_','').replace('app_ready','running'));
+              if(window.RikkahubScriptBridge)window.RikkahubScriptBridge.lifecycle(name.toLowerCase().replace('script_','').replace('app_ready','running'),'');
             }
             function captureConsole(level,original){
               return function(){
@@ -142,7 +142,7 @@ internal fun buildTavernBrowserSessionHtml(script: TavernHelperScript): String {
               insertOrAssignVariables:window.insertOrAssignVariables,deleteVariable:window.deleteVariable
             });
             window.addEventListener('pagehide',function(){
-              if(window.RikkahubScriptBridge)window.RikkahubScriptBridge.lifecycle('paused');
+              if(window.RikkahubScriptBridge)window.RikkahubScriptBridge.lifecycle('paused','');
               emitLifecycle('SCRIPT_UNLOADING');
             },{once:true});
             setTimeout(function(){

@@ -427,6 +427,10 @@ internal suspend fun deleteAssistantConversationIds(
 internal fun canPersistConversation(exists: Boolean, isReady: Boolean, allowCreate: Boolean): Boolean =
     exists || isReady || allowCreate
 
+/** Runtime writes may create the row only for the initialized in-memory conversation created by ChatService. */
+internal fun canStartTavernRuntimeMutation(exists: Boolean, isInitializedNewConversation: Boolean): Boolean =
+    exists || isInitializedNewConversation
+
 internal data class InitializationStatusCandidate<T>(
     val value: T,
     val statusVariables: JsonObject,
@@ -532,7 +536,12 @@ class ChatService(
                     releaseSession = session::release,
                     withSessionMutationLock = session::withRuntimeMessageLock,
                     block = {
-                        check(conversationRepo.existsConversationById(conversationId)) {
+                        check(
+                            canStartTavernRuntimeMutation(
+                                exists = conversationRepo.existsConversationById(conversationId),
+                                isInitializedNewConversation = session.state.value.newConversation,
+                            ),
+                        ) {
                             "CONVERSATION_NOT_READY"
                         }
                         block()
@@ -2460,7 +2469,7 @@ class ChatService(
             return false // 新会话且为空时不保存
         }
 
-        val updatedConversation = conversation.copy()
+        val updatedConversation = conversation.copy(newConversation = false)
         persistConversationAndCleanupPromptTraces(
             conversationId = conversationId,
             conversation = updatedConversation,

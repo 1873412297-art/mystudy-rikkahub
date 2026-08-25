@@ -288,6 +288,23 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
   gateway itself is exercised directly and `ChatService` is its concrete service implementation; its adapter still
   delegates to the real repository save/live-state path.
 
+## Huawei device verification
+
+- Device: Huawei MNA-AL00 (`XHD0223523008702`), Debug package `me.rerere.rikkahub.debug`, version `2.4.10` (177).
+- The native chat-toolbar `Tavern Helper` entry opened the management page. Its Render tab controlled the existing
+  conversation renderer, and its Script tab showed the enabled `JS Runner Smoke` script and diagnostics.
+- Device testing exposed Android WebView rejecting one-argument calls to the two-argument
+  `RikkahubScriptBridge.lifecycle` Java interface (`Method not found`). All lifecycle calls now pass an explicit empty
+  detail argument; after reinstall the script status changed from `运行崩溃` to `运行中`.
+- `messages.list` read the selected branch from the current live conversation. `messages.create` then exposed a
+  second issue for initialized unsaved chats: the runtime adapter required a pre-existing Room row. Runtime mutation
+  admission now accepts only either an existing row or ChatService's initialized `newConversation`; the first save
+  clears that transient marker, while readiness/session/deletion gates remain authoritative.
+- A real assistant message (`JS_RUNNER_DEVICE_SMOKE_20260825`) appeared immediately in the current chat, survived an
+  app force-stop/restart, and `messages.get` returned the same exact message ID and text after reopening its persisted
+  conversation. `messages.delete` returned `true` and removed the smoke message. Android crash log buffer: empty.
+- Regression/build verification: `ChatServiceTest`, `TavernBrowserSessionHtmlTest`, and `:app:assembleDebug` passed.
+
 ## Commit
 
 Implementation commit: `81456f1e feat: add persistent Tavern runtime message API`.

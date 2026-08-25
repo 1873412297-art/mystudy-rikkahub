@@ -546,6 +546,13 @@ class ChatServiceTest {
     }
 
     @Test
+    fun `runtime mutation may persist an initialized new conversation but not recreate a deleted one`() {
+        assertTrue(canStartTavernRuntimeMutation(exists = false, isInitializedNewConversation = true))
+        assertTrue(canStartTavernRuntimeMutation(exists = true, isInitializedNewConversation = false))
+        assertFalse(canStartTavernRuntimeMutation(exists = false, isInitializedNewConversation = false))
+    }
+
+    @Test
     fun `moderator snapshot retains persisted queue order when assistant order differs`() {
         assertEquals(
             listOf(groupMemberB, groupMemberA),

@@ -45,7 +45,9 @@ class TavernBrowserSessionHtmlTest {
         assertTrue(html.contains("RikkahubScriptBridge.lifecycle"))
         assertTrue(html.contains("console.debug"))
         assertTrue(html.contains("console.error"))
-        assertTrue(html.contains("lifecycle('paused')"))
+        // Android WebView exposes the two-argument @JavascriptInterface signature only.
+        assertTrue(html.contains("lifecycle(name.toLowerCase().replace('script_','').replace('app_ready','running'),'')"))
+        assertTrue(html.contains("lifecycle('paused','')"))
         assertTrue(html.contains("unhandledrejection"))
         assertTrue(html.contains("runtime_crash"))
         assertTrue(html.contains("script-id"))
