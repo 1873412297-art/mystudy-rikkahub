@@ -156,6 +156,9 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
   placeholder still reports `NOT_FOUND`.
 - Focused runtime JVM suite remains green (83 tests, 0 failures), with app/web compilation covered by the preceding
   verification pass.
+- Assistant batch deletion now always lets Room's conditional `id + assistantId` delete decide persisted ownership;
+  placeholder session metadata is never trusted. Only a ready live-only session with no Room row is treated as a
+  successful close, while an unready placeholder remains `NOT_FOUND`.
 - `git diff --check`: PASS.
 
 ## Twelfth review deletion-finalization and current-message pass

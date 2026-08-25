@@ -2313,11 +2313,8 @@ class ChatService(
                 session.withRefSuspend {
                     session.withConversationMutationLock {
                         if (sessions[conversationId] !== session) return@withConversationMutationLock null
-                        if (expectedAssistantId != null && session.state.value.assistantId != expectedAssistantId) {
-                            return@withConversationMutationLock ConversationDeletionCommitResult(
-                                ConversationDeleteResult.MOVED,
-                            )
-                        }
+                        // Session state may still be a placeholder while Room loading is in flight. Always let the
+                        // conditional Room delete decide persisted ownership before consulting live-only readiness.
                         val commit = commitConversationDeletion(conversationId, expectedAssistantId)
                         if (commit.result == ConversationDeleteResult.NOT_FOUND) {
                             // A live-only conversation has not reached Room yet. Closing its authoritative session is
