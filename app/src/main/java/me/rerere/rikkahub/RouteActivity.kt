@@ -94,6 +94,7 @@ import me.rerere.rikkahub.ui.pages.extensions.ExtensionsPage
 import me.rerere.rikkahub.ui.pages.extensions.PromptPage
 import me.rerere.rikkahub.ui.pages.extensions.QuickMessagesPage
 import me.rerere.rikkahub.ui.pages.extensions.tavernhelper.TavernHelperPage
+import me.rerere.rikkahub.ui.pages.extensions.tavernhelper.TavernScriptLogPage
 import me.rerere.rikkahub.ui.pages.extensions.skills.SkillDetailPage
 import me.rerere.rikkahub.ui.pages.extensions.skills.SkillsPage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspacePage
@@ -554,6 +555,10 @@ class RouteActivity : ComponentActivity() {
                                 TavernHelperPage(assistantId = key.assistantId)
                             }
 
+                            entry<Screen.TavernScriptLogs> { key ->
+                                TavernScriptLogPage(scriptId = key.scriptId, scriptName = key.scriptName)
+                            }
+
                             entry<Screen.Prompts> {
                                 PromptPage()
                             }
@@ -791,6 +796,12 @@ sealed interface Screen : NavKey {
     data class TavernHelper(
         val assistantId: String? = null,
         val conversationId: String? = null,
+    ) : Screen
+
+    @Serializable
+    data class TavernScriptLogs(
+        val scriptId: String,
+        val scriptName: String,
     ) : Screen
 
     @Serializable

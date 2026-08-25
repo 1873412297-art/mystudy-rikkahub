@@ -58,7 +58,12 @@ import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptNode
 import me.rerere.rikkahub.data.ai.tavernhelper.searchTavernHelperNodes
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.ui.components.nav.BackButton
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernScriptRuntimeStatus
+import me.rerere.rikkahub.ui.components.richtext.runtime.tavernScriptDiagnostics
+import me.rerere.rikkahub.ui.components.richtext.runtime.tavernScriptStatusLabel
 import me.rerere.rikkahub.ui.components.ui.EmptyState
+import me.rerere.rikkahub.Screen
+import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.plus
 import org.koin.androidx.compose.koinViewModel
@@ -69,7 +74,9 @@ internal fun TavernHelperPage(
     vm: TavernHelperVM = koinViewModel(),
 ) {
     val context = LocalContext.current
+    val navController = LocalNavController.current
     val scripts by vm.scripts.collectAsStateWithLifecycle()
+    val runtimeStatuses by tavernScriptDiagnostics.statuses.collectAsStateWithLifecycle()
     val selectedScope by vm.scope.collectAsStateWithLifecycle()
     val appSettings by vm.settings.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
@@ -166,6 +173,8 @@ internal fun TavernHelperPage(
                     val safeName = node.name.ifBlank { "未命名" }.replace(Regex("[\\/:*?\"<>|]"), "_")
                     exporter.launch("$prefix-$safeName.json")
                 },
+                runtimeStatuses = runtimeStatuses,
+                onOpenLog = { script -> navController.navigate(Screen.TavernScriptLogs(script.id, script.name)) },
             )
         }
     }
@@ -320,6 +329,8 @@ private fun ScriptList(
     onReorder: (TavernHelperScriptNode, Int) -> Unit,
     onTransfer: (TavernHelperScriptNode, Boolean) -> Unit,
     onExport: (TavernHelperScriptNode) -> Unit,
+    runtimeStatuses: Map<String, TavernScriptRuntimeStatus>,
+    onOpenLog: (TavernHelperScript) -> Unit,
 ) {
     val searchResult = remember(scripts, search) { searchTavernHelperNodes(scripts, search) }
     LazyColumn(
@@ -369,7 +380,18 @@ private fun ScriptList(
             item { EmptyState(icon = HugeIcons.Puzzle, title = "暂无脚本", hint = "新增或导入脚本后会显示在这里") }
         }
         items(searchResult.nodes, key = { it.id }) { node ->
-            ScriptNodeCard(node, onEnabled, onDelete, onEdit, onDuplicate, onReorder, onTransfer, onExport)
+            ScriptNodeCard(
+                node,
+                onEnabled,
+                onDelete,
+                onEdit,
+                onDuplicate,
+                onReorder,
+                onTransfer,
+                onExport,
+                runtimeStatuses,
+                onOpenLog,
+            )
         }
     }
 }
@@ -384,6 +406,8 @@ private fun ScriptNodeCard(
     onReorder: (TavernHelperScriptNode, Int) -> Unit,
     onTransfer: (TavernHelperScriptNode, Boolean) -> Unit,
     onExport: (TavernHelperScriptNode) -> Unit,
+    runtimeStatuses: Map<String, TavernScriptRuntimeStatus>,
+    onOpenLog: (TavernHelperScript) -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         ListItem(
@@ -392,7 +416,14 @@ private fun ScriptNodeCard(
             },
             headlineContent = { Text(node.name.ifBlank { "未命名脚本" }) },
             supportingContent = {
-                Text(if (node is TavernHelperScriptFolder) "${node.scripts.size} 个脚本" else (node as TavernHelperScript).info)
+                Text(
+                    if (node is TavernHelperScriptFolder) {
+                        "${node.scripts.size} 个脚本"
+                    } else {
+                        val script = node as TavernHelperScript
+                        "${script.info}\n状态：${tavernScriptStatusLabel(scriptDisplayStatus(script, runtimeStatuses))}"
+                    },
+                )
             },
             trailingContent = { Switch(checked = node.enabled, onCheckedChange = { onEnabled(node, it) }) },
         )
@@ -401,6 +432,9 @@ private fun ScriptNodeCard(
                 HorizontalDivider()
                 ListItem(
                     headlineContent = { Text(child.name.ifBlank { "未命名脚本" }) },
+                    supportingContent = {
+                        Text("状态：${tavernScriptStatusLabel(scriptDisplayStatus(child, runtimeStatuses))}")
+                    },
                     trailingContent = { Switch(child.enabled, onCheckedChange = { onEnabled(child, it) }) },
                 )
                 FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -411,6 +445,7 @@ private fun ScriptNodeCard(
                     TextButton(onClick = { onTransfer(child, false) }) { Text("移动") }
                     TextButton(onClick = { onTransfer(child, true) }) { Text("跨域复制") }
                     TextButton(onClick = { onExport(child) }) { Text("导出") }
+                    TextButton(onClick = { onOpenLog(child) }) { Text("日志") }
                     IconButton(onClick = { onDelete(child) }) { Icon(HugeIcons.Delete01, "删除") }
                 }
             }
@@ -420,6 +455,7 @@ private fun ScriptNodeCard(
             TextButton(onClick = { onReorder(node, 1) }) { Text("下移") }
             if (node is TavernHelperScript) {
                 TextButton(onClick = { onEdit(node) }) { Text("编辑") }
+                TextButton(onClick = { onOpenLog(node) }) { Text("日志") }
             }
             TextButton(onClick = { onDuplicate(node) }) { Text("复制") }
             TextButton(onClick = { onTransfer(node, false) }) { Text("移动") }
@@ -428,6 +464,14 @@ private fun ScriptNodeCard(
             IconButton(onClick = { onDelete(node) }) { Icon(HugeIcons.Delete01, "删除") }
         }
     }
+}
+
+private fun scriptDisplayStatus(
+    script: TavernHelperScript,
+    runtimeStatuses: Map<String, TavernScriptRuntimeStatus>,
+): TavernScriptRuntimeStatus = when {
+    !script.enabled -> TavernScriptRuntimeStatus.DISABLED
+    else -> runtimeStatuses[script.id] ?: tavernScriptDiagnostics.statusFor(true, script.id)
 }
 
 private data class TavernHelperTransferRequest(

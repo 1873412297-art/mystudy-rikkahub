@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
@@ -53,6 +54,27 @@ internal object TavernBrowserSessionRegistry {
             )
         }
     }
+
+    fun reload(scriptId: String) {
+        sessions[scriptId]?.let { webView -> webView.post { webView.reload() } }
+    }
+}
+
+internal data class TavernBrowserScriptSelection(
+    val active: List<TavernHelperScript>,
+    val overLimit: List<TavernHelperScript>,
+)
+
+internal fun selectTavernBrowserScripts(
+    global: List<TavernHelperScriptNode>,
+    character: List<TavernHelperScriptNode>,
+    assistant: List<TavernHelperScriptNode>,
+): TavernBrowserScriptSelection {
+    val enabled = flattenEnabled(global) + flattenEnabled(character) + flattenEnabled(assistant)
+    return TavernBrowserScriptSelection(
+        active = enabled.take(MAX_BROWSER_SESSIONS),
+        overLimit = enabled.drop(MAX_BROWSER_SESSIONS),
+    )
 }
 
 internal data class TavernBrowserRuntimeContext(
@@ -131,9 +153,16 @@ internal fun rememberTavernBrowserScripts(assistantId: String?): List<TavernHelp
         ?.collectAsStateWithLifecycle(initialValue = emptyList())
         ?: remember { androidx.compose.runtime.mutableStateOf(emptyList()) }
 
-    return remember(global, assistant, character) {
-        (flattenEnabled(global) + flattenEnabled(assistant) + flattenEnabled(character)).take(MAX_BROWSER_SESSIONS)
+    val selection = remember(global, character, assistant) {
+        selectTavernBrowserScripts(global, character, assistant)
     }
+    LaunchedEffect(selection) {
+        tavernScriptDiagnostics.applySelection(
+            activeIds = selection.active.mapTo(mutableSetOf()) { it.id },
+            overLimitIds = selection.overLimit.mapTo(mutableSetOf()) { it.id },
+        )
+    }
+    return selection.active
 }
 
 /**
@@ -169,8 +198,24 @@ internal fun TavernBrowserRuntimeHost(
                     fixedHeight = true,
                     maxHeightDp = 1,
                     tavernConversationId = conversationUuid,
-                    onWebViewCreated = { TavernBrowserSessionRegistry.register(script.id, it) },
-                    onWebViewDisposed = { TavernBrowserSessionRegistry.unregister(script.id, it) },
+                    onWebViewCreated = {
+                        TavernBrowserSessionRegistry.register(script.id, it)
+                        tavernScriptDiagnostics.setStatus(script.id, TavernScriptRuntimeStatus.WAITING_PERMISSION)
+                    },
+                    onWebViewDisposed = {
+                        TavernBrowserSessionRegistry.unregister(script.id, it)
+                        tavernScriptDiagnostics.setStatus(script.id, TavernScriptRuntimeStatus.PAUSED)
+                    },
+                    onWebViewLoadFailed = { detail ->
+                        tavernScriptDiagnostics.setStatus(script.id, TavernScriptRuntimeStatus.LOAD_FAILED)
+                        tavernScriptDiagnostics.record(
+                            scriptId = script.id,
+                            level = TavernScriptDiagnosticLevel.ERROR,
+                            category = "renderer",
+                            message = detail.ifBlank { "WebView 加载失败" },
+                            error = detail.takeIf { it.isNotBlank() },
+                        )
+                    },
                     additionalJavascriptInterface = "RikkahubScriptBridge" to scriptBridge,
                 )
             }

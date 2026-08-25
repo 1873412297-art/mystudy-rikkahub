@@ -72,6 +72,7 @@ internal fun MarkdownWebView(
     applyTavernFrontendPolicy: Boolean = false,
     onWebViewCreated: (WebView) -> Unit = {},
     onWebViewDisposed: (WebView) -> Unit = {},
+    onWebViewLoadFailed: (String) -> Unit = {},
     additionalJavascriptInterface: Pair<String, Any>? = null,
     /**
      * 高度上限（dp）：超过此高度的内容会触发 WebView 内部纵向滚动，
@@ -469,6 +470,16 @@ internal fun MarkdownWebView(
                                     )
                                     else -> Unit
                                 }
+                            }
+                        }
+
+                        override fun onReceivedError(
+                            view: WebView?,
+                            request: android.webkit.WebResourceRequest?,
+                            error: android.webkit.WebResourceError?,
+                        ) {
+                            if (request?.isForMainFrame == true) {
+                                onWebViewLoadFailed(error?.description?.toString().orEmpty())
                             }
                         }
                     }

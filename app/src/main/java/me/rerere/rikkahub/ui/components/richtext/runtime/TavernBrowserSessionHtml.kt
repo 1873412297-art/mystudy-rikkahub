@@ -46,7 +46,23 @@ internal fun buildTavernBrowserSessionHtml(script: TavernHelperScript): String {
             function clone(value){return value===undefined?undefined:JSON.parse(JSON.stringify(value));}
             function emitLifecycle(name){
               document.dispatchEvent(new CustomEvent('th:'+name,{detail:{script_id:meta.id},bubbles:true}));
+              if(window.RikkahubScriptBridge)window.RikkahubScriptBridge.lifecycle(name.toLowerCase().replace('script_','').replace('app_ready','running'));
             }
+            function captureConsole(level,original){
+              return function(){
+                original.apply(console,arguments);
+                try{if(window.RikkahubScriptBridge)window.RikkahubScriptBridge.log(level,Array.prototype.map.call(arguments,function(item){
+                  return typeof item==='string'?item:JSON.stringify(item);
+                }).join(' '));}catch(ignored){}
+              };
+            }
+            console.debug=captureConsole('debug',console.debug);
+            console.info=captureConsole('info',console.info);
+            console.warn=captureConsole('warn',console.warn);
+            console.error=captureConsole('error',console.error);
+            window.addEventListener('error',function(event){
+              if(window.RikkahubScriptBridge)window.RikkahubScriptBridge.lifecycle('runtime_crash',event.message||'未捕获脚本错误');
+            });
             window.getScriptId=function(){return meta.id;};
             window.getScriptName=function(){return meta.name;};
             window.getScriptInfo=function(){return meta.info;};
@@ -122,14 +138,21 @@ internal fun buildTavernBrowserSessionHtml(script: TavernHelperScript): String {
               updateVariablesWith:window.updateVariablesWith,insertVariables:window.insertVariables,
               insertOrAssignVariables:window.insertOrAssignVariables,deleteVariable:window.deleteVariable
             });
-            window.addEventListener('pagehide',function(){emitLifecycle('SCRIPT_UNLOADING');},{once:true});
+            window.addEventListener('pagehide',function(){
+              if(window.RikkahubScriptBridge)window.RikkahubScriptBridge.lifecycle('paused');
+              emitLifecycle('SCRIPT_UNLOADING');
+            },{once:true});
             setTimeout(function(){
               try{
+                emitLifecycle('SCRIPT_LOADING');
                 (0,eval)(decode('$source'));
                 emitLifecycle('SCRIPT_LOADED');
                 emitLifecycle('APP_READY');
               }
-              catch(error){console.error('[酒馆助手]['+meta.name+']',error);}
+              catch(error){
+                if(window.RikkahubScriptBridge)window.RikkahubScriptBridge.lifecycle('runtime_crash',String(error));
+                console.error('[酒馆助手]['+meta.name+']',error);
+              }
             },0);
           },{once:true});
         })();

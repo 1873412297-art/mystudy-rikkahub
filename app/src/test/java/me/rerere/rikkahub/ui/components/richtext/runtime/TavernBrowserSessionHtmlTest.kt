@@ -41,6 +41,11 @@ class TavernBrowserSessionHtmlTest {
         assertTrue(html.contains("window.TavernHelper"))
         assertTrue(html.contains("RikkahubScriptBridge.replaceData"))
         assertTrue(html.contains("RikkahubScriptBridge.replaceButtons"))
+        assertTrue(html.contains("RikkahubScriptBridge.log"))
+        assertTrue(html.contains("RikkahubScriptBridge.lifecycle"))
+        assertTrue(html.contains("console.debug"))
+        assertTrue(html.contains("console.error"))
+        assertTrue(html.contains("lifecycle('paused')"))
         assertTrue(html.contains("script-id"))
     }
 }
