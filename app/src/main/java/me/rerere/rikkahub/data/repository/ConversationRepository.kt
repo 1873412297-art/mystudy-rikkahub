@@ -328,6 +328,19 @@ class ConversationRepository(
         statusVariableStore.remove(conversation.id)
     }
 
+    /** Deletes only if ownership still matches, so assistant batch deletion cannot remove a moved conversation. */
+    suspend fun deleteConversationIfAssistantId(conversation: Conversation, assistantId: Uuid): Boolean {
+        if (conversation.assistantId != assistantId) return false
+        val deleted = database.withTransaction {
+            conversationDAO.deleteByIdAndAssistantId(conversation.id.toString(), assistantId.toString())
+        }
+        if (deleted == 0) return false
+        messageFtsManager.deleteConversation(conversation.id.toString())
+        filesManager.deleteChatFiles(conversation.files)
+        statusVariableStore.remove(conversation.id)
+        return true
+    }
+
     suspend fun searchMessages(
         keyword: String,
         sort: MessageSearchSort = MessageSearchSort.RELEVANCE,

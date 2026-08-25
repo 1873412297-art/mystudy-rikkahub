@@ -127,6 +127,28 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
   conversations are still attempted; AssistantVM only removes the assistant after a fully successful batch.
 - Focused JVM suite: PASS (`ChatServiceTest`, mutation store, runtime gateway, and status transformer tests).
 
+## Eleventh review assistant ownership and initialization publication pass
+
+- `deleteConversationAtomic` now accepts an optional expected assistant ID and returns `DELETED`, `NOT_FOUND`, or
+  `MOVED`. Assistant batch deletion passes the owner it collected from; active sessions verify the expected owner
+  while holding the conversation mutation lock, and the Room delete is conditional on `id` plus `assistant_id`.
+  A conversation moved to another assistant after collection is left intact, keeps its live session, and is a safe
+  batch skip. FTS/files/status cleanup runs only after that conditional database delete succeeds.
+- Moving a conversation out of a deleting assistant remains allowed; assignment into a deleting assistant is rejected
+  by the scoped deletion gate. Routes translate only a non-`DELETED` ordinary delete to 404.
+- Initialization now persists the candidate and publishes its conversation live state before it initializes global
+  status variables, then marks runtime readiness. A persistence failure leaves the existing global variables intact
+  and does not mark the session ready.
+- Assistant batch deletion now rethrows `CancellationException` immediately, records only ordinary `Exception`s,
+  never absorbs `Error`, and clears its deletion gate in `finally`.
+- RED to GREEN: added deterministic JVM regressions for collection-then-move ownership protection, deletion-gate
+  direction, cancellation stopping later deletes, `MOVED` batch success, and failed initialization persistence
+  retaining global status variables.
+- Focused JVM suite: PASS (`ChatServiceTest`, `TavernRuntimeMessageMutationStoreTest`,
+  `TavernRuntimeMessageGatewayTest`, and `StatusPlaceholderTransformerTest`).
+- `:app:compileDebugKotlin :web:compileDebugKotlin --no-configuration-cache`: PASS.
+- `git diff --check`: PASS.
+
 ## Ninth review initialization variables, assistant deletion, and injected-current pass
 
 - Persisted status variables are now initialized only in the winning `INSTALL` branch while holding the session
@@ -244,3 +266,7 @@ Sixth review commit: `dd5dd24d fix: guard Tavern conversation initialization`.
 Seventh review commit: `fix: close Tavern runtime mutations during cleanup`.
 
 Ninth review commit: `fix: harden Tavern initialization and assistant deletion`.
+
+Tenth review commit: `85cb8517 fix: preserve Tavern initialization candidates`.
+
+Eleventh review commit: `fix: guard Tavern assistant ownership deletion` (current HEAD).

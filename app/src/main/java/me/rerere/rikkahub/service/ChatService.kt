@@ -336,6 +336,34 @@ internal data class AssistantConversationDeletionResult(
     val succeeded: Boolean get() = failedConversationIds.isEmpty()
 }
 
+enum class ConversationDeleteResult {
+    DELETED,
+    NOT_FOUND,
+    MOVED,
+}
+
+/** A moved conversation is intentionally left to its new assistant during a batch deletion. */
+internal fun isAssistantBatchDeleteSuccess(result: ConversationDeleteResult): Boolean =
+    result != ConversationDeleteResult.NOT_FOUND
+
+/** An assistant being deleted cannot receive new conversations, while moving out remains valid. */
+internal fun canMoveConversationToAssistant(assistantId: Uuid, deletingAssistantIds: Set<Uuid>): Boolean =
+    assistantId !in deletingAssistantIds
+
+/**
+ * Resolves ownership immediately before the conditional delete. A batch may have collected the id while it belonged
+ * to one assistant, then another operation may have moved it before this lock is reached.
+ */
+internal suspend fun deleteConversationWithExpectedAssistant(
+    expectedAssistantId: Uuid,
+    load: suspend () -> Conversation?,
+    delete: suspend (Conversation) -> Boolean,
+): ConversationDeleteResult {
+    val conversation = load() ?: return ConversationDeleteResult.NOT_FOUND
+    if (conversation.assistantId != expectedAssistantId) return ConversationDeleteResult.MOVED
+    return if (delete(conversation)) ConversationDeleteResult.DELETED else ConversationDeleteResult.MOVED
+}
+
 internal suspend fun deleteAssistantConversationIds(
     conversationIds: List<Uuid>,
     delete: suspend (Uuid) -> Boolean,
@@ -345,7 +373,9 @@ internal suspend fun deleteAssistantConversationIds(
     conversationIds.forEach { conversationId ->
         try {
             if (!delete(conversationId)) failedConversationIds += conversationId
-        } catch (error: Throwable) {
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
             failedConversationIds += conversationId
             errors[conversationId] = error
         }
@@ -373,6 +403,16 @@ internal suspend fun <T> renderInitializationStatusCandidate(
         value = render(temporaryStore),
         statusVariables = temporaryStore.getValue(conversationId),
     )
+}
+
+/** Prevents a failed repository write from publishing candidate variables to the live store. */
+internal suspend fun persistInitializationThenPublishStatusVariables(
+    persistAndPublish: suspend () -> Boolean,
+    publishStatusVariables: () -> Unit,
+): Boolean {
+    if (!persistAndPublish()) return false
+    publishStatusVariables()
+    return true
 }
 
 internal fun resolveLocalGroupTurnSelection(
@@ -751,17 +791,25 @@ class ChatService(
                 )
                 when (action) {
                     InitializationInstallAction.INSTALL -> {
-                        applyInitializedStatusVariables(
-                            action = action,
-                            store = statusVariableStore,
-                            conversationId = conversationId,
-                            variables = conversation.statusVariables,
+                        val installed = persistInitializationThenPublishStatusVariables(
+                            persistAndPublish = {
+                                if (shouldPersist) {
+                                    saveConversationUnlocked(conversationId, conversation, promptTraceCleanup)
+                                } else {
+                                    updateConversation(conversationId, conversation)
+                                    true
+                                }
+                            },
+                            publishStatusVariables = {
+                                applyInitializedStatusVariables(
+                                    action = action,
+                                    store = statusVariableStore,
+                                    conversationId = conversationId,
+                                    variables = conversation.statusVariables,
+                                )
+                            },
                         )
-                        if (shouldPersist) {
-                            saveConversationUnlocked(conversationId, conversation, promptTraceCleanup)
-                        } else {
-                            updateConversation(conversationId, conversation)
-                        }
+                        if (!installed) return@withConversationMutationLock
                         tavernRuntimeReadiness.markReady(conversationId)
                     }
 
@@ -2035,15 +2083,21 @@ class ChatService(
         conversationId: Uuid,
         assistantId: Uuid,
         clearFolder: Boolean,
-    ): Boolean = updateExistingConversationField(
-        conversationId = conversationId,
-        transform = { current ->
-            current.copy(assistantId = assistantId, folderId = if (clearFolder) null else current.folderId)
-        },
-        updateInactive = {
-            conversationRepo.updateConversationAssistant(conversationId, assistantId, clearFolder)
-        },
-    )
+    ): Boolean {
+        if (!canMoveConversationToAssistant(assistantId, deletingAssistantIds)) return false
+        return updateExistingConversationField(
+            conversationId = conversationId,
+            transform = { current ->
+                current.copy(assistantId = assistantId, folderId = if (clearFolder) null else current.folderId)
+            },
+            updateInactive = {
+                if (!canMoveConversationToAssistant(assistantId, deletingAssistantIds)) {
+                    return@updateExistingConversationField false
+                }
+                conversationRepo.updateConversationAssistant(conversationId, assistantId, clearFolder)
+            },
+        )
+    }
 
     suspend fun updateConversationMessageFields(
         conversationId: Uuid,
@@ -2125,23 +2179,52 @@ class ChatService(
         )
 
     /** Removes the live owner before deleting persistence, so late runtime calls cannot recreate this conversation. */
-    suspend fun deleteConversationAtomic(conversationId: Uuid): Boolean {
+    suspend fun deleteConversationAtomic(
+        conversationId: Uuid,
+        expectedAssistantId: Uuid? = null,
+    ): ConversationDeleteResult {
         val session = sessions[conversationId]
         if (session == null) {
-            val conversation = conversationRepo.getConversationById(conversationId) ?: return false
+            if (expectedAssistantId != null) {
+                return deleteConversationWithExpectedAssistant(
+                    expectedAssistantId = expectedAssistantId,
+                    load = { conversationRepo.getConversationById(conversationId) },
+                    delete = { conversationRepo.deleteConversationIfAssistantId(it, expectedAssistantId) },
+                )
+            }
+            val conversation = conversationRepo.getConversationById(conversationId)
+                ?: return ConversationDeleteResult.NOT_FOUND
             conversationRepo.deleteConversation(conversation)
-            return true
+            return ConversationDeleteResult.DELETED
         }
         return session.withRefSuspend {
             session.withConversationMutationLock {
-                if (sessions[conversationId] !== session) return@withConversationMutationLock false
+                if (sessions[conversationId] !== session) {
+                    return@withConversationMutationLock ConversationDeleteResult.NOT_FOUND
+                }
+                if (expectedAssistantId != null && session.state.value.assistantId != expectedAssistantId) {
+                    return@withConversationMutationLock ConversationDeleteResult.MOVED
+                }
+                val result = if (expectedAssistantId != null) {
+                    deleteConversationWithExpectedAssistant(
+                        expectedAssistantId = expectedAssistantId,
+                        load = { conversationRepo.getConversationById(conversationId) },
+                        delete = { conversationRepo.deleteConversationIfAssistantId(it, expectedAssistantId) },
+                    )
+                } else {
+                    val conversation = conversationRepo.getConversationById(conversationId)
+                        ?: return@withConversationMutationLock ConversationDeleteResult.NOT_FOUND
+                    conversationRepo.deleteConversation(conversation)
+                    ConversationDeleteResult.DELETED
+                }
+                if (result != ConversationDeleteResult.DELETED) {
+                    return@withConversationMutationLock result
+                }
                 tavernRuntimeReadiness.clear(conversationId)
                 session.closeLockedForCleanup()
                 sessions.remove(conversationId, session)
                 _sessionsVersion.value++
-                val conversation = conversationRepo.getConversationById(conversationId) ?: return@withConversationMutationLock false
-                conversationRepo.deleteConversation(conversation)
-                true
+                ConversationDeleteResult.DELETED
             }
         }
     }
@@ -2157,7 +2240,11 @@ class ChatService(
                 .filter { it.state.value.assistantId == assistantId }
                 .map { it.id }
             val conversationIds = orderedAssistantConversationDeletionIds(repositoryIds + liveSessionIds)
-            deleteAssistantConversationIds(conversationIds, ::deleteConversationAtomic).succeeded
+            deleteAssistantConversationIds(conversationIds) { conversationId ->
+                isAssistantBatchDeleteSuccess(
+                    deleteConversationAtomic(conversationId, expectedAssistantId = assistantId),
+                )
+            }.succeeded
         } finally {
             deletingAssistantIds.remove(assistantId)
         }
@@ -2227,14 +2314,14 @@ class ChatService(
         conversation: Conversation,
         promptTraceCleanup: PromptTraceCleanup,
         allowCreate: Boolean = false,
-    ) {
+    ): Boolean {
         val exists = conversationRepo.existsConversationById(conversation.id)
-        if (conversation.assistantId in deletingAssistantIds) return
+        if (conversation.assistantId in deletingAssistantIds) return false
         if (!canPersistConversation(exists, tavernRuntimeReadiness.isReady(conversationId), allowCreate)) {
-            return
+            return false
         }
         if (!exists && conversation.title.isBlank() && conversation.messageNodes.isEmpty()) {
-            return // 新会话且为空时不保存
+            return false // 新会话且为空时不保存
         }
 
         val updatedConversation = conversation.copy()
@@ -2256,6 +2343,7 @@ class ChatService(
                 publishLive = { committed -> updateConversation(conversationId, committed) },
             )
         }
+        return true
     }
 
     // ---- 翻译消息 ----

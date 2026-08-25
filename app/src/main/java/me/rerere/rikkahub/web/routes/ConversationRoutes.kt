@@ -19,6 +19,7 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.service.ConversationDeleteResult
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
 import me.rerere.rikkahub.web.dto.ConversationDto
@@ -154,7 +155,7 @@ fun Route.conversationRoutes(
         // DELETE /api/conversations/{id} - Delete conversation
         delete("/{id}") {
             val uuid = call.parameters["id"].toUuid("conversation id")
-            if (!chatService.deleteConversationAtomic(uuid)) {
+            if (chatService.deleteConversationAtomic(uuid) != ConversationDeleteResult.DELETED) {
                 throw NotFoundException("Conversation not found")
             }
             call.respond(HttpStatusCode.NoContent)

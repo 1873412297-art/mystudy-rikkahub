@@ -7,6 +7,7 @@ import kotlinx.serialization.json.put
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -285,6 +286,105 @@ class ChatServiceTest {
         assertEquals(listOf(firstId, secondId), attempted)
         assertEquals(setOf(firstId), result.failedConversationIds)
         assertTrue(result.errors.getValue(firstId).message!!.contains("delete failed"))
+    }
+
+    @Test
+    fun `assistant deletion rethrows cancellation before later conversations`() = runBlocking {
+        val firstId = Uuid.parse("00000000-0000-4000-8000-000000000001")
+        val secondId = Uuid.parse("00000000-0000-4000-8000-000000000002")
+        val attempted = mutableListOf<Uuid>()
+        val cancellation = CancellationException("cancel assistant deletion")
+
+        try {
+            deleteAssistantConversationIds(listOf(firstId, secondId)) { conversationId ->
+                attempted += conversationId
+                if (conversationId == firstId) throw cancellation
+                true
+            }
+            fail("CancellationException should escape assistant deletion")
+        } catch (actual: CancellationException) {
+            assertSame(cancellation, actual)
+        }
+
+        assertEquals(listOf(firstId), attempted)
+    }
+
+    @Test
+    fun `assistant deletion treats a moved conversation as a safe skip`() {
+        assertTrue(isAssistantBatchDeleteSuccess(ConversationDeleteResult.MOVED))
+        assertTrue(isAssistantBatchDeleteSuccess(ConversationDeleteResult.DELETED))
+        assertFalse(isAssistantBatchDeleteSuccess(ConversationDeleteResult.NOT_FOUND))
+    }
+
+    @Test
+    fun `assistant deletion preserves a conversation moved after id collection`() = runBlocking {
+        val conversationId = Uuid.random()
+        val assistantA = Uuid.random()
+        val assistantB = Uuid.random()
+        var persisted = Conversation.ofId(conversationId).copy(assistantId = assistantA)
+        val collectedIds = listOf(conversationId)
+
+        persisted = persisted.copy(assistantId = assistantB)
+        val result = deleteConversationWithExpectedAssistant(
+            expectedAssistantId = assistantA,
+            load = { persisted },
+            delete = { candidate ->
+                if (candidate.assistantId != assistantA || persisted.assistantId != assistantA) {
+                    false
+                } else {
+                    persisted = candidate
+                    true
+                }
+            },
+        )
+
+        assertEquals(listOf(conversationId), collectedIds)
+        assertEquals(ConversationDeleteResult.MOVED, result)
+        assertEquals(assistantB, persisted.assistantId)
+    }
+
+    @Test
+    fun `assistant deletion gate allows moving out and refuses moving in`() {
+        val deletingAssistant = Uuid.random()
+        val otherAssistant = Uuid.random()
+        val deleting = setOf(deletingAssistant)
+
+        assertTrue(canMoveConversationToAssistant(otherAssistant, deleting))
+        assertFalse(canMoveConversationToAssistant(deletingAssistant, deleting))
+    }
+
+    @Test
+    fun `initialization publishes variables only after persistence and live publish succeed`() = runBlocking {
+        val conversationId = Uuid.random()
+        val store = StatusVariableStore()
+        val before = buildJsonObject { put("hp", 10) }
+        val candidate = buildJsonObject { put("hp", 20) }
+        store.init(conversationId, before)
+
+        try {
+            persistInitializationThenPublishStatusVariables(
+                persistAndPublish = { error("disk unavailable") },
+                publishStatusVariables = { store.init(conversationId, candidate) },
+            )
+            fail("persistence failure should stop initialization")
+        } catch (expected: IllegalStateException) {
+            assertTrue(expected.message!!.contains("disk unavailable"))
+        }
+
+        assertEquals(before, store.getValue(conversationId))
+    }
+
+    @Test
+    fun `initialization does not publish variables when persistence declines installation`() = runBlocking {
+        var published = false
+
+        val installed = persistInitializationThenPublishStatusVariables(
+            persistAndPublish = { false },
+            publishStatusVariables = { published = true },
+        )
+
+        assertFalse(installed)
+        assertFalse(published)
     }
 
     @Test
