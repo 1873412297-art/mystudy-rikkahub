@@ -828,40 +828,45 @@ class ChatService(
         promptTraceCleanup: PromptTraceCleanup,
         shouldPersist: Boolean,
     ) {
-        session.withRefSuspend {
-            session.withConversationMutationLock {
-                val action = initializationInstallAction(
-                    session = session,
-                    token = token,
-                    sessionIsCurrent = sessions[conversationId] === session,
-                    isReady = tavernRuntimeReadiness.isReady(conversationId),
-                )
-                when (action) {
-                    InitializationInstallAction.INSTALL -> {
-                        val installed = persistInitializationThenPublishStatusVariables(
-                            persistAndPublish = {
-                                if (shouldPersist) {
-                                    saveConversationUnlocked(conversationId, conversation, promptTraceCleanup)
-                                } else {
-                                    updateConversation(conversationId, conversation)
-                                    true
-                                }
-                            },
-                            publishStatusVariables = {
-                                applyInitializedStatusVariables(
-                                    action = action,
-                                    store = statusVariableStore,
-                                    conversationId = conversationId,
-                                    variables = conversation.statusVariables,
-                                )
-                            },
-                        )
-                        if (!installed) return@withConversationMutationLock
-                        tavernRuntimeReadiness.markReady(conversationId)
-                    }
+        // Keep assistant admission and conversation publication in one critical section. Otherwise an initializer
+        // that started before assistant deletion could publish after the deletion gate has already been established.
+        assistantDeletionGateMutex.withLock {
+            if (conversation.assistantId in deletingAssistantIds) return
+            session.withRefSuspend {
+                session.withConversationMutationLock {
+                    val action = initializationInstallAction(
+                        session = session,
+                        token = token,
+                        sessionIsCurrent = sessions[conversationId] === session,
+                        isReady = tavernRuntimeReadiness.isReady(conversationId),
+                    )
+                    when (action) {
+                        InitializationInstallAction.INSTALL -> {
+                            val installed = persistInitializationThenPublishStatusVariables(
+                                persistAndPublish = {
+                                    if (shouldPersist) {
+                                        saveConversationUnlocked(conversationId, conversation, promptTraceCleanup)
+                                    } else {
+                                        updateConversation(conversationId, conversation)
+                                        true
+                                    }
+                                },
+                                publishStatusVariables = {
+                                    applyInitializedStatusVariables(
+                                        action = action,
+                                        store = statusVariableStore,
+                                        conversationId = conversationId,
+                                        variables = conversation.statusVariables,
+                                    )
+                                },
+                            )
+                            if (!installed) return@withConversationMutationLock
+                            tavernRuntimeReadiness.markReady(conversationId)
+                        }
 
-                    InitializationInstallAction.MARK_READY -> tavernRuntimeReadiness.markReady(conversationId)
-                    InitializationInstallAction.SKIP -> Unit
+                        InitializationInstallAction.MARK_READY -> tavernRuntimeReadiness.markReady(conversationId)
+                        InitializationInstallAction.SKIP -> Unit
+                    }
                 }
             }
         }
@@ -2314,6 +2319,15 @@ class ChatService(
                             )
                         }
                         val commit = commitConversationDeletion(conversationId, expectedAssistantId)
+                        if (commit.result == ConversationDeleteResult.NOT_FOUND) {
+                            // A live-only conversation has not reached Room yet. Closing its authoritative session is
+                            // the deletion commit; treating this as failure would let a pre-gate initializer survive.
+                            val wasReady = tavernRuntimeReadiness.isReady(conversationId)
+                            closeCommittedConversationSession(conversationId, session)
+                            return@withConversationMutationLock ConversationDeletionCommitResult(
+                                if (wasReady) ConversationDeleteResult.DELETED else ConversationDeleteResult.NOT_FOUND,
+                            )
+                        }
                         val conversation = commit.conversation ?: return@withConversationMutationLock commit
                         closeCommittedConversationSession(conversationId, session)
                         ConversationDeletionCommitResult(ConversationDeleteResult.DELETED, conversation)

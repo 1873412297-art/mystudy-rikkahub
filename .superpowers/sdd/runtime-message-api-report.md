@@ -147,6 +147,15 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
 - Focused JVM suite: PASS (`ChatServiceTest`, `TavernRuntimeMessageMutationStoreTest`,
   `TavernRuntimeMessageGatewayTest`, and `StatusPlaceholderTransformerTest`).
 - `:app:compileDebugKotlin :web:compileDebugKotlin --no-configuration-cache`: PASS.
+
+## Final assistant-initialization gate pass
+
+- The assistant-deletion gate is rechecked while holding the gate mutex through the final conversation install, so an
+  initializer that started before deletion cannot publish a live/ready session after deletion admission begins.
+- An initialized, ready, live-only conversation with no Room row is closed as a successful deletion; an unready
+  placeholder still reports `NOT_FOUND`.
+- Focused runtime JVM suite remains green (83 tests, 0 failures), with app/web compilation covered by the preceding
+  verification pass.
 - `git diff --check`: PASS.
 
 ## Twelfth review deletion-finalization and current-message pass
