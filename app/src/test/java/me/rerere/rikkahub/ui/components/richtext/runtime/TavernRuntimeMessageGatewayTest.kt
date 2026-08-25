@@ -185,10 +185,54 @@ class TavernRuntimeMessageGatewayTest {
     }
 
     @Test
-    fun `serializer injected current message persists updateCurrent through its real id`() {
+    fun `updateCurrent delegates one atomic latest update without a snapshot read`() {
+        val conversationId = Uuid.random()
+        var snapshotReads = 0
+        var latestUpdates = 0
+        val gateway = object : TavernRuntimeMessageGateway {
+            override fun readSnapshot(conversationId: Uuid): List<TavernRuntimeMessage>? {
+                snapshotReads++
+                return error("updateCurrent must not pre-read the latest message")
+            }
+
+            override fun list(conversationId: Uuid): List<TavernRuntimeMessage> = emptyList()
+
+            override fun get(conversationId: Uuid, messageId: String): TavernRuntimeMessage? = null
+
+            override fun create(conversationId: Uuid, role: MessageRole, text: String): TavernRuntimeMessage =
+                error("not used")
+
+            override fun update(conversationId: Uuid, messageId: String, text: String): TavernRuntimeMessage? =
+                error("updateCurrent must not use id-based update")
+
+            override fun updateLatest(conversationId: Uuid, text: String): TavernRuntimeMessage? {
+                latestUpdates++
+                return TavernRuntimeMessage("latest", MessageRole.ASSISTANT, text, isCurrent = true)
+            }
+
+            override fun delete(conversationId: Uuid, messageId: String): Boolean = false
+        }
+        val controller = TavernRuntimeController(
+            conversationId = conversationId,
+            permissionStore = TavernRuntimePermissionStore(TavernRuntimePermissions(allowMessageWrite = true)),
+            messageGateway = gateway,
+        )
+
+        val updated = controller.dispatch(
+            request("messages.updateCurrent", "patch" to buildJsonObject { put("text", "new") }),
+        )
+
+        assertTrue(updated.ok)
+        assertEquals(1, latestUpdates)
+        assertEquals(0, snapshotReads)
+        assertEquals("latest", updated.result!!.jsonObject.getValue("messageId").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `serializer injected current message persists updateCurrent through atomic latest update`() {
         val conversationId = Uuid.random()
         var persisted = UIMessage.assistant("before")
-        var updatedId: String? = null
+        var latestUpdates = 0
         val gateway = object : TavernRuntimeMessageGateway {
             override fun list(conversationId: Uuid): List<TavernRuntimeMessage> = listOf(
                 TavernRuntimeMessage(
@@ -209,10 +253,12 @@ class TavernRuntimeMessageGatewayTest {
                 conversationId: Uuid,
                 messageId: String,
                 text: String,
-            ): TavernRuntimeMessage? {
-                updatedId = messageId
+            ): TavernRuntimeMessage? = error("updateCurrent must use updateLatest")
+
+            override fun updateLatest(conversationId: Uuid, text: String): TavernRuntimeMessage? {
+                latestUpdates++
                 persisted = persisted.copy(parts = listOf(me.rerere.ai.ui.UIMessagePart.Text(text)))
-                return get(conversationId, messageId)
+                return get(conversationId, persisted.id.toString())
             }
 
             override fun delete(conversationId: Uuid, messageId: String): Boolean = false
@@ -229,7 +275,7 @@ class TavernRuntimeMessageGatewayTest {
         )
         val current = controller.dispatch(request("messages.getCurrent"))
 
-        assertEquals(persisted.id.toString(), updatedId)
+        assertEquals(1, latestUpdates)
         assertEquals("after", persisted.toText())
         assertEquals(persisted.id.toString(), updated.result!!.jsonObject.getValue("messageId").jsonPrimitive.content)
         assertEquals("after", updated.result!!.jsonObject.getValue("text").jsonPrimitive.content)

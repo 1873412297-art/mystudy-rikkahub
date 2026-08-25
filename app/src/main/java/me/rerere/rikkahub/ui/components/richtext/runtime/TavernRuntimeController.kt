@@ -392,7 +392,7 @@ internal class TavernRuntimeController(
             val conversationId = activeConversationId(request)
             if (persistedId != null && conversationId != null) {
                 if (!messageGateway.isReady(conversationId)) return conversationNotReady(request)
-                val updated = messageGateway.update(conversationId, messageId, text)
+                val updated = messageGateway.updateLatest(conversationId, text)
                     ?: return notFound(request, "Message not found")
                 val normalized = updated.toJson()
                 injectedCurrentMessage = normalized
@@ -406,10 +406,8 @@ internal class TavernRuntimeController(
             return TavernRuntimeResponse.success(request.id, updated)
         }
         val conversationId = activeConversationId(request) ?: return noActiveConversation(request)
-        val messages = messageGateway.readSnapshot(conversationId) ?: return conversationNotReady(request)
-        val current = messages.lastOrNull()
-            ?: return notFound(request, "No current message exists")
-        val updated = messageGateway.update(conversationId, current.messageId, text)
+        if (!messageGateway.isReady(conversationId)) return conversationNotReady(request)
+        val updated = messageGateway.updateLatest(conversationId, text)
             ?: return notFound(request, "Message not found")
         return TavernRuntimeResponse.success(request.id, updated.toJson())
     }

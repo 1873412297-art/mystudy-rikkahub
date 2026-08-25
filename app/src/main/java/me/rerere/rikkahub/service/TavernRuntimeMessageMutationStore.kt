@@ -42,6 +42,8 @@ internal interface TavernRuntimeMessageService {
 
     suspend fun updateTavernRuntimeMessageText(conversationId: Uuid, messageId: Uuid, text: String): UIMessage?
 
+    suspend fun updateLatestTavernRuntimeMessage(conversationId: Uuid, text: String): UIMessage? = null
+
     suspend fun deleteTavernRuntimeMessage(conversationId: Uuid, messageId: Uuid): Boolean
 }
 
@@ -132,6 +134,32 @@ internal class TavernRuntimeMessageMutationStore(
             )
             result
         }
+
+    suspend fun updateLatest(conversationId: Uuid, text: String): UIMessage? = persistence.mutate(conversationId) {
+        check(persistence.isReady(conversationId)) { "CONVERSATION_NOT_READY" }
+        val conversation = persistence.currentConversation(conversationId)
+        val latest = conversation.currentMessages.lastOrNull() ?: return@mutate null
+        var updated: UIMessage? = null
+        val nodes = conversation.messageNodes.map { node ->
+            if (node.currentMessage.id != latest.id) {
+                node
+            } else {
+                node.copy(messages = node.messages.map { message ->
+                    if (message.id == latest.id) {
+                        message.replaceRuntimeMessageText(text).also { updated = it }
+                    } else {
+                        message
+                    }
+                })
+            }
+        }
+        val result = updated ?: return@mutate null
+        persistence.persist(conversationId, conversation.copy(messageNodes = nodes))
+        persistence.emit(
+            TavernRuntimeMessageMutationEvent(TavernHostEventType.MESSAGE_EDITED, conversationId, result),
+        )
+        result
+    }
 
     suspend fun delete(conversationId: Uuid, messageId: Uuid): Boolean = persistence.mutate(conversationId) {
         check(persistence.isReady(conversationId)) { "CONVERSATION_NOT_READY" }

@@ -20,6 +20,8 @@ internal interface TavernRuntimeMessageGateway {
 
     fun update(conversationId: Uuid, messageId: String, text: String): TavernRuntimeMessage?
 
+    fun updateLatest(conversationId: Uuid, text: String): TavernRuntimeMessage? = null
+
     fun delete(conversationId: Uuid, messageId: String): Boolean
 }
 
@@ -65,6 +67,11 @@ internal class InMemoryTavernRuntimeMessageGateway(
         return messages[index].copy(text = text).also { messages[index] = it }
     }
 
+    override fun updateLatest(conversationId: Uuid, text: String): TavernRuntimeMessage? {
+        val latest = messagesByConversation[conversationId]?.lastOrNull() ?: return null
+        return update(conversationId, latest.messageId, text)
+    }
+
     override fun delete(conversationId: Uuid, messageId: String): Boolean =
         messagesByConversation[conversationId]?.removeAll { it.messageId == messageId } == true
 }
@@ -99,6 +106,13 @@ internal class ChatServiceTavernRuntimeMessageGateway(
                 val selected = runBlocking { chatService.readTavernRuntimeMessageSnapshot(conversationId) }.orEmpty()
                 toRuntimeMessage(message, selected.lastOrNull()?.id == message.id)
             }
+    }
+
+    override fun updateLatest(conversationId: Uuid, text: String): TavernRuntimeMessage? = runBlocking {
+        chatService.updateLatestTavernRuntimeMessage(conversationId, text)
+    }?.let { message ->
+        val selected = runBlocking { chatService.readTavernRuntimeMessageSnapshot(conversationId) }.orEmpty()
+        toRuntimeMessage(message, selected.lastOrNull()?.id == message.id)
     }
 
     override fun delete(conversationId: Uuid, messageId: String): Boolean {

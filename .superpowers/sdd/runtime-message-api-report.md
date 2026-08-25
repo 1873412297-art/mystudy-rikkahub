@@ -95,6 +95,21 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
   pauses a runtime mutation before commit, starts the tool-approval-shaped production mutation path, and proves it
   cannot read the stale snapshot; the final session retains both changes.
 
+## Fifth review field and long-running mutation pass
+
+- ChatVM and web conversation routes no longer save UI/repository snapshots over live messages. They delegate title,
+  pin, assistant, injection, metadata, and selected-node changes to explicit ChatService field methods, each of
+  which reads the latest session state under the shared mutation lock before persisting.
+- Compression records its source message-node IDs before provider work. Its final lock verifies that baseline remains
+  the live prefix, replaces only that prefix, and retains nodes appended by runtime or normal sends while the remote
+  summary was pending.
+- `messages.updateCurrent` now calls one atomic `gateway.updateLatest` operation. The production store chooses the
+  latest selected message, updates, persists, and emits in one mutex scope; controller no longer performs a separate
+  snapshot read. Store tests cover both direct latest update and a controlled updateLatest/create interleave.
+- AUTO_MODERATOR captures its decision snapshot under the established group-then-conversation order, performs the
+  provider call with the conversation mutation lock released, then re-enters both locks and applies only when message,
+  queue, active-member, and runtime director state still match the snapshot.
+
 ## Verification
 
 - Focused runtime JVM suite: PASS, including controller/gateway, mutation-store, readiness, persistence-order,

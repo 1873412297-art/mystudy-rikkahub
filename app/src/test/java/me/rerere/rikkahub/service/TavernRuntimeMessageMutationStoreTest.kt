@@ -2,6 +2,7 @@ package me.rerere.rikkahub.service
 
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -117,6 +118,48 @@ class TavernRuntimeMessageMutationStoreTest {
     }
 
     @Test
+    fun `updateLatest atomically updates the selected message and emits an edit event`() = runBlocking {
+        val conversationId = Uuid.random()
+        val persistence = TestRuntimeMessagePersistence(conversationId)
+        val store = TavernRuntimeMessageMutationStore(persistence)
+        store.create(conversationId, MessageRole.USER, "first")
+        val current = store.create(conversationId, MessageRole.ASSISTANT, "before")
+        persistence.events.clear()
+
+        val updated = store.updateLatest(conversationId, "after")
+
+        assertEquals(current.id, updated?.id)
+        assertEquals("after", persistence.persisted.currentMessages.last().toText())
+        assertEquals(listOf("MESSAGE_EDITED"), persistence.events)
+    }
+
+    @Test
+    fun `updateLatest and create interleave without losing either committed message`() = runBlocking {
+        val conversationId = Uuid.random()
+        val original = UIMessage.assistant("before")
+        val persistence = TestRuntimeMessagePersistence(
+            conversationId,
+            Conversation.ofId(conversationId, messages = listOf(original.toMessageNode())),
+        )
+        val store = TavernRuntimeMessageMutationStore(persistence)
+        val updateEnteredPersist = CompletableDeferred<Unit>()
+        val allowUpdatePersist = CompletableDeferred<Unit>()
+        persistence.beforePersist = {
+            updateEnteredPersist.complete(Unit)
+            allowUpdatePersist.await()
+            persistence.beforePersist = {}
+        }
+
+        val updating = async { store.updateLatest(conversationId, "edited") }
+        updateEnteredPersist.await()
+        val creating = async { store.create(conversationId, MessageRole.USER, "created") }
+        allowUpdatePersist.complete(Unit)
+        awaitAll(updating, creating)
+
+        assertEquals(setOf("edited", "created"), persistence.persisted.currentMessages.map { it.toText() }.toSet())
+    }
+
+    @Test
     fun `failed create update and delete persistence emits no lifecycle event`() = runBlocking {
         val conversationId = Uuid.random()
         val persistence = TestRuntimeMessagePersistence(conversationId)
@@ -184,6 +227,7 @@ private class TestRuntimeMessagePersistence(
     var evictBeforeBlock = false
     var failWrites = false
     var removalPersists = 0
+    var beforePersist: suspend () -> Unit = {}
     val events = mutableListOf<String>()
     private val mutex = Mutex()
 
@@ -203,6 +247,7 @@ private class TestRuntimeMessagePersistence(
     override fun currentConversation(conversationId: Uuid): Conversation = persisted
 
     override suspend fun persist(conversationId: Uuid, conversation: Conversation) {
+        beforePersist()
         check(!failWrites) { "write failed" }
         durable.live.value = conversation
     }

@@ -363,14 +363,13 @@ class ChatVM(
 
     fun saveConversationAsync() {
         viewModelScope.launch {
-            chatService.saveConversation(_conversationId, conversation.value)
+            chatService.persistCurrentConversation(_conversationId)
         }
     }
 
     fun updateTitle(title: String) {
         viewModelScope.launch {
-            val updatedConversation = conversation.value.copy(title = title)
-            chatService.saveConversation(_conversationId, updatedConversation)
+            chatService.updateTitle(_conversationId, title)
         }
     }
 
@@ -394,7 +393,7 @@ class ChatVM(
                 folderId = null,
             )
             if (conversation.id == _conversationId) {
-                chatService.saveConversation(_conversationId, updatedConversation)
+                chatService.updateAssistant(_conversationId, targetAssistantId, clearFolder = true)
                 settingsStore.updateAssistant(targetAssistantId)
             } else {
                 conversationRepo.updateConversation(updatedConversation)
@@ -425,9 +424,13 @@ class ChatVM(
 
     fun updateConversation(newConversation: Conversation) {
         viewModelScope.launch {
-            chatService.updateConversationState(_conversationId) {
-                newConversation
-            }
+            chatService.updateConversationMessageFields(_conversationId, newConversation)
+        }
+    }
+
+    fun updateConversationMessageNode(node: MessageNode) {
+        viewModelScope.launch {
+            chatService.replaceConversationMessageNode(_conversationId, node)
         }
     }
 

@@ -256,6 +256,40 @@ internal suspend fun <T> mutateConversation(
     block: suspend (Conversation) -> T,
 ): T = session.withConversationMutationLock { block(session.state.value) }
 
+/** Applies UI-editable metadata without replacing live message nodes owned by generation and runtime mutations. */
+internal fun mergeConversationUiFields(current: Conversation, requested: Conversation): Conversation = current.copy(
+    customSystemPrompt = requested.customSystemPrompt,
+    authorNote = requested.authorNote,
+    workspaceCwd = requested.workspaceCwd,
+    modeInjectionIds = requested.modeInjectionIds,
+    lorebookIds = requested.lorebookIds,
+)
+
+/** Replaces only the validated compression baseline and keeps nodes appended while the provider was running. */
+internal fun applyCompressedConversation(
+    baseline: Conversation,
+    latest: Conversation,
+    compressedSummaries: List<String>,
+    keepRecentMessages: Int,
+): Conversation {
+    val baselineIds = baseline.messageNodes.map { it.currentMessage.id }
+    val latestPrefixIds = latest.messageNodes.take(baselineIds.size).map { it.currentMessage.id }
+    check(latestPrefixIds == baselineIds) { "Conversation changed during compression" }
+    val replacementNodes = buildList {
+        compressedSummaries.forEach { summary -> add(UIMessage.user(summary).toMessageNode()) }
+        addAll(baseline.messageNodes.takeLast(keepRecentMessages))
+        addAll(latest.messageNodes.drop(baseline.messageNodes.size))
+    }
+    return latest.copy(messageNodes = replacementNodes, chatSuggestions = emptyList())
+}
+
+private data class ModeratorDecisionSnapshot(
+    val conversation: Conversation,
+    val director: GroupDirectorState,
+    val eligibleMemberIds: List<Uuid>,
+    val allowStop: Boolean,
+)
+
 internal fun resolveLocalGroupTurnSelection(
     director: GroupDirectorState,
     effectiveStrategy: TurnTakingStrategy,
@@ -1766,23 +1800,20 @@ class ChatService(
                 .awaitAll()
         }
 
-        // Create new conversation with compressed history as multiple user messages + kept messages
-        val newMessageNodes = buildList {
-            compressedSummaries.forEach { summary ->
-                add(UIMessage.user(summary).toMessageNode())
-            }
-            addAll(messagesToKeep.map { it.toMessageNode() })
+        withConversationMutation(conversationId) { session ->
+            val latest = session.state.value
+            val updated = applyCompressedConversation(
+                baseline = conversation,
+                latest = latest,
+                compressedSummaries = compressedSummaries,
+                keepRecentMessages = messagesToKeep.size,
+            )
+            saveConversationUnlocked(
+                conversationId,
+                updated,
+                PromptTraceCleanup.RemovedMessages(conversation),
+            )
         }
-        val newConversation = conversation.copy(
-            messageNodes = newMessageNodes,
-            chatSuggestions = emptyList(),
-        )
-
-        saveConversationAfterRemovingMessages(
-            conversationId = conversationId,
-            before = conversation,
-            after = newConversation,
-        )
     }
 
     // ---- 对话状态更新 ----
@@ -1801,6 +1832,59 @@ class ChatService(
         withConversationMutation(conversationId) { session ->
             updateConversation(conversationId, update(session.state.value))
         }
+    }
+
+    suspend fun persistCurrentConversation(conversationId: Uuid) {
+        withConversationMutation(conversationId) { session ->
+            saveConversationUnlocked(conversationId, session.state.value, PromptTraceCleanup.None)
+        }
+    }
+
+    suspend fun updateTitle(conversationId: Uuid, title: String): Conversation =
+        updateConversationFields(conversationId) { current -> current.copy(title = title) }
+
+    suspend fun updatePinnedStatus(conversationId: Uuid): Conversation =
+        updateConversationFields(conversationId) { current -> current.copy(isPinned = !current.isPinned) }
+
+    suspend fun updateAssistant(
+        conversationId: Uuid,
+        assistantId: Uuid,
+        clearFolder: Boolean,
+    ): Conversation = updateConversationFields(conversationId) { current ->
+        current.copy(assistantId = assistantId, folderId = if (clearFolder) null else current.folderId)
+    }
+
+    suspend fun updateConversationMessageFields(
+        conversationId: Uuid,
+        requested: Conversation,
+    ): Conversation = updateConversationFields(conversationId) { current ->
+        mergeConversationUiFields(current, requested)
+    }
+
+    suspend fun updateConversationInjections(
+        conversationId: Uuid,
+        modeInjectionIds: Set<Uuid>,
+        lorebookIds: Set<Uuid>,
+    ): Conversation = updateConversationFields(conversationId) { current ->
+        current.copy(modeInjectionIds = modeInjectionIds, lorebookIds = lorebookIds)
+    }
+
+    suspend fun replaceConversationMessageNode(
+        conversationId: Uuid,
+        node: me.rerere.rikkahub.data.model.MessageNode,
+    ): Conversation = updateConversationFields(conversationId) { current ->
+        current.copy(messageNodes = current.messageNodes.map { existing ->
+            if (existing.id == node.id) node else existing
+        })
+    }
+
+    private suspend fun updateConversationFields(
+        conversationId: Uuid,
+        transform: (Conversation) -> Conversation,
+    ): Conversation = withConversationMutation(conversationId) { session ->
+        val updated = transform(session.state.value)
+        saveConversationUnlocked(conversationId, updated, PromptTraceCleanup.None)
+        updated
     }
 
     /**
@@ -2000,6 +2084,11 @@ class ChatService(
         messageId: Uuid,
         text: String,
     ): UIMessage? = tavernRuntimeMessageStore.update(conversationId, messageId, text)
+
+    override suspend fun updateLatestTavernRuntimeMessage(
+        conversationId: Uuid,
+        text: String,
+    ): UIMessage? = tavernRuntimeMessageStore.updateLatest(conversationId, text)
 
     /** Deletes an exact selected-branch message using the normal ChatService persistence and cleanup path. */
     override suspend fun deleteTavernRuntimeMessage(conversationId: Uuid, messageId: Uuid): Boolean =
@@ -2246,6 +2335,40 @@ class ChatService(
     ): Uuid? {
         val session = getOrCreateSession(conversation.id)
         return try {
+            val moderatorSnapshot = session.withGroupDirectorLock {
+                mutateConversation(session) { current ->
+                    val enabledIds = groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
+                    val director = groupDirectorEngine.sanitize(
+                        state = current.groupRuntimeState.director,
+                        enabledMemberIds = enabledIds,
+                        generationActive = true,
+                    )
+                    val strategy = groupDirectorEngine.effectiveStrategy(
+                        director,
+                        groupAssistant.turnTakingStrategy,
+                    )
+                    if (strategy == TurnTakingStrategy.AUTO_MODERATOR && director.oneShotNextMemberId == null) {
+                        ModeratorDecisionSnapshot(
+                            conversation = current,
+                            director = director,
+                            eligibleMemberIds = groupDirectorEngine.eligibleMemberIds(director, enabledIds),
+                            allowStop = allowModeratorStop || director.oneRoundActive,
+                        )
+                    } else {
+                        null
+                    }
+                }
+            }
+            // Provider work deliberately runs outside conversationMutationMutex.
+            val moderatorDecision = moderatorSnapshot?.let { snapshot ->
+                resolveNextSpeakerViaModerator(
+                    conversation = snapshot.conversation,
+                    groupAssistant = groupAssistant,
+                    settings = settings,
+                    allowStop = snapshot.allowStop,
+                    eligibleMemberIds = snapshot.eligibleMemberIds,
+                )
+            }
             session.withGroupDirectorLock {
                 mutateConversation(session) { current ->
                     val enabledIds = groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
@@ -2275,18 +2398,25 @@ class ChatService(
                                 orderedEligibleMemberIds = orderedEligible,
                             )
                             TurnTakingStrategy.AUTO_MODERATOR -> {
-                                val resolved = resolveNextSpeakerViaModerator(
-                                    conversation = current,
-                                    groupAssistant = groupAssistant,
-                                    settings = settings,
-                                    allowStop = allowModeratorStop || director.oneRoundActive,
-                                    eligibleMemberIds = orderedEligible,
-                                )
+                                if (
+                                    moderatorSnapshot == null ||
+                                    moderatorSnapshot.director != director ||
+                                    moderatorSnapshot.eligibleMemberIds != orderedEligible ||
+                                    moderatorSnapshot.conversation.groupRuntimeState != current.groupRuntimeState ||
+                                    moderatorSnapshot.conversation.activeGroupMemberId != current.activeGroupMemberId ||
+                                    moderatorSnapshot.conversation.groupMemberQueue != current.groupMemberQueue ||
+                                    moderatorSnapshot.conversation.groupMemberQueueIndex !=
+                                    current.groupMemberQueueIndex ||
+                                    moderatorSnapshot.conversation.currentMessages.map { it.id } !=
+                                    current.currentMessages.map { it.id }
+                                ) {
+                                    return@mutateConversation null
+                                }
                                 selectModeratorTurn(
                                     persistedQueue = current.groupMemberQueue,
                                     enabledMemberIds = orderedEligible,
                                     activeMemberId = current.activeGroupMemberId,
-                                    resolvedMemberId = resolved,
+                                    resolvedMemberId = moderatorDecision,
                                     allowConsecutiveSameSpeaker =
                                         groupAssistant.groupReplyOptions.allowConsecutiveSameSpeaker,
                                 )

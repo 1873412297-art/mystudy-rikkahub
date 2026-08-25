@@ -25,6 +25,7 @@ import me.rerere.ai.provider.CustomBody
 import me.rerere.ai.provider.CustomHeader
 import me.rerere.ai.provider.Model
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AuthorNote
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -51,6 +52,48 @@ import kotlin.uuid.Uuid
 class ChatServiceTest {
     private val groupMemberA = Uuid.parse("00000000-0000-0000-0000-000000000001")
     private val groupMemberB = Uuid.parse("00000000-0000-0000-0000-000000000002")
+
+    @Test
+    fun `ui field merge preserves runtime messages while applying requested conversation fields`() {
+        val conversationId = Uuid.random()
+        val runtime = UIMessage.assistant("runtime")
+        val current = Conversation.ofId(conversationId, messages = listOf(runtime.toMessageNode()))
+        val requested = current.copy(
+            messageNodes = emptyList(),
+            customSystemPrompt = "prompt",
+            authorNote = AuthorNote(enabled = true, content = "note"),
+            workspaceCwd = "C:/workspace",
+        )
+
+        val updated = mergeConversationUiFields(current, requested)
+
+        assertEquals(listOf(runtime.id), updated.currentMessages.map { it.id })
+        assertEquals("prompt", updated.customSystemPrompt)
+        assertEquals("note", updated.authorNote?.content)
+        assertEquals("C:/workspace", updated.workspaceCwd)
+    }
+
+    @Test
+    fun `compressed history keeps runtime nodes appended after the compression baseline`() {
+        val conversationId = Uuid.random()
+        val old = UIMessage.user("old")
+        val kept = UIMessage.assistant("kept")
+        val runtime = UIMessage.user("runtime")
+        val baseline = Conversation.ofId(
+            conversationId,
+            messages = listOf(old.toMessageNode(), kept.toMessageNode()),
+        )
+        val latest = baseline.copy(messageNodes = baseline.messageNodes + runtime.toMessageNode())
+
+        val updated = applyCompressedConversation(
+            baseline = baseline,
+            latest = latest,
+            compressedSummaries = listOf("summary"),
+            keepRecentMessages = 1,
+        )
+
+        assertEquals(listOf("summary", "kept", "runtime"), updated.currentMessages.map { it.toText() })
+    }
 
     @Test
     fun `conversation mutation lock serializes normal and runtime writes`() = runBlocking {
