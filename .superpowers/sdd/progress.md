@@ -59,6 +59,17 @@
   audit deferred to after restart, recorded deviation); corrupted-item surfacing is log + disabled state, no
   toast UI (recorded deviation); 3 new focused tests, full :app:testDebugUnitTest 120 classes / 827 tests
   green, :app:compileDebugKotlin green).
-- Current: frontend streaming/error states, and final instrumentation/device audit. Note: script-initiated
+- Frontend streaming/error states: complete (commit 6ff9143c; TavernStreamingPatchThrottle throttles streaming
+  segment patches to one dispatch per 120ms window with trailing coalescing (latest content wins), wired into
+  MarkdownWebView's streaming branch via a local dispatch fun + postDelayed trailing with runCatching guard for
+  destroyed views; main-frame onReceivedError and onRenderProcessGone surface a TavernFrontendErrorCard with
+  expandable reason + source preview (600 chars) and three actions — view source (AlertDialog), temporarily
+  allow network (remember(content) scoped temp flag folded into the baseKey network bit), reload; streaming
+  completion full-document rebuild already satisfied by streaming bit in baseKey. 5 new focused tests
+  (timeline-simulated 10-token burst collapses to 2 dispatches), full :app:testDebugUnitTest 121 classes /
+  832 tests green, :app:assembleDebug green. Recorded deviation: the spec's "mount only after root structure
+  parseable" streaming gate is not separately implemented — the existing segment diff already tolerates partial
+  structure, so no extra gate was added.)
+- Current: final instrumentation/device audit only. Note: script-initiated
   generation is JVM-verified only; a real-device end-to-end run needs a configured provider and is part of
   the final device audit.
