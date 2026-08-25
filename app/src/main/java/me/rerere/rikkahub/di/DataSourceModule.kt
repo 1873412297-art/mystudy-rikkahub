@@ -256,7 +256,11 @@ val dataSourceModule = module {
             settingsStore = get(),
             json = get(),
             context = get(),
-            httpClient = get()
+            httpClient = get(),
+            tavernHelperScriptAudit = {
+                get<me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptRepository>()
+                    .auditContentIntegrity().map { it.name }
+            }
         )
     }
 
@@ -280,7 +284,11 @@ val dataSourceModule = module {
             settingsStore = get(),
             json = get(),
             context = get(),
-            httpClient = get()
+            httpClient = get(),
+            tavernHelperScriptAudit = {
+                get<me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptRepository>()
+                    .auditContentIntegrity().map { it.name }
+            }
         )
     }
 

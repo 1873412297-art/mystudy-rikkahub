@@ -31,6 +31,7 @@ class S3Sync(
     private val json: Json,
     private val context: Context,
     private val httpClient: HttpClient,
+    private val tavernHelperScriptAudit: (suspend () -> List<String>)? = null,
 ) {
     private fun getS3Client(config: S3Config): S3Client {
         return S3Client(config, httpClient)
@@ -180,6 +181,9 @@ class S3Sync(
                 } else {
                     Log.w(TAG, "prepareBackupFile: Fonts folder does not exist or is not a directory")
                 }
+
+                // Tavern helper script files (source/data payloads spilled out of the database)
+                me.rerere.rikkahub.data.sync.TavernHelperBackupIO.backup(context.filesDir, zipOut)
             }
         }
 
@@ -298,6 +302,12 @@ class S3Sync(
                                         "restoreFromBackupFile: Restored ${zipEntry.name} (${targetFile.length()} bytes)"
                                     )
                                 }
+                            } else if (config.items.contains(S3Config.BackupItem.FILES) &&
+                                zipEntry.name.startsWith(me.rerere.rikkahub.data.sync.TavernHelperBackupIO.ENTRY_PREFIX)
+                            ) {
+                                me.rerere.rikkahub.data.sync.TavernHelperBackupIO.restoreEntry(
+                                    context.filesDir, zipIn, zipEntry.name
+                                )
                             } else {
                                 Log.i(TAG, "restoreFromBackupFile: Skipping entry ${zipEntry.name}")
                             }
@@ -305,6 +315,24 @@ class S3Sync(
                     }
 
                     zipIn.closeEntry()
+                }
+            }
+        }
+
+        // Restored script files may not match the hashes recorded in the (unchanged) database:
+        // disable corrupted scripts and surface them. When the database itself was restored the
+        // live DAO still points at the pre-restore file, so the audit is skipped until restart.
+        if (config.items.contains(S3Config.BackupItem.FILES) &&
+            !config.items.contains(S3Config.BackupItem.DATABASE)
+        ) {
+            tavernHelperScriptAudit?.let { audit ->
+                val corrupted = audit()
+                if (corrupted.isNotEmpty()) {
+                    Log.w(
+                        TAG,
+                        "restoreFromBackupFile: disabled ${corrupted.size} corrupted scripts: " +
+                            corrupted.joinToString()
+                    )
                 }
             }
         }

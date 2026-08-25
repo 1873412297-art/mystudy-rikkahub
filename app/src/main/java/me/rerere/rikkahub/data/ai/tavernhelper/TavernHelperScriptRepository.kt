@@ -78,6 +78,19 @@ internal class TavernHelperScriptRepository(
         dao.setEnabled(id, enabled, now())
     }
 
+    /**
+     * 备份恢复后的内容完整性审计：逐个校验脚本的源码/数据 SHA-256，
+     * 损坏项（文件缺失、哈希不符、JSON 损坏）强制禁用并列入报告，由调用方提示用户。
+     */
+    suspend fun auditContentIntegrity(): List<TavernHelperCorruptScript> {
+        val corrupted = dao.getAll()
+            .filter { it.kind == SCRIPT_KIND && !it.tombstone }
+            .filterNot { entity -> mapper.verifyContentIntegrity(entity) }
+            .map { TavernHelperCorruptScript(id = it.id, name = it.name) }
+        corrupted.forEach { dao.setEnabled(it.id, false, now()) }
+        return corrupted
+    }
+
     suspend fun delete(id: String) {
         dao.markDeleted(id, now())
     }
@@ -148,5 +161,12 @@ internal class TavernHelperScriptRepository(
     private companion object {
         const val MAX_SCRIPT_DATA_BYTES = 1024 * 1024
         const val MAX_SCRIPT_BUTTONS = 64
+        const val SCRIPT_KIND = "SCRIPT"
     }
 }
+
+/** 完整性审计发现的损坏脚本（已强制禁用）。 */
+internal data class TavernHelperCorruptScript(
+    val id: String,
+    val name: String,
+)

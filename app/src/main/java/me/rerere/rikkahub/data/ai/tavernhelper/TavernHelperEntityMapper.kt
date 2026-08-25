@@ -157,6 +157,25 @@ internal class TavernHelperEntityMapper(
         return codec.decodeStored(JsonObject(root).toString()) as TavernHelperScript
     }
 
+    /**
+     * 校验脚本实体的源码与数据内容（内联或文件）SHA-256 与记录一致；
+     * 文件缺失、哈希不符或 JSON 损坏时返回 false（备份恢复后的完整性审计用）。
+     */
+    internal fun verifyContentIntegrity(entity: TavernHelperScriptEntity): Boolean {
+        return runCatching {
+            fileStore.read(
+                TavernHelperStoredContent(
+                    entity.sourceInline, entity.sourcePath, entity.sourceSha256.orEmpty(), entity.sourceBytes,
+                )
+            )
+            fileStore.read(
+                TavernHelperStoredContent(
+                    entity.dataInline, entity.dataPath, entity.dataSha256.orEmpty(), entity.dataBytes,
+                )
+            )
+        }.isSuccess
+    }
+
     private fun parseObject(text: String): JsonObject = try {
         Json.parseToJsonElement(text) as JsonObject
     } catch (error: Exception) {

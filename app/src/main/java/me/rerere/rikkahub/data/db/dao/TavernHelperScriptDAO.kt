@@ -27,6 +27,9 @@ interface TavernHelperScriptDAO {
     @Query("SELECT * FROM tavern_helper_script WHERE tombstone = 0 ORDER BY scope, scope_id, sort_order")
     fun observeAll(): Flow<List<TavernHelperScriptEntity>>
 
+    @Query("SELECT * FROM tavern_helper_script WHERE tombstone = 0")
+    suspend fun getAll(): List<TavernHelperScriptEntity>
+
     @Query("SELECT * FROM tavern_helper_script WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): TavernHelperScriptEntity?
 
