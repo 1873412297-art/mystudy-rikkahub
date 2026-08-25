@@ -13,5 +13,11 @@
   may be persisted by its first runtime mutation without weakening deleted-conversation protection. A real
   `messages.create` appeared in the existing chat, survived process restart, was read back by exact ID, and was then
   removed through `messages.delete`; the crash log buffer remained empty.
-- Current: remaining real compatibility APIs (worldbook and generation), six variable scopes, fine-grained
+- Worldbook compatibility APIs: complete (commit dbb7d279; book-level list/get/create/update/delete on the real
+  Lorebook settings model and the in-memory store, entry routing with legacy entry-API interop, structured
+  NOT_FOUND/ALREADY_EXISTS/BAD_REQUEST errors, allowWorldWrite gating, world.getEntries book filter, and
+  TavernHelper-style aliases getWorldbookNames/getWorldbook/createWorldbook/replaceWorldbook/updateWorldbookWith/
+  deleteWorldbook in the JS shim; 7 new focused tests, full :app:testDebugUnitTest 115 classes / 795 tests green,
+  :app:compileDebugKotlin green).
+- Current: remaining real compatibility APIs (generation), six variable scopes, fine-grained
   permissions, backup/restore, frontend streaming/error states, and final instrumentation/device audit.
