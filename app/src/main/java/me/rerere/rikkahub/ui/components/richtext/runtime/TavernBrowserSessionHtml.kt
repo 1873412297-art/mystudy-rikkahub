@@ -56,6 +56,7 @@ internal fun buildTavernBrowserSessionHtml(script: TavernHelperScript): String {
                 }).join(' '));}catch(ignored){}
               };
             }
+            console.log=captureConsole('info',console.log);
             console.debug=captureConsole('debug',console.debug);
             console.info=captureConsole('info',console.info);
             console.warn=captureConsole('warn',console.warn);
