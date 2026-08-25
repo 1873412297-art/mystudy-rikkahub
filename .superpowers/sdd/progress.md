@@ -19,5 +19,15 @@
   TavernHelper-style aliases getWorldbookNames/getWorldbook/createWorldbook/replaceWorldbook/updateWorldbookWith/
   deleteWorldbook in the JS shim; 7 new focused tests, full :app:testDebugUnitTest 115 classes / 795 tests green,
   :app:compileDebugKotlin green).
-- Current: remaining real compatibility APIs (generation), six variable scopes, fine-grained
-  permissions, backup/restore, frontend streaming/error states, and final instrumentation/device audit.
+- Generation compatibility APIs: complete (commit f30655e1; async bridge path for generation.* so the JavaBridge
+  thread never blocks, generate/generateRaw with optional chat-history injection (last 50, user/assistant/system),
+  explicit messages, temperature/maxTokens passthrough, rpc-id-based cancel/cancelAll, single-callback guarantee,
+  structured NO_CHAT_MODEL/PROVIDER_UNAVAILABLE/GENERATION_FAILED/CANCELLED/GENERATION_IN_PROGRESS errors,
+  ASYNC_DISPATCH_REQUIRED on the sync path, allowGeneration permission bit (default off) + settings UI switch,
+  ProviderBackedTavernGenerationGateway on the real assistant chat model via ProviderManager wired in
+  MarkdownWebView, TavernHelper-style generate/generateRaw aliases returning text plus api.generation with
+  requestId-based cancellation in the JS shim; 8 new focused tests, full :app:testDebugUnitTest 116 classes /
+  804 tests green, :app:compileDebugKotlin green).
+- Current: six variable scopes, fine-grained permissions, backup/restore, frontend streaming/error states,
+  and final instrumentation/device audit. Note: script-initiated generation is JVM-verified only; a real-device
+  end-to-end run needs a configured provider and is part of the final device audit.
