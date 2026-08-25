@@ -6,11 +6,22 @@ import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -22,7 +33,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -248,11 +261,16 @@ internal fun MarkdownWebView(
         appSettings.runtimePermissions.allowMessageScripts
     val allowFrontendNetwork = !applyTavernFrontendPolicy || appSettings.tavernHelperRenderSettings.allowNetwork
     val maxHeightPx = maxHeightDp?.let { with(density) { it.dp.toPx().toInt() } }
+    // 消息前端错误态（spec §314）：加载失败/renderer 崩溃 → 可折叠错误卡，不显示空白气泡
+    var tempAllowNetwork by remember(content) { mutableStateOf(false) }
+    val effectiveAllowNetwork = allowFrontendNetwork || tempAllowNetwork
+    var frontendFailure by remember(content) { mutableStateOf<String?>(null) }
+    var showSourceDialog by remember { mutableStateOf(false) }
     // baseKey 不含 content：路径/主题/角色/卡样式变化才整文档重载
     val baseKey = listOf(
         useIframeSandbox,
         allowFrontendScripts,
-        allowFrontendNetwork,
+        effectiveAllowNetwork,
         fixedHeight,
         bgHex,
         textHex,
@@ -273,12 +291,48 @@ internal fun MarkdownWebView(
         color = bg,
         tonalElevation = 1.dp,
     ) {
+        val failure = frontendFailure
+        if (failure != null) {
+            TavernFrontendErrorCard(
+                reason = failure,
+                source = content,
+                networkAlreadyAllowed = allowFrontendNetwork,
+                onViewSource = { showSourceDialog = true },
+                onTempAllowNetwork = {
+                    tempAllowNetwork = true
+                    frontendFailure = null
+                },
+                onReload = { frontendFailure = null },
+            )
+            if (showSourceDialog) {
+                AlertDialog(
+                    onDismissRequest = { showSourceDialog = false },
+                    confirmButton = {
+                        TextButton(onClick = { showSourceDialog = false }) { Text("关闭") }
+                    },
+                    title = { Text("前端源码") },
+                    text = {
+                        SelectionContainer {
+                            Column(Modifier.verticalScroll(rememberScrollState())) {
+                                Text(
+                                    content,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                            }
+                        }
+                    },
+                )
+            }
+        } else {
         // 记录已加载的 (baseKey, contentKey) 组合，避免 update 块每次 recompose
         // 都触发 loadDataWithBaseURL —— 重 load 会让 iframe 被推倒重建，高度从占位值
         // 起步重新测量，造成「渲染一半不动」的视觉假象。
         val lastBaseKey = remember { mutableStateOf<String?>(null) }
         val lastContentKey = remember { mutableStateOf<String?>(null) }
         val lastSegments = remember { mutableStateOf<List<StableDomSegment>>(emptyList()) }
+        val patchThrottle = remember { TavernStreamingPatchThrottle() }
+        val trailingStreamSegments = remember { mutableStateOf<List<StableDomSegment>?>(null) }
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
@@ -494,7 +548,9 @@ internal fun MarkdownWebView(
                             error: android.webkit.WebResourceError?,
                         ) {
                             if (request?.isForMainFrame == true) {
-                                onWebViewLoadFailed(error?.description?.toString().orEmpty())
+                                val detail = error?.description?.toString().orEmpty()
+                                frontendFailure = detail.ifEmpty { "页面加载失败" }
+                                onWebViewLoadFailed(detail)
                             }
                         }
 
@@ -502,6 +558,7 @@ internal fun MarkdownWebView(
                             view: WebView?,
                             detail: android.webkit.RenderProcessGoneDetail?,
                         ): Boolean {
+                            frontendFailure = "渲染进程崩溃"
                             onWebViewRendererCrashed(view, detail?.didCrash() == true)
                             view?.destroy()
                             return true
@@ -522,7 +579,7 @@ internal fun MarkdownWebView(
                         useWideViewPort = true
                         setSupportZoom(false)
                         mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                        blockNetworkLoads = !allowFrontendNetwork
+                        blockNetworkLoads = !effectiveAllowNetwork
                         allowFileAccess = false
                         allowContentAccess = false
                         @Suppress("DEPRECATION")
@@ -542,7 +599,7 @@ internal fun MarkdownWebView(
                 }
             },
             update = { webView ->
-                webView.settings.blockNetworkLoads = !allowFrontendNetwork
+                webView.settings.blockNetworkLoads = !effectiveAllowNetwork
                 // baseKey（路径/主题/角色/卡样式）变了才整文档重载；
                 // 否则 contentKey 变化时：streaming 走段 diff 增量 patch，非 streaming 才重 load。
                 if (lastBaseKey.value != baseKey) {
@@ -559,16 +616,35 @@ internal fun MarkdownWebView(
                 }
                 if (lastContentKey.value == contentKey) return@AndroidView
                 if (streaming) {
-                    val old = lastSegments.value
-                    val new = streamSegments.orEmpty()
-                    val patches = StableSegmentSnapshot.diff(old, new)
-                    lastSegments.value = new
+                    // spec §5.5：流式更新以 120ms 节流，尾随只保留最新内容
+                    val newSegments = streamSegments.orEmpty()
                     lastContentKey.value = contentKey
-                    if (patches.isEmpty()) return@AndroidView
-                    val patchJson = JSONObject.quote(StableSegmentSnapshot.encodePatches(patches))
-                    webView.postEvaluateJavascript(
-                        "window.RikkahubDomBridge && window.RikkahubDomBridge.applySegmentPatch($patchJson);"
-                    )
+                    fun dispatchStreamPatches(target: List<StableDomSegment>) {
+                        val patches = StableSegmentSnapshot.diff(lastSegments.value, target)
+                        lastSegments.value = target
+                        if (patches.isEmpty()) return
+                        val patchJson = JSONObject.quote(StableSegmentSnapshot.encodePatches(patches))
+                        webView.postEvaluateJavascript(
+                            "window.RikkahubDomBridge && window.RikkahubDomBridge.applySegmentPatch($patchJson);"
+                        )
+                    }
+                    when (val delay = patchThrottle.onContent(android.os.SystemClock.uptimeMillis())) {
+                        TavernStreamingPatchThrottle.DISPATCH_NOW -> dispatchStreamPatches(newSegments)
+                        TavernStreamingPatchThrottle.TRAILING_ALREADY_PENDING -> {
+                            trailingStreamSegments.value = newSegments
+                        }
+                        else -> {
+                            trailingStreamSegments.value = newSegments
+                            webView.postDelayed({
+                                val trailing = trailingStreamSegments.value
+                                if (trailing != null) {
+                                    trailingStreamSegments.value = null
+                                    patchThrottle.onTrailingDispatch(android.os.SystemClock.uptimeMillis())
+                                    runCatching { dispatchStreamPatches(trailing) }
+                                }
+                            }, delay)
+                        }
+                    }
                 } else {
                     val html = if (useIframeSandbox) {
                         buildSandboxHostHtml(content, bgHex, textHex, fixedHeight, allowFrontendScripts)
@@ -590,6 +666,7 @@ internal fun MarkdownWebView(
                 })
             },
         )
+        }
     }
 }
 
@@ -985,3 +1062,60 @@ internal fun hex(c: androidx.compose.ui.graphics.Color) =
 
 internal fun shouldMeasurePageHeight(applyTavernFrontendPolicy: Boolean): Boolean =
     !applyTavernFrontendPolicy
+
+@Composable
+private fun TavernFrontendErrorCard(
+    reason: String,
+    source: String,
+    networkAlreadyAllowed: Boolean,
+    onViewSource: () -> Unit,
+    onTempAllowNetwork: () -> Unit,
+    onReload: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.padding(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "前端渲染失败",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "收起" else "详情")
+            }
+        }
+        if (expanded) {
+            Text(
+                text = reason,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            SelectionContainer {
+                Text(
+                    text = source.take(600),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Row(
+            horizontalArrangement = Arrangement.End,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            TextButton(onClick = onViewSource) {
+                Text("查看源码")
+            }
+            if (!networkAlreadyAllowed) {
+                TextButton(onClick = onTempAllowNetwork) {
+                    Text("临时允许网络")
+                }
+            }
+            TextButton(onClick = onReload) {
+                Text("重载")
+            }
+        }
+    }
+}
