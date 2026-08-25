@@ -612,8 +612,8 @@ private fun ChatPageContent(
                         vm.deleteMessage(it)
                     }
                 },
-                onUpdateMessage = { newNode ->
-                    vm.updateConversationMessageNode(newNode)
+                onSelectMessageNode = { nodeId, selectIndex ->
+                    vm.selectMessageNode(nodeId, selectIndex)
                 },
                 onClickSuggestion = { suggestion ->
                     inputState.editingMessage = null

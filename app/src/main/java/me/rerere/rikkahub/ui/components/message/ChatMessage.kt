@@ -118,7 +118,7 @@ fun ChatMessage(
     onEdit: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit,
-    onUpdate: (MessageNode) -> Unit,
+    onSelectMessageNode: (kotlin.uuid.Uuid, Int) -> Unit,
     isFavorite: Boolean = false,
     onToggleFavorite: (() -> Unit)? = null,
     onTranslate: ((UIMessage, Locale) -> Unit)? = null,
@@ -273,7 +273,7 @@ fun ChatMessage(
                     message = message,
                     onRegenerate = onRegenerate,
                     node = node,
-                    onUpdate = onUpdate,
+                    onSelectMessageNode = onSelectMessageNode,
                     onOpenActionSheet = {
                         showActionsSheet = true
                     },

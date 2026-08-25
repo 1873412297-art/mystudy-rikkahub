@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import me.rerere.rikkahub.data.model.Conversation
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.uuid.Uuid
 
 private const val TAG = "ConversationSession"
@@ -20,6 +21,11 @@ private const val IDLE_TIMEOUT_MS = 5_000L
 internal data class GroupGenerationHandoffResult<T>(
     val value: T,
     val shouldContinue: Boolean,
+)
+
+internal data class ConversationInitializationToken(
+    val generation: Long,
+    val mutationVersion: Long,
 )
 
 class ConversationSession(
@@ -45,6 +51,8 @@ class ConversationSession(
 
     private val groupDirectorMutex = Mutex()
     private val conversationMutationMutex = Mutex()
+    private val initializationGeneration = AtomicLong(0)
+    private val mutationVersion = AtomicLong(0)
     private var groupReplyActiveJob: Job? = null
 
     suspend fun <T> withGroupDirectorLock(block: suspend () -> T): T =
@@ -56,6 +64,23 @@ class ConversationSession(
 
     /** Compatibility name for the browser runtime; it intentionally shares the general mutation lock. */
     suspend fun <T> withRuntimeMessageLock(block: suspend () -> T): T = withConversationMutationLock(block)
+
+    /**
+     * Captures the state version before a repository-backed initialization starts loading outside the mutation lock.
+     */
+    internal fun beginInitialization(): ConversationInitializationToken = ConversationInitializationToken(
+        generation = initializationGeneration.incrementAndGet(),
+        mutationVersion = mutationVersion.get(),
+    )
+
+    /** Records a live-state change that invalidates an in-flight initialization snapshot. */
+    internal fun recordConversationMutation() {
+        mutationVersion.incrementAndGet()
+    }
+
+    /** True only for the most recent initializer and an unchanged live state. Must be called while locked. */
+    internal fun canInstallInitialization(token: ConversationInitializationToken): Boolean =
+        token.generation == initializationGeneration.get() && token.mutationVersion == mutationVersion.get()
 
     internal fun markGroupReplyStartedLocked(job: Job?) {
         groupReplyActiveJob = job

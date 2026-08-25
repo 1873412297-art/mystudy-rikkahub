@@ -438,7 +438,7 @@ private fun AssistantPromptContent(
                                 onEdit = {},
                                 onShare = {},
                                 onDelete = {},
-                                onUpdate = {},
+                                onSelectMessageNode = { _, _ -> },
                                 lastMessage = false,
                             )
                         }

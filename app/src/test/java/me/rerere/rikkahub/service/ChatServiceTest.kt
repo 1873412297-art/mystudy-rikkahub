@@ -96,6 +96,32 @@ class ChatServiceTest {
     }
 
     @Test
+    fun `stale initialization token cannot install over a newer live mutation`() {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(conversationId, Conversation.ofId(conversationId), scope, onIdle = {})
+        try {
+            val token = session.beginInitialization()
+            session.recordConversationMutation()
+
+            assertFalse(session.canInstallInitialization(token))
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `moderator snapshot retains persisted queue order when assistant order differs`() {
+        assertEquals(
+            listOf(groupMemberB, groupMemberA),
+            orderedModeratorEligibleMemberIds(
+                persistedQueue = listOf(groupMemberB, groupMemberA),
+                eligibleMemberIds = listOf(groupMemberA, groupMemberB),
+            ),
+        )
+    }
+
+    @Test
     fun `conversation mutation lock serializes normal and runtime writes`() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val session = createGroupSession(scope)

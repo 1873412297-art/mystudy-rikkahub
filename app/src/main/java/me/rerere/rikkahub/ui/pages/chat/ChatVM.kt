@@ -380,23 +380,16 @@ class ChatVM(
 
     fun updatePinnedStatus(conversation: Conversation) {
         viewModelScope.launch {
-            conversationRepo.togglePinStatus(conversation.id)
+            chatService.updatePinnedStatus(conversation.id)
         }
     }
 
     fun moveConversationToAssistant(conversation: Conversation, targetAssistantId: Uuid) {
         viewModelScope.launch {
-            val conversationFull = conversationRepo.getConversationById(conversation.id) ?: return@launch
             // 文件夹是助手内分组，切换助手后原文件夹在新助手下不可见，需清空归属避免会话丢失
-            val updatedConversation = conversationFull.copy(
-                assistantId = targetAssistantId,
-                folderId = null,
-            )
-            if (conversation.id == _conversationId) {
-                chatService.updateAssistant(_conversationId, targetAssistantId, clearFolder = true)
+            val updated = chatService.updateAssistant(conversation.id, targetAssistantId, clearFolder = true)
+            if (updated && conversation.id == _conversationId) {
                 settingsStore.updateAssistant(targetAssistantId)
-            } else {
-                conversationRepo.updateConversation(updatedConversation)
             }
         }
     }
@@ -428,9 +421,9 @@ class ChatVM(
         }
     }
 
-    fun updateConversationMessageNode(node: MessageNode) {
+    fun selectMessageNode(nodeId: Uuid, selectIndex: Int) {
         viewModelScope.launch {
-            chatService.replaceConversationMessageNode(_conversationId, node)
+            chatService.selectMessageNode(_conversationId, nodeId, selectIndex)
         }
     }
 

@@ -112,6 +112,27 @@ Implemented persistent Tavern message RPCs: `list`, `get`, `getCurrent`, `create
 
 ## Verification
 
+## Sixth review initialization and field-update pass
+
+- `initializeConversation` now reads the repository and renders outside the session mutation mutex, then installs only
+  while the original session is still mapped, runtime readiness is still false, and its initialization token still
+  matches the latest live mutation version. Repeated ready calls are no-ops; an evicted/recreated session or a newer
+  live mutation rejects the old loaded snapshot.
+- The branch selector passes only `nodeId` and `selectIndex` from `ChatMessageBranch` through `ChatList`, `ChatPage`,
+  and `ChatVM` to `ChatService.selectMessageNode`; swiping cannot replace messages or annotations from an old node.
+- Chat drawer pin/move operations now call `ChatService`. Active conversations mutate the latest live state under the
+  shared lock; inactive conversations use new single-row Room updates for title, pin, and assistant/folder fields,
+  preserving message nodes. These service methods return false for missing ids and never create a session or insert.
+- Web pin/title/move endpoints translate a false field update into `404 Not Found`. The DAO writes return affected-row
+  counts, so a concurrent delete is also reported as missing instead of creating a replacement conversation.
+- AUTO_MODERATOR snapshots and validation use the same normalized persisted queue order. This prevents a harmless
+  assistant-configuration order difference from discarding a valid moderator decision.
+
+- `ChatServiceTest`: PASS (31 tests), including stale initialization-token and differing configuration/queue-order
+  moderator regressions.
+- `GroupTurnSchedulerTest`: PASS (14 tests).
+- `:app:compileDebugKotlin :web:compileDebugKotlin --no-configuration-cache`: PASS.
+
 - Focused runtime JVM suite: PASS, including controller/gateway, mutation-store, readiness, persistence-order,
   serializer-injection, atomic-read, streaming/runtime competition, and conversation-lock competition tests.
 - `:app:compileDebugKotlin --no-configuration-cache`: PASS.
@@ -142,3 +163,5 @@ Follow-up correctness commit: current `fix: serialize Tavern runtime conversatio
 Third review commit: `b881268a fix: harden Tavern runtime message synchronization`.
 
 Fourth review commit: `fix: serialize ChatService conversation mutations` (this commit).
+
+Sixth review commit: `dd5dd24d fix: guard Tavern conversation initialization`.

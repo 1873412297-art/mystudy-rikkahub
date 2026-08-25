@@ -377,6 +377,34 @@ class ConversationRepository(
         )
     }
 
+    suspend fun updateConversationTitle(conversationId: Uuid, title: String): Boolean {
+        return conversationDAO.updateTitle(
+            id = conversationId.toString(),
+            title = title,
+            updateAt = System.currentTimeMillis(),
+        ) > 0
+    }
+
+    suspend fun toggleConversationPinStatus(conversationId: Uuid): Boolean {
+        return conversationDAO.togglePinStatusAtomically(
+            id = conversationId.toString(),
+            updateAt = System.currentTimeMillis(),
+        ) > 0
+    }
+
+    suspend fun updateConversationAssistant(
+        conversationId: Uuid,
+        assistantId: Uuid,
+        clearFolder: Boolean,
+    ): Boolean {
+        return conversationDAO.updateAssistantAndFolder(
+            id = conversationId.toString(),
+            assistantId = assistantId.toString(),
+            clearFolder = clearFolder,
+            updateAt = System.currentTimeMillis(),
+        ) > 0
+    }
+
     /**
      * 单列更新会话的文件夹归属，folderId 为 null 表示移出文件夹（未归类）。
      */

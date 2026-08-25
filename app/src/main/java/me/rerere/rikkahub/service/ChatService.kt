@@ -286,9 +286,14 @@ internal fun applyCompressedConversation(
 private data class ModeratorDecisionSnapshot(
     val conversation: Conversation,
     val director: GroupDirectorState,
-    val eligibleMemberIds: List<Uuid>,
+    val orderedEligibleMemberIds: List<Uuid>,
     val allowStop: Boolean,
 )
+
+internal fun orderedModeratorEligibleMemberIds(
+    persistedQueue: List<Uuid>,
+    eligibleMemberIds: List<Uuid>,
+): List<Uuid> = normalizeGroupMemberQueue(persistedQueue, eligibleMemberIds)
 
 internal fun resolveLocalGroupTurnSelection(
     director: GroupDirectorState,
@@ -540,7 +545,9 @@ class ChatService(
     // ---- 初始化对话 ----
 
     suspend fun initializeConversation(conversationId: Uuid) {
-        getOrCreateSession(conversationId) // 确保 session 存在
+        val session = getOrCreateSession(conversationId)
+        if (tavernRuntimeReadiness.isReady(conversationId)) return
+        val initializationToken = session.beginInitialization()
         val conversation = conversationRepo.getConversationById(conversationId)
         if (conversation != null) {
             settingsStore.updateAssistant(conversation.assistantId)
@@ -572,16 +579,17 @@ class ChatService(
             } else {
                 renderedConversation
             }
-            updateConversation(conversationId, cleanedConversation)
-            when {
-                withoutNudges != renderedConversation -> saveConversationAfterRemovingMessages(
-                    conversationId = conversationId,
-                    before = renderedConversation,
-                    after = cleanedConversation,
-                )
-
-                cleanedConversation != renderedConversation -> saveConversation(conversationId, cleanedConversation)
-            }
+            installInitializedConversation(
+                conversationId = conversationId,
+                session = session,
+                token = initializationToken,
+                conversation = cleanedConversation,
+                promptTraceCleanup = when {
+                    withoutNudges != renderedConversation -> PromptTraceCleanup.RemovedMessages(renderedConversation)
+                    else -> PromptTraceCleanup.None
+                },
+                shouldPersist = cleanedConversation != renderedConversation,
+            )
         } else {
             // 新建对话, 并添加预设消息
             val currentSettings = settingsStore.settingsFlowRaw.first()
@@ -598,10 +606,46 @@ class ChatService(
                 newConversation = true
             ).updateCurrentMessages(presetMessages)
                 .copy(statusVariables = statusVariableStore.getValue(conversationId))
-            updateConversation(conversationId, newConversation)
+            installInitializedConversation(
+                conversationId = conversationId,
+                session = session,
+                token = initializationToken,
+                conversation = newConversation,
+                promptTraceCleanup = PromptTraceCleanup.None,
+                shouldPersist = false,
+            )
         }
-        // Mark ready only after the loaded conversation has been installed into the live session.
-        tavernRuntimeReadiness.markReady(conversationId)
+    }
+
+    /**
+     * Repository loading and rendering intentionally happen before this method. The final install verifies that no
+     * newer session or mutation won the race, so an old load can never replace live runtime changes.
+     */
+    private suspend fun installInitializedConversation(
+        conversationId: Uuid,
+        session: ConversationSession,
+        token: ConversationInitializationToken,
+        conversation: Conversation,
+        promptTraceCleanup: PromptTraceCleanup,
+        shouldPersist: Boolean,
+    ) {
+        session.withRefSuspend {
+            session.withConversationMutationLock {
+                if (
+                    sessions[conversationId] !== session ||
+                    tavernRuntimeReadiness.isReady(conversationId) ||
+                    !session.canInstallInitialization(token)
+                ) {
+                    return@withConversationMutationLock
+                }
+                if (shouldPersist) {
+                    saveConversationUnlocked(conversationId, conversation, promptTraceCleanup)
+                } else {
+                    updateConversation(conversationId, conversation)
+                }
+                tavernRuntimeReadiness.markReady(conversationId)
+            }
+        }
     }
 
     // ---- 发送消息 ----
@@ -1823,6 +1867,7 @@ class ChatService(
         val session = getOrCreateSession(conversationId)
         checkFilesDelete(conversation, session.state.value)
         session.state.value = conversation
+        session.recordConversationMutation()
     }
 
     suspend fun updateConversationState(
@@ -1840,19 +1885,31 @@ class ChatService(
         }
     }
 
-    suspend fun updateTitle(conversationId: Uuid, title: String): Conversation =
-        updateConversationFields(conversationId) { current -> current.copy(title = title) }
+    suspend fun updateTitle(conversationId: Uuid, title: String): Boolean = updateExistingConversationField(
+        conversationId = conversationId,
+        transform = { current -> current.copy(title = title) },
+        updateInactive = { conversationRepo.updateConversationTitle(conversationId, title) },
+    )
 
-    suspend fun updatePinnedStatus(conversationId: Uuid): Conversation =
-        updateConversationFields(conversationId) { current -> current.copy(isPinned = !current.isPinned) }
+    suspend fun updatePinnedStatus(conversationId: Uuid): Boolean = updateExistingConversationField(
+        conversationId = conversationId,
+        transform = { current -> current.copy(isPinned = !current.isPinned) },
+        updateInactive = { conversationRepo.toggleConversationPinStatus(conversationId) },
+    )
 
     suspend fun updateAssistant(
         conversationId: Uuid,
         assistantId: Uuid,
         clearFolder: Boolean,
-    ): Conversation = updateConversationFields(conversationId) { current ->
-        current.copy(assistantId = assistantId, folderId = if (clearFolder) null else current.folderId)
-    }
+    ): Boolean = updateExistingConversationField(
+        conversationId = conversationId,
+        transform = { current ->
+            current.copy(assistantId = assistantId, folderId = if (clearFolder) null else current.folderId)
+        },
+        updateInactive = {
+            conversationRepo.updateConversationAssistant(conversationId, assistantId, clearFolder)
+        },
+    )
 
     suspend fun updateConversationMessageFields(
         conversationId: Uuid,
@@ -1885,6 +1942,28 @@ class ChatService(
         val updated = transform(session.state.value)
         saveConversationUnlocked(conversationId, updated, PromptTraceCleanup.None)
         updated
+    }
+
+    /**
+     * Updates a persisted conversation without creating a session for an unknown id. Active sessions take the shared
+     * mutation lock; inactive conversations use a DAO field update so their message tree is never read and re-saved.
+     */
+    private suspend fun updateExistingConversationField(
+        conversationId: Uuid,
+        transform: (Conversation) -> Conversation,
+        updateInactive: suspend () -> Boolean,
+    ): Boolean {
+        val session = sessions[conversationId] ?: return updateInactive()
+        return session.withRefSuspend {
+            session.withConversationMutationLock {
+                if (sessions[conversationId] !== session || !conversationRepo.existsConversationById(conversationId)) {
+                    return@withConversationMutationLock false
+                }
+                val updated = transform(session.state.value)
+                saveConversationUnlocked(conversationId, updated, PromptTraceCleanup.None)
+                true
+            }
+        }
     }
 
     /**
@@ -2351,7 +2430,10 @@ class ChatService(
                         ModeratorDecisionSnapshot(
                             conversation = current,
                             director = director,
-                            eligibleMemberIds = groupDirectorEngine.eligibleMemberIds(director, enabledIds),
+                            orderedEligibleMemberIds = orderedModeratorEligibleMemberIds(
+                                current.groupMemberQueue,
+                                groupDirectorEngine.eligibleMemberIds(director, enabledIds),
+                            ),
                             allowStop = allowModeratorStop || director.oneRoundActive,
                         )
                     } else {
@@ -2366,7 +2448,7 @@ class ChatService(
                     groupAssistant = groupAssistant,
                     settings = settings,
                     allowStop = snapshot.allowStop,
-                    eligibleMemberIds = snapshot.eligibleMemberIds,
+                    eligibleMemberIds = snapshot.orderedEligibleMemberIds,
                 )
             }
             session.withGroupDirectorLock {
@@ -2401,7 +2483,7 @@ class ChatService(
                                 if (
                                     moderatorSnapshot == null ||
                                     moderatorSnapshot.director != director ||
-                                    moderatorSnapshot.eligibleMemberIds != orderedEligible ||
+                                    moderatorSnapshot.orderedEligibleMemberIds != orderedEligible ||
                                     moderatorSnapshot.conversation.groupRuntimeState != current.groupRuntimeState ||
                                     moderatorSnapshot.conversation.activeGroupMemberId != current.activeGroupMemberId ||
                                     moderatorSnapshot.conversation.groupMemberQueue != current.groupMemberQueue ||

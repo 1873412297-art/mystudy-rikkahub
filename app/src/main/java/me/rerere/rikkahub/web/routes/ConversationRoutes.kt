@@ -164,7 +164,9 @@ fun Route.conversationRoutes(
         // POST /api/conversations/{id}/pin - Toggle pinned status
         post("/{id}/pin") {
             val uuid = call.parameters["id"].toUuid("conversation id")
-            chatService.updatePinnedStatus(uuid)
+            if (!chatService.updatePinnedStatus(uuid)) {
+                throw NotFoundException("Conversation not found")
+            }
             call.respond(HttpStatusCode.OK, mapOf("status" to "updated"))
         }
 
@@ -188,7 +190,9 @@ fun Route.conversationRoutes(
                 throw BadRequestException("Title must not be blank")
             }
 
-            chatService.updateTitle(uuid, title)
+            if (!chatService.updateTitle(uuid, title)) {
+                throw NotFoundException("Conversation not found")
+            }
             call.respond(HttpStatusCode.OK, mapOf("status" to "updated"))
         }
 
@@ -234,7 +238,9 @@ fun Route.conversationRoutes(
                 throw BadRequestException("Assistant not found")
             }
 
-            chatService.updateAssistant(uuid, targetAssistantId, clearFolder = false)
+            if (!chatService.updateAssistant(uuid, targetAssistantId, clearFolder = false)) {
+                throw NotFoundException("Conversation not found")
+            }
             call.respond(HttpStatusCode.OK, mapOf("status" to "updated"))
         }
 

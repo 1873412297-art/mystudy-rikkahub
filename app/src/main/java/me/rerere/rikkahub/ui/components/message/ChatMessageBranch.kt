@@ -27,7 +27,7 @@ import me.rerere.rikkahub.data.model.MessageNode
 fun ChatMessageBranchSelector(
     node: MessageNode,
     modifier: Modifier = Modifier,
-    onUpdate: (MessageNode) -> Unit,
+    onSelectIndex: (Int) -> Unit,
 ) {
     Row(
         modifier = modifier,
@@ -48,11 +48,7 @@ fun ChatMessageBranchSelector(
                         indication = LocalIndication.current,
                         onClick = {
                             if (node.selectIndex > 0) {
-                                onUpdate(
-                                    node.copy(
-                                        selectIndex = node.selectIndex - 1
-                                    )
-                                )
+                                onSelectIndex(node.selectIndex - 1)
                             }
                         }
                     )
@@ -78,11 +74,7 @@ fun ChatMessageBranchSelector(
                         indication = LocalIndication.current,
                         onClick = {
                             if (node.selectIndex < node.messages.lastIndex) {
-                                onUpdate(
-                                    node.copy(
-                                        selectIndex = node.selectIndex + 1
-                                    )
-                                )
+                                onSelectIndex(node.selectIndex + 1)
                             }
                         }
                     )

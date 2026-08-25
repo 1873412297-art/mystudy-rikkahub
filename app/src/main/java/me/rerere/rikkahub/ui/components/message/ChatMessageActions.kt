@@ -71,7 +71,7 @@ import java.util.Locale
 fun ColumnScope.ChatMessageActionButtons(
     message: UIMessage,
     node: MessageNode,
-    onUpdate: (MessageNode) -> Unit,
+    onSelectMessageNode: (kotlin.uuid.Uuid, Int) -> Unit,
     onRegenerate: (memberId: kotlin.uuid.Uuid?) -> Unit,
     onOpenActionSheet: () -> Unit,
     onTranslate: ((UIMessage, Locale) -> Unit)? = null,
@@ -219,7 +219,7 @@ fun ColumnScope.ChatMessageActionButtons(
 
         ChatMessageBranchSelector(
             node = node,
-            onUpdate = onUpdate,
+            onSelectIndex = { selectIndex -> onSelectMessageNode(node.id, selectIndex) },
         )
 
         if (settings.displaySetting.showDateTimeInMessage) {
