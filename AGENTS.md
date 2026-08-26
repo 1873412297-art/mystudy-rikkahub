@@ -90,10 +90,22 @@ Built with Jetpack Compose, Kotlin, and follows Material Design 3 principles.
   conservative() 预设不再显式关闭 allowMessageScripts/allowBrowserScripts（由 allowScripts 总开关门控）
 - 验证：`:app:testDebugUnitTest` **153 类 / 1074 测试 0 失败**；`:app:assembleDebug` 全绿
 - 装机：`adb install -r` 到 `XHD0223523008702`（Huawei MNA-AL00）Success，RouteActivity 前台无 FATAL
-- 推送：`origin/master` 已更新至 `543f5c3d`（含 origin 侧 README 清空提交的合并，README 取远端空版）
+- 推送：`origin/master` 已更新至 `b05bb91b`（含 origin 侧 README 清空提交的合并，README 取远端空版）
 - 注意：README.md 现为远端清空版（origin 提交 `a025a9ab` 有意删除全部内容，非误操作）
-- 待办：private-main 是否快进到 master 未裁决（需用户确认）；合并版真机酒馆深度冒烟
-  （开场白提交/Run 按钮/脚本管理页/变量面板）未做
+- 真机深度冒烟 ✅（2026-08-26，XHD0223523008702，合并版 APK）：
+  - 开场白/问候：9 候选分页 1/9→2/9 切换正常，HUD 状态条随候选 overlay 联动更新 ✅
+  - **发现并修复合并 bug**（`b05bb91b`）：TavernRuntimeScript.kt messages 对象字面量在合并时
+    setChatMessages 后丢逗号 + updateCurrent 重复键 → 整个运行时垫片 JS 不可解析 → 所有浏览器脚本
+    会话加载即崩（`Cannot read properties of undefined (reading 'eventSource')`，脚本列表显示「运行崩溃」）。
+    JVM 测试无法捕获（不解析 JS），真机冒烟发现；修复后脚本状态「运行中」
+  - Run 按钮全链路 ✅：AssistChip → TavernBrowserSessionRegistry.emitButton → DOM th: 事件 →
+    eventSource 处理器 → updateVariablesWith → RikkahubScriptBridge.replaceData → Room 落库
+    （探针脚本 console.log 到达日志页；计数器 `{"clicked":5}` 持久化验证）
+  - 脚本管理页 ✅：渲染/脚本双 tab、作用域筛选、状态（运行中/运行崩溃）、日志页（lifecycle/rpc/console 分类）
+  - 变量面板（HUD 展开）✅：headerLine、【角色状态】/【在场角色好感】折叠区、【剧情导航与记忆】选项 chips 渲染正常
+  - 观察项（非阻塞）：脚本变量每次写入更新脚本行 updated_at → 会话 WebView 按 key 重建（重订阅自愈，
+    高频写入场景可能有抖动）；选项 chips 点击发送未测（避免真实模型调用）
+- 待办：private-main 是否快进到 master 未裁决（需用户确认）
 
 **2026-08-19：构建并安装 Debug APK 到物理设备（无代码变更）。**
 
