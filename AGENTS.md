@@ -77,6 +77,24 @@ Built with Jetpack Compose, Kotlin, and follows Material Design 3 principles.
 
 ## Current Status
 
+**2026-08-26：JS-Slash-Runner 酒馆原生运行时合并进 master 并装机推送。**
+
+- 合并提交 `8427115a`（`merge: integrate JS-Slash-Runner tavern native runtime into master`）：
+  `codex/port-private-to-2.4.10`（105 提交）→ `master`（79 提交），14 个冲突文件全部解决。
+  裁决原则：opening/greeting/Showdown/renderState 取 master；JS-Slash-Runner 新架构（浏览器运行时宿主、
+  sendHook 独立槽、runnerClient 异步宏、macroKey 小写折叠、世界书/生成/六作用域变量、细粒度权限、
+  节流器、错误卡）取 port；additive 全保留。权限默认值 = master 兼容语义（legacy 六位置 true），
+  port 新位 allowMessageScripts/allowBrowserScripts=true、allowRequestHeaders/allowGeneration/allowAssistantWrite=false
+- 合并后语义修复：getCurrentMessage 跳过非持久 gateway 存在性校验 + 仅序列化 UIMessage 形状做归一化；
+  updateCurrentMessage 非 text patch 回退 master 整体替换语义（greeting overlay 兼容）；
+  conservative() 预设不再显式关闭 allowMessageScripts/allowBrowserScripts（由 allowScripts 总开关门控）
+- 验证：`:app:testDebugUnitTest` **153 类 / 1074 测试 0 失败**；`:app:assembleDebug` 全绿
+- 装机：`adb install -r` 到 `XHD0223523008702`（Huawei MNA-AL00）Success，RouteActivity 前台无 FATAL
+- 推送：`origin/master` 已更新至 `543f5c3d`（含 origin 侧 README 清空提交的合并，README 取远端空版）
+- 注意：README.md 现为远端清空版（origin 提交 `a025a9ab` 有意删除全部内容，非误操作）
+- 待办：private-main 是否快进到 master 未裁决（需用户确认）；合并版真机酒馆深度冒烟
+  （开场白提交/Run 按钮/脚本管理页/变量面板）未做
+
 **2026-08-19：构建并安装 Debug APK 到物理设备（无代码变更）。**
 
 - `:app:assembleDebug` 全绿（9 executed / 218 up-to-date）；APK：`app/build/outputs/apk/debug/app-arm64-v8a-debug.apk`（~81MB）
