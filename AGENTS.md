@@ -105,7 +105,8 @@ Built with Jetpack Compose, Kotlin, and follows Material Design 3 principles.
   - 变量面板（HUD 展开）✅：headerLine、【角色状态】/【在场角色好感】折叠区、【剧情导航与记忆】选项 chips 渲染正常
   - 观察项（非阻塞）：脚本变量每次写入更新脚本行 updated_at → 会话 WebView 按 key 重建（重订阅自愈，
     高频写入场景可能有抖动）；选项 chips 点击发送未测（避免真实模型调用）
-- 待办：private-main 是否快进到 master 未裁决（需用户确认）
+- 分支归一 ✅（2026-08-26，经用户确认）：`origin/private-main` 已纯快进 `bfdf6fb1 → 06aa1cfc`，
+  与 master 同点；无强制改写、无历史丢失
 
 **2026-08-19：构建并安装 Debug APK 到物理设备（无代码变更）。**
 
