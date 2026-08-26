@@ -142,4 +142,40 @@ class RichTextRenderPolicyTest {
 
         assertEquals(RichTextSegment.Kind.STATUS_BLOCK, segments.last().kind)
     }
+
+    @Test
+    fun `frontend fences are split from surrounding markdown in source order`() {
+        val content = """
+            开场叙事
+
+            ```html
+            <button onclick="this.textContent='完成'">执行</button>
+            ```
+
+            ```kotlin
+            val answer = 42
+            ```
+
+            ```frontend
+            <section>第二块</section>
+            ```
+        """.trimIndent()
+
+        val segments = parseRichTextSegments(content)
+
+        assertEquals(
+            listOf(
+                RichTextSegment.Kind.MARKDOWN,
+                RichTextSegment.Kind.FRONTEND_HTML,
+                RichTextSegment.Kind.MARKDOWN,
+                RichTextSegment.Kind.FRONTEND_HTML,
+            ),
+            segments.map { it.kind },
+        )
+        assertTrue(segments[0].raw.contains("开场叙事"))
+        assertEquals("<button onclick=\"this.textContent='完成'\">执行</button>", segments[1].raw.trim())
+        assertTrue(segments[2].raw.contains("```kotlin"))
+        assertEquals("<section>第二块</section>", segments[3].raw.trim())
+        assertEquals(RichTextRendererMode.WEBVIEW_SEGMENTS, chooseRendererMode(content))
+    }
 }

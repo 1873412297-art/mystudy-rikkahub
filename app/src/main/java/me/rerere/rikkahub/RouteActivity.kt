@@ -65,6 +65,8 @@ import me.rerere.rikkahub.data.event.AppEvent
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.ui.activity.SafeModeActivity
 import me.rerere.rikkahub.ui.components.ui.TTSController
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernBrowserRuntimeCoordinator
+import me.rerere.rikkahub.ui.components.richtext.runtime.rememberTavernBrowserRuntimeContext
 import me.rerere.rikkahub.ui.context.LocalASRState
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalSettings
@@ -91,6 +93,8 @@ import me.rerere.rikkahub.ui.pages.debug.DebugPage
 import me.rerere.rikkahub.ui.pages.extensions.ExtensionsPage
 import me.rerere.rikkahub.ui.pages.extensions.PromptPage
 import me.rerere.rikkahub.ui.pages.extensions.QuickMessagesPage
+import me.rerere.rikkahub.ui.pages.extensions.tavernhelper.TavernHelperPage
+import me.rerere.rikkahub.ui.pages.extensions.tavernhelper.TavernScriptLogPage
 import me.rerere.rikkahub.ui.pages.extensions.skills.SkillDetailPage
 import me.rerere.rikkahub.ui.pages.extensions.skills.SkillsPage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspacePage
@@ -291,6 +295,10 @@ class RouteActivity : ComponentActivity() {
 
         val backStack = rememberNavBackStack(startScreen)
         SideEffect { this@RouteActivity.navStack = backStack }
+        val tavernBrowserRuntimeContext = rememberTavernBrowserRuntimeContext(
+            backStack = backStack,
+            settingsAssistantId = settings.assistantId.toString(),
+        )
 
         ShareHandler(backStack)
 
@@ -317,6 +325,7 @@ class RouteActivity : ComponentActivity() {
                         .semantics { testTagsAsResourceId = true }
                         .background(MaterialTheme.colorScheme.background)
                 ) {
+                    TavernBrowserRuntimeCoordinator(context = tavernBrowserRuntimeContext)
                     NavDisplay(
                         backStack = backStack,
                         entryDecorators = listOf(
@@ -541,6 +550,14 @@ class RouteActivity : ComponentActivity() {
 
                             entry<Screen.QuickMessages> {
                                 QuickMessagesPage()
+                            }
+
+                            entry<Screen.TavernHelper> { key ->
+                                TavernHelperPage(assistantId = key.assistantId)
+                            }
+
+                            entry<Screen.TavernScriptLogs> { key ->
+                                TavernScriptLogPage(scriptId = key.scriptId, scriptName = key.scriptName)
                             }
 
                             entry<Screen.Prompts> {
@@ -777,6 +794,18 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object QuickMessages : Screen
+
+    @Serializable
+    data class TavernHelper(
+        val assistantId: String? = null,
+        val conversationId: String? = null,
+    ) : Screen
+
+    @Serializable
+    data class TavernScriptLogs(
+        val scriptId: String,
+        val scriptName: String,
+    ) : Screen
 
     @Serializable
     data object Prompts : Screen

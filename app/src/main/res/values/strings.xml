@@ -478,6 +478,8 @@
   <string name="placeholder_timezone">Timezone</string>
   <string name="placeholder_user">User</string>
   <string name="prompt_page_add">Add</string>
+  <string name="prompt_page_add_entry">Add Entry</string>
+  <string name="prompt_page_add_lorebook">Add Lorebook</string>
   <string name="prompt_page_add_mode_injection">Add Mode Injection</string>
   <string name="prompt_page_cancel">Cancel</string>
   <string name="prompt_page_case_sensitive">Case Sensitive</string>
@@ -488,14 +490,20 @@
   <string name="prompt_page_description">Description</string>
   <string name="prompt_page_disabled">Disabled</string>
   <string name="prompt_page_edit">Edit</string>
+  <string name="prompt_page_edit_entry">Edit Entry</string>
+  <string name="prompt_page_edit_lorebook">Edit Lorebook</string>
   <string name="prompt_page_edit_mode_injection">Edit Mode Injection</string>
   <string name="prompt_page_empty_hint">Click the button below to add</string>
   <string name="prompt_page_enabled">Enabled</string>
   <string name="prompt_page_entries_count_format">%d entries</string>
+  <string name="prompt_page_entries_format">Entries (%d)</string>
   <string name="prompt_page_inject_depth">Inject Depth</string>
   <string name="prompt_page_injection_content">Injection Content</string>
   <string name="prompt_page_injection_position">Injection Position</string>
   <string name="prompt_page_injection_role">Injection Role</string>
+  <string name="prompt_page_keywords_format">Keywords: %s</string>
+  <string name="prompt_page_keywords_label">Keywords</string>
+  <string name="prompt_page_lorebook_empty">No Lorebooks</string>
   <string name="prompt_page_lorebook_tab">Lorebook</string>
   <string name="prompt_page_mode_injection_empty">No mode injections</string>
   <string name="prompt_page_mode_injection_tab">Mode Injection</string>
@@ -513,8 +521,9 @@
   <string name="prompt_page_scan_depth">Scan Depth (Messages)</string>
   <string name="prompt_page_title">Prompt Injection</string>
   <string name="prompt_page_unnamed">Unnamed</string>
+  <string name="prompt_page_unnamed_entry">Unnamed Entry</string>
+  <string name="prompt_page_unnamed_lorebook">Unnamed Lorebook</string>
   <string name="prompt_page_use_regex">Use Regular Expression</string>
-    <string name="prompt_page_match_whole_words">Match Whole Words</string>
   <string name="quick_messages_page_add_title">Add Quick Message</string>
   <string name="quick_messages_page_delete_message">Are you sure you want to delete "%s"? This action cannot be undone.</string>
   <string name="quick_messages_page_delete_title">Delete Quick Message</string>
@@ -532,6 +541,7 @@
   <string name="reasoning_light_desc">The model will use a small amount of reasoning to answer questions.</string>
   <string name="reasoning_medium">Medium</string>
   <string name="reasoning_medium_desc">The model will use more reasoning to answer questions.</string>
+  <string name="reasoning_max">Max</string>
   <string name="reasoning_off">Off</string>
   <string name="reasoning_off_desc">Turn off reasoning functionality, the model will directly answer questions.</string>
   <string name="reasoning_picker_hint">Not all models support depth adjustment. Refer to the model and provider documentation.</string>
@@ -589,11 +599,17 @@
   <string name="search_page_title">Search Messages</string>
   <string name="search_page_untitled">Untitled</string>
   <string name="search_picker_title">Search Settings</string>
+  <string name="search_picker_local_title">Local Search</string>
+  <string name="search_picker_local_description">Connect to various third-party search providers</string>
+  <string name="search_picker_model_title">Model Search</string>
+  <string name="search_picker_model_description">Cloud search built into the model provider</string>
+  <string name="search_picker_select_provider">Select search provider</string>
+  <string name="search_picker_turn_off">Turn off search</string>
   <string name="select_and_copy">Select and Copy</string>
   <string name="send">Send</string>
   <string name="setting_asr_configure_api_key">API Key</string>
   <string name="setting_asr_configure_dashscope_api_key_desc">DashScope API key</string>
-  <string name="setting_asr_configure_dashscope_vad_desc">Server VAD sensitivity, set 0 to disable VAD</string>
+  <string name="setting_asr_configure_dashscope_vad_desc">Server VAD detection threshold. Recommended: 0.0; range: -1 to 1.</string>
   <string name="setting_asr_configure_dashscope_websocket_desc">DashScope realtime websocket endpoint</string>
   <string name="setting_asr_configure_language">Language</string>
   <string name="setting_asr_configure_language_code_desc">Optional language code, e.g. zh-CN, en-US, ja-JP</string>
@@ -1275,7 +1291,13 @@
   <string name="assistant_page_context_message_limit_desc">Caps how many recent messages are sent to the model. When the limit is exceeded, the context is trimmed down to about half in one step instead of dropping one message per turn, so the request prefix stays stable and prompt caching keeps working for many turns.</string>
   <string name="assistant_page_context_message_limit_count">Context message limit: %d</string>
   <string name="assistant_page_context_message_limit_unlimited">Unlimited context messages</string>
-  <string name="assistant_page_context_message_limit_warning">Any non-zero limit invalidates the prompt cache each time the context is trimmed. A larger limit trims less often; 0 never trims and keeps the cache fully intact.</string>
+  <string name="assistant_page_context_message_limit_warning">Limiting context invalidates the prompt cache each time the context is trimmed. A larger limit trims less often; unlimited never trims and keeps the cache fully intact.</string>
+  <string name="setting_update_reminder_enabled">Update reminders are enabled</string>
+  <string name="setting_update_reminder_paused_until">Paused until %1$s</string>
+  <string name="setting_update_reminder_pause_title">Pause update reminders</string>
+  <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
+  <string name="setting_update_reminder_pause_days">%1$d days</string>
+  <string name="setting_update_reminder_resume_now">Resume now</string>
 <string name="assistant_importer_imported_lorebook">Imported character book with %d entries</string>
 <string name="assistant_importer_imported_regexes">Imported %d regex scripts</string>
 <string name="assistant_page_context_message_count">Context Message Size: %d</string>
@@ -1379,4 +1401,5 @@
 <string name="tavern_prompt_console_trace_call_status" tools:ignore="MissingTranslation">Call %1$d · %2$s</string>
 <string name="tavern_prompt_console_trace_clip_label" tools:ignore="MissingTranslation">Tavern prompt trace</string>
 <string name="tavern_prompt_console_trace_selector" tools:ignore="MissingTranslation">Select provider call</string>
+  <string name="prompt_page_match_whole_words">Match Whole Words</string>
 </resources>

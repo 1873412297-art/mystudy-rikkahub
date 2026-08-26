@@ -47,6 +47,9 @@ import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperEntityMapper
+import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperFileStore
+import me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptRepository
 
 val dataSourceModule = module {
     single {
@@ -112,6 +115,16 @@ val dataSourceModule = module {
                 }
             )))
             .build()
+    }
+
+    single {
+        val context: Context = get()
+        TavernHelperScriptRepository(
+            dao = get<AppDatabase>().tavernHelperScriptDao(),
+            mapper = TavernHelperEntityMapper(
+                TavernHelperFileStore(context.filesDir.resolve("tavern-helper")),
+            ),
+        )
     }
 
     single {
@@ -243,7 +256,11 @@ val dataSourceModule = module {
             settingsStore = get(),
             json = get(),
             context = get(),
-            httpClient = get()
+            httpClient = get(),
+            tavernHelperScriptAudit = {
+                get<me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptRepository>()
+                    .auditContentIntegrity().map { it.name }
+            }
         )
     }
 
@@ -267,7 +284,11 @@ val dataSourceModule = module {
             settingsStore = get(),
             json = get(),
             context = get(),
-            httpClient = get()
+            httpClient = get(),
+            tavernHelperScriptAudit = {
+                get<me.rerere.rikkahub.data.ai.tavernhelper.TavernHelperScriptRepository>()
+                    .auditContentIntegrity().map { it.name }
+            }
         )
     }
 

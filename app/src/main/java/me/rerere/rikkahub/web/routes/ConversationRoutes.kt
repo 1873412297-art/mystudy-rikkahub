@@ -19,6 +19,7 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.service.ConversationDeleteResult
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
 import me.rerere.rikkahub.web.dto.ConversationDto
@@ -154,20 +155,18 @@ fun Route.conversationRoutes(
         // DELETE /api/conversations/{id} - Delete conversation
         delete("/{id}") {
             val uuid = call.parameters["id"].toUuid("conversation id")
-            val conversation = conversationRepo.getConversationById(uuid)
-                ?: throw NotFoundException("Conversation not found")
-
-            conversationRepo.deleteConversation(conversation)
+            if (chatService.deleteConversationAtomic(uuid) != ConversationDeleteResult.DELETED) {
+                throw NotFoundException("Conversation not found")
+            }
             call.respond(HttpStatusCode.NoContent)
         }
 
         // POST /api/conversations/{id}/pin - Toggle pinned status
         post("/{id}/pin") {
             val uuid = call.parameters["id"].toUuid("conversation id")
-            val conversation = conversationRepo.getConversationById(uuid)
-                ?: throw NotFoundException("Conversation not found")
-
-            chatService.saveConversation(uuid, conversation.copy(isPinned = !conversation.isPinned))
+            if (!chatService.updatePinnedStatus(uuid)) {
+                throw NotFoundException("Conversation not found")
+            }
             call.respond(HttpStatusCode.OK, mapOf("status" to "updated"))
         }
 
@@ -191,10 +190,9 @@ fun Route.conversationRoutes(
                 throw BadRequestException("Title must not be blank")
             }
 
-            val conversation = conversationRepo.getConversationById(uuid)
-                ?: throw NotFoundException("Conversation not found")
-
-            chatService.saveConversation(uuid, conversation.copy(title = title))
+            if (!chatService.updateTitle(uuid, title)) {
+                throw NotFoundException("Conversation not found")
+            }
             call.respond(HttpStatusCode.OK, mapOf("status" to "updated"))
         }
 
@@ -219,11 +217,11 @@ fun Route.conversationRoutes(
                 modeInjectionIds = request.modeInjectionIds,
                 lorebookIds = request.lorebookIds,
             )
-            val updatedConversation = conversation.copy(
-                modeInjectionIds = modeInjectionIds,
-                lorebookIds = lorebookIds,
+            val updatedConversation = chatService.updateConversationInjections(
+                uuid,
+                modeInjectionIds,
+                lorebookIds,
             )
-            chatService.saveConversation(uuid, updatedConversation)
 
             val isGenerating = chatService.getGenerationJobStateFlow(uuid).first() != null
             call.respond(HttpStatusCode.OK, updatedConversation.toDto(isGenerating))
@@ -240,10 +238,9 @@ fun Route.conversationRoutes(
                 throw BadRequestException("Assistant not found")
             }
 
-            val conversation = conversationRepo.getConversationById(uuid)
-                ?: throw NotFoundException("Conversation not found")
-
-            chatService.saveConversation(uuid, conversation.copy(assistantId = targetAssistantId))
+            if (!chatService.updateAssistant(uuid, targetAssistantId, clearFolder = false)) {
+                throw NotFoundException("Conversation not found")
+            }
             call.respond(HttpStatusCode.OK, mapOf("status" to "updated"))
         }
 
@@ -264,7 +261,9 @@ fun Route.conversationRoutes(
                 }
             }
 
-            chatService.moveConversationToFolder(uuid, targetFolderId)
+            if (!chatService.moveConversationToFolder(uuid, targetFolderId)) {
+                throw NotFoundException("Conversation not found")
+            }
             call.respond(HttpStatusCode.OK, mapOf("status" to "updated"))
         }
 

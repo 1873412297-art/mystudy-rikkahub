@@ -12,6 +12,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import me.rerere.rikkahub.data.model.Conversation
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.uuid.Uuid
 
 private const val TAG = "ConversationSession"
@@ -20,6 +22,11 @@ private const val IDLE_TIMEOUT_MS = 5_000L
 internal data class GroupGenerationHandoffResult<T>(
     val value: T,
     val shouldContinue: Boolean,
+)
+
+internal data class ConversationInitializationToken(
+    val generation: Long,
+    val mutationVersion: Long,
 )
 
 class ConversationSession(
@@ -44,10 +51,45 @@ class ConversationSession(
     val isInUse: Boolean get() = refCount.get() > 0 || isGenerating
 
     private val groupDirectorMutex = Mutex()
+    private val conversationMutationMutex = Mutex()
+    private val initializationGeneration = AtomicLong(0)
+    private val mutationVersion = AtomicLong(0)
+    private val closed = AtomicBoolean(false)
     private var groupReplyActiveJob: Job? = null
 
     suspend fun <T> withGroupDirectorLock(block: suspend () -> T): T =
         groupDirectorMutex.withLock { block() }
+
+    /** Serializes every persisted conversation read-modify-write, including browser runtime mutations. */
+    suspend fun <T> withConversationMutationLock(block: suspend () -> T): T =
+        conversationMutationMutex.withLock {
+            check(!closed.get()) { "CONVERSATION_SESSION_CLOSED" }
+            block()
+        }
+
+    /** Compatibility name for the browser runtime; it intentionally shares the general mutation lock. */
+    suspend fun <T> withRuntimeMessageLock(block: suspend () -> T): T = withConversationMutationLock(block)
+
+    /**
+     * Captures the state version before a repository-backed initialization starts loading outside the mutation lock.
+     */
+    internal fun beginInitialization(): ConversationInitializationToken = ConversationInitializationToken(
+        generation = initializationGeneration.incrementAndGet(),
+        mutationVersion = mutationVersion.get(),
+    )
+
+    /** Records a live-state change that invalidates an in-flight initialization snapshot. */
+    internal fun recordConversationMutation() {
+        mutationVersion.incrementAndGet()
+    }
+
+    /** True only for the most recent initializer and an unchanged live state. Must be called while locked. */
+    internal fun canInstallInitialization(token: ConversationInitializationToken): Boolean =
+        token.generation == initializationGeneration.get() && token.mutationVersion == mutationVersion.get()
+
+    /** Whether this is the latest loader, even if a live mutation arrived after it started. */
+    internal fun isLatestInitialization(token: ConversationInitializationToken): Boolean =
+        token.generation == initializationGeneration.get()
 
     internal fun markGroupReplyStartedLocked(job: Job?) {
         groupReplyActiveJob = job
@@ -155,6 +197,19 @@ class ConversationSession(
 
     fun getJob(): Job? = _generationJob.value
 
+    /** Waits for an admitted mutation, then permanently prevents a later mutation from entering this session. */
+    suspend fun closeForCleanup() {
+        conversationMutationMutex.withLock {
+            closeLockedForCleanup()
+        }
+    }
+
+    /** Must be called while [withConversationMutationLock] is held. */
+    internal fun closeLockedForCleanup() {
+        closed.set(true)
+        cleanupLocked()
+    }
+
     private fun scheduleIdleCheck() {
         idleCheckJob?.cancel()
         idleCheckJob = scope.launch {
@@ -171,6 +226,11 @@ class ConversationSession(
     }
 
     fun cleanup() {
+        closed.set(true)
+        cleanupLocked()
+    }
+
+    private fun cleanupLocked() {
         _generationJob.value?.cancel()
         _generationJob.value = null
         groupReplyActiveJob = null

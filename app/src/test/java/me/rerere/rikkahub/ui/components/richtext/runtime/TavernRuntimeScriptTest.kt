@@ -64,4 +64,60 @@ class TavernRuntimeScriptTest {
         assertTrue(script.contains("window.Mvu"))
         assertTrue(script.contains("window._"))
     }
+
+    @Test
+    fun `script exposes worldbook CRUD and TavernHelper style worldbook aliases`() {
+        val script = buildTavernRuntimeScript()
+
+        assertTrue(script.contains("world.listBooks"))
+        assertTrue(script.contains("world.getBook"))
+        assertTrue(script.contains("world.createBook"))
+        assertTrue(script.contains("world.updateBook"))
+        assertTrue(script.contains("world.deleteBook"))
+        assertTrue(script.contains("getWorldbookNames"))
+        assertTrue(script.contains("getWorldbook"))
+        assertTrue(script.contains("createWorldbook"))
+        assertTrue(script.contains("replaceWorldbook"))
+        assertTrue(script.contains("updateWorldbookWith"))
+        assertTrue(script.contains("deleteWorldbook"))
+    }
+
+    @Test
+    fun `script exposes generation API with cancellable request ids`() {
+        val script = buildTavernRuntimeScript()
+
+        assertTrue(script.contains("callWithId"))
+        assertTrue(script.contains("generation.generate"))
+        assertTrue(script.contains("generation.generateRaw"))
+        assertTrue(script.contains("generation.cancel"))
+        assertTrue(script.contains("generation.cancelAll"))
+        assertTrue(script.contains("requestId"))
+    }
+
+    @Test
+    fun `script exposes six-scope variable replace and update APIs`() {
+        val script = buildTavernRuntimeScript()
+
+        assertTrue(script.contains("variables.replace"))
+        assertTrue(script.contains("variables.update"))
+        assertTrue(script.contains("replaceVariables"))
+        assertTrue(script.contains("updateVariablesWith"))
+    }
+
+    @Test
+    fun `unsupported host capability shims remain callable and dispatch structured RPC methods`() {
+        val script = buildTavernRuntimeScript()
+
+        assertTrue(script.contains("window.RikkaHubTavern"))
+        assertTrue(script.contains("extensions.install"))
+        assertTrue(script.contains("extensions.uninstall"))
+        assertTrue(script.contains("extensions.update"))
+        assertTrue(script.contains("server.getAdminStatus"))
+        assertTrue(script.contains("server.filesystem.read"))
+        assertTrue(script.contains("dom.jquery.queryTopLevel"))
+        assertTrue(script.contains("backend.st.request"))
+        assertTrue(script.contains("return call("))
+        assertTrue(!script.contains("Android"))
+        assertTrue(!script.contains("Kotlin"))
+    }
 }

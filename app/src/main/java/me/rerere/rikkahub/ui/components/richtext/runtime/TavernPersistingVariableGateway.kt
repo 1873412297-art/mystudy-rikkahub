@@ -11,23 +11,29 @@ internal class PersistingTavernRuntimeVariableGateway(
     private val validateTarget: (Uuid) -> Unit = {},
     private val persistChatVariables: (Uuid, JsonObject) -> Unit,
 ) : TavernRuntimeVariableGateway {
-    override fun get(conversationId: Uuid?, scope: String, key: String): JsonElement? =
-        delegate.get(targetConversationId, scope, key)
+    override fun get(conversationId: Uuid?, scope: String, key: String, ownerId: String?): JsonElement? =
+        delegate.get(targetConversationId, scope, key, ownerId)
 
-    override fun list(conversationId: Uuid?, scope: String): JsonObject =
-        delegate.list(targetConversationId, scope)
+    override fun list(conversationId: Uuid?, scope: String, ownerId: String?): JsonObject =
+        delegate.list(targetConversationId, scope, ownerId)
 
-    override fun set(conversationId: Uuid?, scope: String, key: String, value: JsonElement) {
+    override fun set(conversationId: Uuid?, scope: String, key: String, value: JsonElement, ownerId: String?) {
         validateTarget(targetConversationId)
-        delegate.set(targetConversationId, scope, key, value)
+        delegate.set(targetConversationId, scope, key, value, ownerId)
         if (scope == TAVERN_VARIABLE_SCOPE_CHAT) publishChatSnapshot()
     }
 
-    override fun delete(conversationId: Uuid?, scope: String, key: String): Boolean {
+    override fun delete(conversationId: Uuid?, scope: String, key: String, ownerId: String?): Boolean {
         validateTarget(targetConversationId)
-        val deleted = delegate.delete(targetConversationId, scope, key)
+        val deleted = delegate.delete(targetConversationId, scope, key, ownerId)
         if (deleted && scope == TAVERN_VARIABLE_SCOPE_CHAT) publishChatSnapshot()
         return deleted
+    }
+
+    override fun replace(conversationId: Uuid?, scope: String, variables: JsonObject, ownerId: String?) {
+        validateTarget(targetConversationId)
+        delegate.replace(targetConversationId, scope, variables, ownerId)
+        if (scope == TAVERN_VARIABLE_SCOPE_CHAT) publishChatSnapshot()
     }
 
     private fun publishChatSnapshot() {

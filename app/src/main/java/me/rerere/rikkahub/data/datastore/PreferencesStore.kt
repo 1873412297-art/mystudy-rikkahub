@@ -45,6 +45,7 @@ import me.rerere.rikkahub.data.model.PromptInjection
 import me.rerere.rikkahub.data.model.QuickMessage
 import me.rerere.rikkahub.data.model.TavernRenderPreferences
 import me.rerere.rikkahub.data.model.TavernRuntimePermissions
+import me.rerere.rikkahub.data.model.TavernHelperRenderSettings
 import me.rerere.rikkahub.data.model.Tag
 import me.rerere.rikkahub.data.model.resolveVisibleQuickMessages
 import me.rerere.rikkahub.data.model.sanitizeQuickMessageRefs
@@ -155,6 +156,9 @@ class SettingsStore(
         val TAVERN_GLOBAL_VARIABLES = stringPreferencesKey("tavern_global_variables")
         val TAVERN_RENDER_PREFERENCES = stringPreferencesKey("tavern_render_preferences")
         val TAVERN_CARD_SCRIPT_PERMISSIONS = stringPreferencesKey("tavern_card_script_permissions")
+        val TAVERN_SCRIPT_VARIABLES = stringPreferencesKey("tavern_script_variables")
+        val TAVERN_SCRIPT_PERMISSION_GRANTS = stringPreferencesKey("tavern_script_permission_grants")
+        val TAVERN_HELPER_RENDER_SETTINGS = stringPreferencesKey("tavern_helper_render_settings")
 
         // 备份提醒
         val BACKUP_REMINDER_CONFIG = stringPreferencesKey("backup_reminder_config")
@@ -261,6 +265,15 @@ class SettingsStore(
                 tavernCardScriptPermissions = preferences[TAVERN_CARD_SCRIPT_PERMISSIONS]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: emptyMap(),
+                tavernScriptVariables = preferences[TAVERN_SCRIPT_VARIABLES]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: JsonObject(emptyMap()),
+                tavernScriptPermissionGrants = preferences[TAVERN_SCRIPT_PERMISSION_GRANTS]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: emptyMap(),
+                tavernHelperRenderSettings = preferences[TAVERN_HELPER_RENDER_SETTINGS]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: TavernHelperRenderSettings(),
                 webServerEnabled = preferences[WEB_SERVER_ENABLED] == true,
                 webServerPort = preferences[WEB_SERVER_PORT] ?: 8080,
                 webServerJwtEnabled = preferences[WEB_SERVER_JWT_ENABLED] == true,
@@ -435,6 +448,9 @@ class SettingsStore(
                 JsonInstant.encodeToString(settings.tavernRenderPreferences.normalized())
             preferences[TAVERN_CARD_SCRIPT_PERMISSIONS] =
                 JsonInstant.encodeToString(settings.tavernCardScriptPermissions)
+            preferences[TAVERN_SCRIPT_VARIABLES] = JsonInstant.encodeToString(settings.tavernScriptVariables)
+            preferences[TAVERN_SCRIPT_PERMISSION_GRANTS] = JsonInstant.encodeToString(settings.tavernScriptPermissionGrants)
+            preferences[TAVERN_HELPER_RENDER_SETTINGS] = JsonInstant.encodeToString(settings.tavernHelperRenderSettings)
             preferences[WEB_SERVER_ENABLED] = settings.webServerEnabled
             preferences[WEB_SERVER_PORT] = settings.webServerPort
             preferences[WEB_SERVER_JWT_ENABLED] = settings.webServerJwtEnabled
@@ -600,6 +616,11 @@ data class Settings(
     val tavernRenderPreferences: TavernRenderPreferences = TavernRenderPreferences(),
     /** SHA-256 character-card fingerprint to explicit full-script approval (false = remembered safe mode). */
     val tavernCardScriptPermissions: Map<String, Boolean> = emptyMap(),
+    /** 酒馆脚本变量（script 作用域）：scriptId → 变量表 */
+    val tavernScriptVariables: JsonObject = JsonObject(emptyMap()),
+    /** 脚本哈希级权限授权：scriptId → 授权记录（源码哈希变化后自动失效） */
+    val tavernScriptPermissionGrants: Map<String, me.rerere.rikkahub.data.model.TavernScriptPermissionGrant> = emptyMap(),
+    val tavernHelperRenderSettings: TavernHelperRenderSettings = TavernHelperRenderSettings(),
     val webServerEnabled: Boolean = false,
     val webServerPort: Int = 8080,
     val webServerJwtEnabled: Boolean = false,
@@ -642,7 +663,7 @@ data class DisplaySetting(
     val showTokenUsage: Boolean = true,
     val showThinkingContent: Boolean = true,
     val autoCloseThinking: Boolean = true,
-    val showUpdates: Boolean = true,
+    val updateCheckDisabledUntilEpochMillis: Long = 0L,
     val showMessageJumper: Boolean = true,
     val messageJumperOnLeft: Boolean = false,
     val fontSizeRatio: Float = 1.0f,

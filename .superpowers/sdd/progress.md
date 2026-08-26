@@ -1,0 +1,92 @@
+# JS-Slash-Runner Native Integration Progress
+
+- Foundation batch: complete (commits 77b5114d..7fd3fccb; design, rendering, codec, persistence, management, runtime, card import/export, trust invalidation)
+- Inline frontend height regression: complete (commit cbcc2d48; JVM red-green, full Android unit/build, Huawei device screenshot and interaction evidence)
+- Script tree reorder and cross-scope move/copy: complete (commit b562a7e2; transaction-backed persistence and JVM coverage).
+- Render depth/streaming enforcement and main-entry assistant scope: complete (commit 969c5633; targeted tests, full Android unit suite and APK build green).
+- Root-owned browser runtime and safe conversation rebinding: complete (commits 3e09ea88..1a193f6b; 32 focused tests, Kotlin compile, three review rounds, final review clean).
+- Runtime status and diagnostics: complete (commits 3856f8cc..b533a99b; 500-entry per-script logs, redaction, console/lifecycle capture, over-limit status, native log page, targeted renderer recovery, final review no runtime findings; historical initial RED evidence gap recorded).
+- Structured unsupported RPC and diagnostics: complete (commits 04333968..f4fa9e9d; exact errors, callable shims, UTF-8 request/response caps, per-script RPC timing, final review clean).
+- Persistent runtime message API: complete (commits 81456f1e..a64f4bf3; selected-branch list/get/current/create/update/delete, exact-ID persistence, shared conversation mutation locking, lifecycle/readiness and assistant-deletion safety, 83 focused tests, final review approved).
+- Huawei device lifecycle verification: complete for the native management entry and persistent message API. The
+  script host now calls the two-argument Android JavaScript lifecycle bridge, and an initialized unsaved conversation
+  may be persisted by its first runtime mutation without weakening deleted-conversation protection. A real
+  `messages.create` appeared in the existing chat, survived process restart, was read back by exact ID, and was then
+  removed through `messages.delete`; the crash log buffer remained empty.
+- Worldbook compatibility APIs: complete (commit dbb7d279; book-level list/get/create/update/delete on the real
+  Lorebook settings model and the in-memory store, entry routing with legacy entry-API interop, structured
+  NOT_FOUND/ALREADY_EXISTS/BAD_REQUEST errors, allowWorldWrite gating, world.getEntries book filter, and
+  TavernHelper-style aliases getWorldbookNames/getWorldbook/createWorldbook/replaceWorldbook/updateWorldbookWith/
+  deleteWorldbook in the JS shim; 7 new focused tests, full :app:testDebugUnitTest 115 classes / 795 tests green,
+  :app:compileDebugKotlin green).
+- Generation compatibility APIs: complete (commit f30655e1; async bridge path for generation.* so the JavaBridge
+  thread never blocks, generate/generateRaw with optional chat-history injection (last 50, user/assistant/system),
+  explicit messages, temperature/maxTokens passthrough, rpc-id-based cancel/cancelAll, single-callback guarantee,
+  structured NO_CHAT_MODEL/PROVIDER_UNAVAILABLE/GENERATION_FAILED/CANCELLED/GENERATION_IN_PROGRESS errors,
+  ASYNC_DISPATCH_REQUIRED on the sync path, allowGeneration permission bit (default off) + settings UI switch,
+  ProviderBackedTavernGenerationGateway on the real assistant chat model via ProviderManager wired in
+  MarkdownWebView, TavernHelper-style generate/generateRaw aliases returning text plus api.generation with
+  requestId-based cancellation in the JS shim; 8 new focused tests, full :app:testDebugUnitTest 116 classes /
+  804 tests green, :app:compileDebugKotlin green).
+- Six-scope variables: complete (commit bcdca87a; global/character/preset/chat/message/script scopes on get/set/
+  delete/list plus whole-scope variables.replace and merging variables.update RPCs, allowVariablesWrite gating and
+  the existing 64KB/512KB quotas, owner-id routing (script→scriptId from the controller, message→injected current
+  message id, other scopes owner-agnostic), character/preset persisted into the current Assistant.tavernVariables
+  JSON namespaces (preset anchored to the assistant because RikkaHub has no standalone preset entity — recorded
+  deviation), script persisted into Settings.tavernScriptVariables keyed by scriptId (message frontends stay null
+  and fall into the __ephemeral__ bucket), message scope held in per-conversation gateway memory (no persistence
+  channel exists yet — recorded deviation), TavernHelper-style replaceVariables/updateVariablesWith aliases in the
+  JS shim; 12 new focused tests, full :app:testDebugUnitTest 117 classes / 816 tests green,
+  :app:compileDebugKotlin green).
+- Fine-grained permissions: complete (commit a8b79785; new bits allowMessageScripts/allowBrowserScripts
+  (both default true, backward compatible)/allowAssistantWrite (default false) plus allowedNetworkDomains
+  whitelist (empty = unrestricted), TavernScriptPermissionGrant persisted in Settings keyed by scriptId
+  with automatic invalidation when the source SHA-256 no longer matches (SettingsBackedTavernScriptGrantResolver
+  + grant/revoke helpers), permission store merges global defaults with per-script grants on every read
+  (booleans OR, domains union), character/preset variable writes gated on allowAssistantWrite across
+  set/delete/replace/update, message-frontend and resident-browser run bits wired into MarkdownWebView and
+  the browser runtime host, three new settings UI switches; 8 new focused tests, full
+  :app:testDebugUnitTest 118 classes / 824 tests green, :app:compileDebugKotlin green. Recorded gaps:
+  first-enable risk dialog and grant-confirmation UI not built (grant data model and resolution ready);
+  network domain whitelist is data-model only, no network RPC consumes it yet).
+- Backup/restore: complete (commit dd7a5e0f; shared TavernHelperBackupIO walks filesDir/tavern-helper
+  (source/ + data/ spill-over payloads) into the backup zip under the FILES item and restores entries with
+  path-traversal guards, wired into both WebDAV and S3 sync chains; script DB records already ride the whole
+  rikka_hub.db DATABASE item. Post-restore integrity: TavernHelperScriptRepository.auditContentIntegrity
+  verifies every script entity's source/data SHA-256 via the mapper + file store, force-disables corrupted
+  scripts and reports them (DAO getAll added); sync chains invoke the audit through an injected suspend lambda
+  only when FILES was restored without DATABASE (a swapped DB leaves the live DAO pointing at the old file —
+  audit deferred to after restart, recorded deviation); corrupted-item surfacing is log + disabled state, no
+  toast UI (recorded deviation); 3 new focused tests, full :app:testDebugUnitTest 120 classes / 827 tests
+  green, :app:compileDebugKotlin green).
+- Frontend streaming/error states: complete (commit 6ff9143c; TavernStreamingPatchThrottle throttles streaming
+  segment patches to one dispatch per 120ms window with trailing coalescing (latest content wins), wired into
+  MarkdownWebView's streaming branch via a local dispatch fun + postDelayed trailing with runCatching guard for
+  destroyed views; main-frame onReceivedError and onRenderProcessGone surface a TavernFrontendErrorCard with
+  expandable reason + source preview (600 chars) and three actions — view source (AlertDialog), temporarily
+  allow network (remember(content) scoped temp flag folded into the baseKey network bit), reload; streaming
+  completion full-document rebuild already satisfied by streaming bit in baseKey. 5 new focused tests
+  (timeline-simulated 10-token burst collapses to 2 dispatches), full :app:testDebugUnitTest 121 classes /
+  832 tests green, :app:assembleDebug green. Recorded deviation: the spec's "mount only after root structure
+  parseable" streaming gate is not separately implemented — the existing segment diff already tolerates partial
+  structure, so no extra gate was added.)
+- Final device audit: complete (2026-08-26, Huawei MNA-AL00 XHD0223523008702, debug package
+  me.rerere.rikkahub.debug, arm64 APK of this branch). Verified end to end on the real device:
+  install + launch with no FATAL; tavern helper management page (render tab with 流式期间渲染/运行前端脚本/
+  允许 HTTPS 网络资源 switches, scripts tab) lists the smoke script with live 状态：运行中; the per-script
+  diagnostics log page shows lifecycle loading/loaded/running/paused and RPC events.subscribe entries;
+  chat-page script button tap -> TavernBrowserSessionRegistry.emitButton -> session WebView DOM dispatch
+  -> eventOn handler -> replaceVariables -> RikkahubScriptBridge.replaceData -> repository -> Room
+  (data_inline updated, verified by reading the DB together with its -wal file — main-file-only reads
+  miss uncheckpointed writes); an injected ```html message part renders as an inline frontend WebView
+  with correct content and height (screenshot audit-frontend-conv.png). Audit finding fixed in
+  f2771724: the browser-session diagnostics console capture wrapped debug/info/warn/error but not
+  console.log, so script log output was invisible; console.log now captured as INFO. Test-data repairs
+  during the audit (not app bugs): history list is assistant-scoped, so the legacy conversation only
+  appeared after repointing its assistant_id at the current 道家仙子美母 assistant; the 2.4.12 update
+  dialog overlays the UI on every cold start and blocked early probe taps. Audit limitations:
+  generation.* end-to-end not run — all 22 configured providers on the device have empty API keys;
+  the streaming throttle and frontend error card are JVM-verified only (no live stream / main-frame
+  failure was injected). Regression after the audit fix: :app:testDebugUnitTest 121 classes / 832
+  tests green, :app:compileDebugKotlin + :app:assembleDebug green, final APK reinstalled clean.
+- All planned work items are complete.

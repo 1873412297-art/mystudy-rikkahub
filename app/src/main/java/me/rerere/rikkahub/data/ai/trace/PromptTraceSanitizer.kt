@@ -137,6 +137,14 @@ object PromptTraceSanitizer {
                 outputText = summarizeText(sanitizeDiagnosticText(part.content.toString())),
                 outputAttachments = emptyList(),
             )
+            is UIMessagePart.ServerTool -> PromptTracePart.Tool(
+                toolCallId = part.toolCallId,
+                toolName = part.toolName,
+                approvalState = part.status.name,
+                input = summarizeText(sanitizeDiagnosticText(part.input?.toString().orEmpty())),
+                outputText = part.output?.toString()?.let(::sanitizeDiagnosticText)?.let(::summarizeText),
+                outputAttachments = emptyList(),
+            )
             is UIMessagePart.StatusPlaceholder -> PromptTracePart.Text(
                 sanitizeDiagnosticText(part.htmlContent),
             )

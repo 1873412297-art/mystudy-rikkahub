@@ -31,6 +31,16 @@ internal suspend fun persistConversationAndCleanupPromptTraces(
     }
 }
 
+/** Publishes the live conversation only after the repository transaction has completed successfully. */
+internal suspend fun persistConversationThenPublishLive(
+    conversation: Conversation,
+    persist: suspend (Conversation) -> Unit,
+    publishLive: (Conversation) -> Unit,
+) {
+    persist(conversation)
+    publishLive(conversation)
+}
+
 internal fun buildConversationAfterUserRegeneration(
     conversation: Conversation,
     messageId: Uuid,

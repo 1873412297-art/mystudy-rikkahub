@@ -30,6 +30,7 @@ class WebDavSync(
     private val json: Json,
     private val context: Context,
     private val httpClient: HttpClient,
+    private val tavernHelperScriptAudit: (suspend () -> List<String>)? = null,
 ) {
     private fun getClient(config: WebDavConfig): WebDavClient {
         return WebDavClient(config, httpClient)
@@ -203,6 +204,9 @@ class WebDavSync(
                 } else {
                     Log.w(TAG, "prepareBackupFile: Fonts folder does not exist or is not a directory")
                 }
+
+                // Tavern helper script files (source/data payloads spilled out of the database)
+                me.rerere.rikkahub.data.sync.TavernHelperBackupIO.backup(context.filesDir, zipOut)
             }
         }
 
@@ -321,6 +325,12 @@ class WebDavSync(
                                         "restoreFromBackupFile: Restored ${zipEntry.name} (${targetFile.length()} bytes)"
                                     )
                                 }
+                            } else if (config.items.contains(WebDavConfig.BackupItem.FILES) &&
+                                zipEntry.name.startsWith(me.rerere.rikkahub.data.sync.TavernHelperBackupIO.ENTRY_PREFIX)
+                            ) {
+                                me.rerere.rikkahub.data.sync.TavernHelperBackupIO.restoreEntry(
+                                    context.filesDir, zipIn, zipEntry.name
+                                )
                             } else {
                                 Log.i(TAG, "restoreFromBackupFile: Skipping entry ${zipEntry.name}")
                             }
@@ -328,6 +338,24 @@ class WebDavSync(
                     }
 
                     zipIn.closeEntry()
+                }
+            }
+        }
+
+        // Restored script files may not match the hashes recorded in the (unchanged) database:
+        // disable corrupted scripts and surface them. When the database itself was restored the
+        // live DAO still points at the pre-restore file, so the audit is skipped until restart.
+        if (config.items.contains(WebDavConfig.BackupItem.FILES) &&
+            !config.items.contains(WebDavConfig.BackupItem.DATABASE)
+        ) {
+            tavernHelperScriptAudit?.let { audit ->
+                val corrupted = audit()
+                if (corrupted.isNotEmpty()) {
+                    Log.w(
+                        TAG,
+                        "restoreFromBackupFile: disabled ${corrupted.size} corrupted scripts: " +
+                            corrupted.joinToString()
+                    )
                 }
             }
         }

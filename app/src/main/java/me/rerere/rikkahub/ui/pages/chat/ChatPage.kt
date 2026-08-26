@@ -63,6 +63,7 @@ import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import me.rerere.ai.core.MessageRole
+import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.common.android.appTempFolder
@@ -71,6 +72,7 @@ import me.rerere.hugeicons.stroke.Cancel01
 import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.MessageAdd01
+import me.rerere.hugeicons.stroke.Puzzle
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.ai.trace.isTavernPromptTraceEligible
@@ -96,6 +98,7 @@ import me.rerere.rikkahub.service.tavern.resolveGreetingNavigation
 import me.rerere.rikkahub.service.tavern.requestCommitForSend
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
+import me.rerere.rikkahub.ui.components.ai.SearchMode
 import me.rerere.rikkahub.ui.components.ai.completion.GroupMentionCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.useCropLauncher
@@ -121,6 +124,8 @@ import me.rerere.rikkahub.ui.pages.chat.tavern.requiresTavernRegenerateConfirmat
 import me.rerere.rikkahub.utils.ImageUtils
 import me.rerere.rikkahub.utils.base64Decode
 import me.rerere.rikkahub.utils.isAllowedFileType
+import me.rerere.rikkahub.ui.components.richtext.runtime.TavernBrowserScriptButtons
+import me.rerere.rikkahub.ui.components.richtext.runtime.rememberTavernBrowserScripts
 import me.rerere.rikkahub.utils.navigateToChatPage
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
@@ -384,6 +389,8 @@ private fun ChatPageContent(
     val activeGreetingSession = greetingSession?.takeIf {
         !it.isLocked && it.candidates.isNotEmpty() && !hasUserMessage
     }
+    val tavernBrowserScripts = rememberTavernBrowserScripts(assistant.id.toString())
+    val tavernHelperEligible = assistant.tavernCardJson != null || tavernBrowserScripts.isNotEmpty()
     val tavernPromptTraceEligible = remember(assistant, setting.assistants) {
         assistant.isTavernPromptTraceEligible(setting.assistants)
     }
@@ -528,12 +535,21 @@ private fun ChatPageContent(
                     drawerState = drawerState,
                     previewMode = previewMode,
                     tavernPromptTraceEligible = tavernPromptTraceEligible,
+                    tavernHelperEligible = tavernHelperEligible,
                     onNewChat = {
                         navigateToChatPage(navController)
                     },
                     onOpenTavernPromptConsole = {
                         navController.navigate(
                             Screen.TavernPromptConsole(conversation.id.toString())
+                        )
+                    },
+                    onOpenTavernHelper = {
+                        navController.navigate(
+                            Screen.TavernHelper(
+                                assistantId = assistant.id.toString(),
+                                conversationId = conversation.id.toString(),
+                            )
                         )
                     },
                     onClickMenu = {
@@ -546,6 +562,10 @@ private fun ChatPageContent(
             },
             bottomBar = {
                 Column {
+                    TavernBrowserScriptButtons(
+                        scripts = tavernBrowserScripts,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     if (isManualGroup) {
                         GroupMemberSelector(
                             members = enabledManualMembers,
@@ -566,17 +586,33 @@ private fun ChatPageContent(
                         vm.stopGeneration()
                     },
                     enableSearch = enableWebSearch,
-                    onToggleSearch = {
+                    onUpdateSearchMode = { mode ->
                         val current = setting.getCurrentAssistant()
+                        val model = setting.getCurrentChatModel()
                         vm.updateSettings(
                             setting.copy(
                                 assistants = setting.assistants.map { assistant ->
                                     if (assistant.id == current.id) {
-                                        assistant.copy(enableWebSearch = !enableWebSearch)
+                                        assistant.copy(enableWebSearch = mode == SearchMode.LOCAL)
                                     } else {
                                         assistant
                                     }
-                                }
+                                },
+                                providers = if (model == null) {
+                                    setting.providers
+                                } else {
+                                    setting.providers.map { provider ->
+                                        provider.editModel(
+                                            model.copy(
+                                                tools = if (mode == SearchMode.BUILT_IN) {
+                                                    model.tools + BuiltInTools.Search
+                                                } else {
+                                                    model.tools - BuiltInTools.Search
+                                                }
+                                            )
+                                        )
+                                    }
+                                },
                             )
                         )
                     },
@@ -751,18 +787,8 @@ private fun ChatPageContent(
                             vm.deleteMessage(it)
                         }
                     },
-                    onUpdateMessage = { newNode ->
-                        vm.updateConversation(
-                            conversation.copy(
-                                messageNodes = conversation.messageNodes.map { node ->
-                                    if (node.id == newNode.id) {
-                                        newNode
-                                    } else {
-                                        node
-                                    }
-                                }
-                            ))
-                        vm.saveConversationAsync()
+                    onSelectMessageNode = { nodeId, selectIndex ->
+                        vm.selectMessageNode(nodeId, selectIndex)
                     },
                     onClickSuggestion = { suggestion ->
                         inputState.editingMessage = null
@@ -1250,9 +1276,11 @@ private fun TopBar(
     bigScreen: Boolean,
     previewMode: Boolean,
     tavernPromptTraceEligible: Boolean,
+    tavernHelperEligible: Boolean,
     onClickMenu: () -> Unit,
     onNewChat: () -> Unit,
     onOpenTavernPromptConsole: () -> Unit,
+    onOpenTavernHelper: () -> Unit,
     onUpdateTitle: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -1315,6 +1343,12 @@ private fun TopBar(
                 visible = tavernPromptTraceEligible,
                 onOpen = onOpenTavernPromptConsole,
             )
+
+            if (tavernHelperEligible) {
+                IconButton(onClick = onOpenTavernHelper) {
+                    Icon(HugeIcons.Puzzle, "Tavern Helper")
+                }
+            }
 
             IconButton(
                 onClick = {

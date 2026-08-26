@@ -72,6 +72,12 @@ interface ConversationDAO {
     @Query("DELETE FROM conversationentity WHERE id = :id")
     suspend fun deleteById(id: String)
 
+    @Query("DELETE FROM conversationentity WHERE id = :id")
+    suspend fun deleteByIdAndReturnCount(id: String): Int
+
+    @Query("DELETE FROM conversationentity WHERE id = :id AND assistant_id = :assistantId")
+    suspend fun deleteByIdAndAssistantId(id: String, assistantId: String): Int
+
     @Query("DELETE FROM conversationentity")
     suspend fun deleteAll()
 
@@ -81,8 +87,29 @@ interface ConversationDAO {
     @Query("UPDATE conversationentity SET is_pinned = :isPinned WHERE id = :id")
     suspend fun updatePinStatus(id: String, isPinned: Boolean)
 
+    @Query("UPDATE conversationentity SET title = :title, update_at = :updateAt WHERE id = :id")
+    suspend fun updateTitle(id: String, title: String, updateAt: Long): Int
+
+    @Query(
+        "UPDATE conversationentity SET is_pinned = CASE WHEN is_pinned = 0 THEN 1 ELSE 0 END, " +
+            "update_at = :updateAt WHERE id = :id"
+    )
+    suspend fun togglePinStatusAtomically(id: String, updateAt: Long): Int
+
+    @Query(
+        "UPDATE conversationentity SET assistant_id = :assistantId, " +
+            "folder_id = CASE WHEN :clearFolder THEN '' ELSE folder_id END, " +
+            "update_at = :updateAt WHERE id = :id"
+    )
+    suspend fun updateAssistantAndFolder(
+        id: String,
+        assistantId: String,
+        clearFolder: Boolean,
+        updateAt: Long,
+    ): Int
+
     @Query("UPDATE conversationentity SET folder_id = :folderId WHERE id = :id")
-    suspend fun updateFolderId(id: String, folderId: String)
+    suspend fun updateFolderId(id: String, folderId: String): Int
 
     @Query("UPDATE conversationentity SET folder_id = '' WHERE folder_id = :folderId")
     suspend fun clearFolder(folderId: String)

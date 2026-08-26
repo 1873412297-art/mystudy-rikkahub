@@ -1,6 +1,9 @@
 package me.rerere.rikkahub.data.ai.slash
 
+import android.content.Context
 import com.whl.quickjs.wrapper.QuickJSContext
+import me.rerere.rikkahub.service.TavernScriptRunnerClient
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -63,10 +66,12 @@ private const val MACRO_EXECUTION_TIMEOUT_MS = 2_000L
  * 宿主侧酒馆脚本注册表（应用级，WebView 重载不丢）。
  * 宏与斜杠命令源码在独立 QuickJS 单线程 executor 中执行（与 SlashScriptEngine 隔离）。
  *
+ * 宏名查找按 ST 风格大小写折叠（注册时保留原始大小写用于展示）。
+ *
  * QuickJS 原生库不可用时（如 JVM 单测环境）自动降级为无引擎模式：
  * 注册/列表/配额照常工作，展开返回原文，执行返回 error 兜底。
  */
-class TavernScriptRegistry : MacroExpander {
+class TavernScriptRegistry(context: Context? = null) : MacroExpander {
 
     private data class RegistrationKey(val ownerId: String?, val name: String)
     private class MacroEntry(val name: String, val source: String)
@@ -86,9 +91,19 @@ class TavernScriptRegistry : MacroExpander {
     @Volatile
     private var engineAvailable = true
 
-    /** 已求值进共享 JS 上下文的宏/命令名集合（重注册时移除以重新求值） */
+    /** 已求值进共享 JS 上下文的宏/命令键集合（重注册时移除以重新求值） */
     private val loadedMacros = ConcurrentHashMap<RegistrationKey, Boolean>()
     private val loadedSlashCommands = ConcurrentHashMap<RegistrationKey, Boolean>()
+
+    /** sendHook 独立槽位（不经 {{}} 宏命名空间，避免宏列表泄漏特殊宏名） */
+    private val sendHook = AtomicReference<MacroEntry?>()
+    private val sendHookKey = RegistrationKey(null, "__send_hook__")
+
+    /** 异步执行客户端（独立 runner 进程；不可用时回退到共享 QuickJS 同步路径） */
+    private val runnerClient = context?.applicationContext?.let(::TavernScriptRunnerClient)
+
+    /** ST 风格宏名大小写折叠 */
+    private fun macroKey(name: String): String = name.lowercase(Locale.ROOT)
 
     private fun getOrCreateContext(): QuickJSContext? {
         contextRef.get()?.let { return it }
@@ -153,7 +168,7 @@ class TavernScriptRegistry : MacroExpander {
     }
 
     fun registerMacro(name: String, source: String, ownerId: String? = null): Boolean = synchronized(registrationLock) {
-        val key = RegistrationKey(ownerId, name)
+        val key = RegistrationKey(ownerId, macroKey(name))
         if (source.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES) return false
         val ownerCount = macros.keys.count { it.ownerId == ownerId }
         if (ownerCount >= MAX_REGISTRATIONS && !macros.containsKey(key)) return false
@@ -163,22 +178,30 @@ class TavernScriptRegistry : MacroExpander {
     }
 
     fun removeMacro(name: String, ownerId: String? = null) = synchronized(registrationLock) {
-        val key = RegistrationKey(ownerId, name)
+        val key = RegistrationKey(ownerId, macroKey(name))
         macros.remove(key)
         loadedMacros.remove(key)
     }
 
-    fun listMacros(ownerId: String? = null): List<String> = macros.keys
-        .filter { ownerId == null || it.ownerId == null || it.ownerId == ownerId }
+    fun listMacros(ownerId: String? = null): List<String> = macros
+        .filterKeys { ownerId == null || it.ownerId == null || it.ownerId == ownerId }
+        .values
         .map { it.name }
         .distinct()
 
+    fun registerSendHook(source: String): Boolean {
+        if (source.toByteArray(Charsets.UTF_8).size > MAX_SOURCE_BYTES) return false
+        sendHook.set(MacroEntry("sendHook", source))
+        loadedMacros.remove(sendHookKey)
+        return true
+    }
+
     fun hasMacro(name: String, ownerId: String? = null): Boolean =
-        macros.containsKey(RegistrationKey(ownerId, name)) ||
-            (ownerId != null && macros.containsKey(RegistrationKey(null, name)))
+        macros.containsKey(RegistrationKey(ownerId, macroKey(name))) ||
+            (ownerId != null && macros.containsKey(RegistrationKey(null, macroKey(name))))
 
     fun hasOwnedMacro(name: String, ownerId: String): Boolean =
-        macros.containsKey(RegistrationKey(ownerId, name))
+        macros.containsKey(RegistrationKey(ownerId, macroKey(name)))
 
     fun registerSlashCommand(
         name: String,
@@ -216,23 +239,24 @@ class TavernScriptRegistry : MacroExpander {
         if (macros.size > MAX_REGISTRATIONS || slashCommands.size > MAX_REGISTRATIONS) return false
 
         if (ownerId != null) {
-            this.macros.keys.filter { it.ownerId == ownerId && it.name !in macros }.forEach {
+            this.macros.keys.filter { it.ownerId == ownerId && it.name !in macros.keys.map(::macroKey) }.forEach {
                 this.macros.remove(it)
                 loadedMacros.remove(it)
             }
-            this.slashCommands.keys.filter { it.ownerId == ownerId && it.name !in slashCommands }.forEach {
+            this.slashCommands.keys.filter { it.ownerId == ownerId && it.name !in slashCommands.keys }.forEach {
                 this.slashCommands.remove(it)
                 loadedSlashCommands.remove(it)
             }
         } else {
-            val projectedMacros = this.macros.keys.count { it.ownerId == null && it.name !in macros } + macros.size
-            val projectedSlash = this.slashCommands.keys.count { it.ownerId == null && it.name !in slashCommands } +
+            val foldedNew = macros.keys.map(::macroKey)
+            val projectedMacros = this.macros.keys.count { it.ownerId == null && it.name !in foldedNew } + macros.size
+            val projectedSlash = this.slashCommands.keys.count { it.ownerId == null && it.name !in slashCommands.keys } +
                 slashCommands.size
             if (projectedMacros > MAX_REGISTRATIONS || projectedSlash > MAX_REGISTRATIONS) return false
         }
 
         macros.forEach { (name, source) ->
-            val key = RegistrationKey(ownerId, name)
+            val key = RegistrationKey(ownerId, macroKey(name))
             this.macros[key] = MacroEntry(name, source)
             loadedMacros.remove(key)
         }
@@ -255,12 +279,12 @@ class TavernScriptRegistry : MacroExpander {
 
     fun snapshot(ownerId: String? = null): TavernScriptRegistrationSnapshot = synchronized(registrationLock) {
         TavernScriptRegistrationSnapshot(
-            macros = macros.filterKeys { it.ownerId == ownerId }.mapKeys { it.key.name }.mapValues { it.value.source },
-            slashCommands = slashCommands.filterKeys { it.ownerId == ownerId }.mapKeys { it.key.name }.mapValues {
-                SlashCommandRegistration(
-                    source = it.value.source,
-                    aliases = it.value.info.aliases,
-                    helpString = it.value.info.helpString,
+            macros = macros.filterKeys { it.ownerId == ownerId }.values.associate { it.name to it.source },
+            slashCommands = slashCommands.filterKeys { it.ownerId == ownerId }.values.associate {
+                it.info.name to SlashCommandRegistration(
+                    source = it.source,
+                    aliases = it.info.aliases,
+                    helpString = it.info.helpString,
                 )
             },
         )
@@ -296,10 +320,54 @@ class TavernScriptRegistry : MacroExpander {
      * 未注册/无可用引擎/执行失败 → null（调用方兜底原样）。
      */
     fun expandMacro(name: String, args: String, context: MacroExpandContext): String? {
-        val key = registrationKey(name, context.conversationId, macros) ?: return null
+        val key = registrationKey(macroKey(name), context.conversationId, macros) ?: return null
         val entry = macros[key] ?: return null
         if (!ensureMacroLoaded(key, entry.source)) return null
         return callGlobal(macroGlobalName(key), args)
+    }
+
+    fun expandSendHook(args: String): String? {
+        val entry = sendHook.get() ?: return null
+        if (!ensureMacroLoaded(sendHookKey, entry.source)) return null
+        return callGlobal(macroGlobalName(sendHookKey), args)
+    }
+
+    /**
+     * 异步宏展开（独立 runner 进程，宏死循环不会毒化共享 executor）。
+     * runner 不可用（无 Context / JVM 单测）时回退到共享 QuickJS 同步路径。
+     */
+    suspend fun expandMacrosAsync(text: String, context: MacroExpandContext): String {
+        if (runnerClient == null) return expandMacros(text, context)
+        val macroRegex = Regex("\\{\\{([A-Za-z_][A-Za-z0-9_]*)(?:::([^}]*))?\\}\\}")
+        var cursor = 0
+        val result = StringBuilder()
+        for (match in macroRegex.findAll(text)) {
+            result.append(text, cursor, match.range.first)
+            val key = registrationKey(macroKey(match.groupValues[1]), context.conversationId, macros)
+            val entry = key?.let(macros::get)
+            val expanded = entry?.let { runnerClient.invoke(it.source, match.groupValues[2], MACRO_EXECUTION_TIMEOUT_MS) }
+            result.append(expanded ?: match.value)
+            cursor = match.range.last + 1
+        }
+        return result.append(text, cursor, text.length).toString()
+    }
+
+    suspend fun expandSendHookAsync(args: String): String? {
+        val entry = sendHook.get() ?: return null
+        return if (runnerClient != null) {
+            runnerClient.invoke(entry.source, args, MACRO_EXECUTION_TIMEOUT_MS)
+        } else {
+            expandSendHook(args)
+        }
+    }
+
+    suspend fun executeSlashCommandAsync(name: String, args: String, context: MacroExpandContext): SlashCommandResult? {
+        val key = registrationKey(name, context.conversationId, slashCommands) ?: return null
+        val entry = slashCommands[key] ?: return null
+        if (runnerClient == null) return executeSlashCommand(name, args, context)
+        val result = runnerClient.invoke(entry.source, args, MACRO_EXECUTION_TIMEOUT_MS)
+            ?: return SlashCommandResult(error = "callback execution failed")
+        return SlashCommandResult(text = result)
     }
 
     fun executeSlashCommand(name: String, args: String, context: MacroExpandContext): SlashCommandResult? {
@@ -340,6 +408,7 @@ class TavernScriptRegistry : MacroExpander {
         slashCommands.clear()
         loadedMacros.clear()
         loadedSlashCommands.clear()
+        sendHook.set(null)
     }
 
     private fun <T> registrationKey(

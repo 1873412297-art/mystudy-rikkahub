@@ -218,6 +218,25 @@ class TavernPromptConsoleFlowTest {
         stateScope.cancel()
     }
 
+    @Test
+    fun missingConversationDoesNotKeepConsoleLoadingForever() = runBlocking {
+        val conversationId = Uuid.random()
+        val stateScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val vm = TavernPromptConsoleVM(
+            conversationId = conversationId.toString(),
+            observeTraces = { MutableStateFlow(emptyList()) },
+            loadConversation = { null },
+            settings = MutableStateFlow(Settings.dummy()),
+            clearTraces = {},
+            stateScope = stateScope,
+            sharingStarted = SharingStarted.Eagerly,
+        )
+
+        composeRule.waitUntil(5_000) { !vm.uiState.value.loading }
+        assertTrue(vm.uiState.value.traces.isEmpty())
+        stateScope.cancel()
+    }
+
     private suspend fun insertCompletedTrace(payload: PromptTracePayload, responseId: Uuid): Uuid {
         val traceId = Uuid.random()
         repository.insertPrepared(traceId, payload)

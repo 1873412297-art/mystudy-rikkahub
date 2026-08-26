@@ -378,6 +378,12 @@ private fun toTavernConversationParts(
         is UIMessagePart.ToolResult -> listOf(TavernConversationToolResultPart(
             displayPart.toolCallId, displayPart.toolName, displayPart.content, displayPart.arguments,
         ))
+        is UIMessagePart.ServerTool -> listOf(TavernConversationToolCallPart(
+            displayPart.toolCallId,
+            displayPart.toolName,
+            displayPart.input?.toString().orEmpty(),
+            if (displayPart.isFinished) ToolApprovalState.Auto else ToolApprovalState.Pending,
+        ))
         UIMessagePart.Search -> listOf(TavernConversationSearchPart)
         is UIMessagePart.StatusPlaceholder -> emptyList()
     }

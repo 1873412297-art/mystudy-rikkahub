@@ -111,6 +111,22 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                     )
                     if (runtimePermissions.allowScripts) {
                         permissionSwitch(
+                            title = "运行消息前端脚本",
+                            description = "允许消息气泡内嵌的前端脚本执行（变量、事件、消息读取等）。默认开启。",
+                            checked = runtimePermissions.allowMessageScripts,
+                            onCheckedChange = {
+                                updateRuntimePermissions(runtimePermissions.copy(allowMessageScripts = it))
+                            },
+                        )
+                        permissionSwitch(
+                            title = "运行常驻浏览器脚本",
+                            description = "允许全局/角色/助手作用域的常驻脚本在后台会话中运行。默认开启。",
+                            checked = runtimePermissions.allowBrowserScripts,
+                            onCheckedChange = {
+                                updateRuntimePermissions(runtimePermissions.copy(allowBrowserScripts = it))
+                            },
+                        )
+                        permissionSwitch(
                             title = "允许写入世界书",
                             description = "允许脚本增删改世界书条目。最大兼容模式默认开启。",
                             checked = runtimePermissions.allowWorldWrite,
@@ -164,6 +180,22 @@ fun SettingPreferencesRuntimePage(vm: SettingVM = koinViewModel()) {
                             checked = runtimePermissions.allowRequestHeaders,
                             onCheckedChange = {
                                 updateRuntimePermissions(runtimePermissions.copy(allowRequestHeaders = it))
+                            },
+                        )
+                        permissionSwitch(
+                            title = "允许发起生成",
+                            description = "允许脚本使用当前助手的聊天模型发起文本生成（会产生真实 API 调用与费用）。默认关闭。",
+                            checked = runtimePermissions.allowGeneration,
+                            onCheckedChange = {
+                                updateRuntimePermissions(runtimePermissions.copy(allowGeneration = it))
+                            },
+                        )
+                        permissionSwitch(
+                            title = "允许修改角色与预设",
+                            description = "允许脚本写入角色/预设作用域变量（会修改当前助手配置）。默认关闭。",
+                            checked = runtimePermissions.allowAssistantWrite,
+                            onCheckedChange = {
+                                updateRuntimePermissions(runtimePermissions.copy(allowAssistantWrite = it))
                             },
                         )
                     }

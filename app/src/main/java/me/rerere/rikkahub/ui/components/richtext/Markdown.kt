@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import me.rerere.rikkahub.data.model.shouldRenderFrontend
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastForEach
 import androidx.core.net.toUri
@@ -293,9 +294,28 @@ fun MarkdownBlock(
     /** 聊天列表传 null + PARENT，避免每个消息 WebView 截获纵向滚动。 */
     webViewMaxHeightDp: Int? = 600,
     webViewVerticalScrollMode: MarkdownWebViewVerticalScrollMode = MarkdownWebViewVerticalScrollMode.INTERNAL,
+    /** 从最新消息起算的楼层深度；用于酒馆助手“渲染深度”限制。 */
+    tavernMessageDepth: Int? = null,
 ) {
+    val renderSettings = LocalSettings.current.tavernHelperRenderSettings
+    val frontendRenderingEnabled = renderSettings.shouldRenderFrontend(tavernMessageDepth, streaming)
     val normalizedContent = remember(content) { normalizeRichTextContent(content) }
-    val segments = remember(normalizedContent) { parseRichTextSegments(normalizedContent) }
+    val rawSegments = remember(normalizedContent) { parseRichTextSegments(normalizedContent) }
+    val segments = remember(rawSegments, frontendRenderingEnabled) {
+        if (frontendRenderingEnabled) {
+            rawSegments
+        } else {
+            rawSegments.map { segment ->
+                if (segment.kind == RichTextSegment.Kind.FRONTEND_HTML ||
+                    segment.kind == RichTextSegment.Kind.HTML_DOCUMENT
+                ) {
+                    RichTextSegment(RichTextSegment.Kind.MARKDOWN, segment.raw.asHtmlCodeFence())
+                } else {
+                    segment
+                }
+            }
+        }
+    }
     if (segments.size > 1 || segments.firstOrNull()?.kind != RichTextSegment.Kind.MARKDOWN) {
         val rendererMode = remember(normalizedContent) { chooseRendererMode(normalizedContent) }
         if (ENABLE_STABLE_DOM_RENDERER && rendererMode == RichTextRendererMode.STABLE_DOM) {
@@ -373,6 +393,7 @@ fun MarkdownBlock(
                         tavernHeaderSource = tavernHeaderSource,
                         webViewMaxHeightDp = webViewMaxHeightDp,
                         webViewVerticalScrollMode = webViewVerticalScrollMode,
+                        tavernMessageDepth = tavernMessageDepth,
                     )
                     RichTextSegment.Kind.STATUS_BLOCK,
                     RichTextSegment.Kind.JSON_PATCH -> MarkdownWebView(
@@ -385,9 +406,11 @@ fun MarkdownBlock(
                         maxHeightDp = webViewMaxHeightDp,
                         verticalScrollMode = webViewVerticalScrollMode,
                     )
-                    RichTextSegment.Kind.HTML_DOCUMENT -> MarkdownWebView(
+                    RichTextSegment.Kind.HTML_DOCUMENT,
+                    RichTextSegment.Kind.FRONTEND_HTML -> MarkdownWebView(
                         content = segment.raw,
                         isRawHtml = true,
+                        applyTavernFrontendPolicy = true,
                         tavernConversationId = tavernConversationId,
                         tavernCurrentMessage = tavernCurrentMessage,
                         tavernContextSnapshot = tavernContextSnapshot,
@@ -402,11 +425,15 @@ fun MarkdownBlock(
         return
     }
 
-    var (data, setData) = remember(normalizedContent) { mutableStateOf(parseMarkdown(normalizedContent)) }
+    val displayContent = segments.singleOrNull()
+        ?.takeIf { it.kind == RichTextSegment.Kind.MARKDOWN }
+        ?.raw
+        ?: normalizedContent
+    var (data, setData) = remember(displayContent) { mutableStateOf(parseMarkdown(displayContent)) }
 
     // 监听内容变化，重新解析AST树
     // 这里在后台线程解析AST树, 防止频繁更新的时候掉帧
-    val updatedContent by rememberUpdatedState(content)
+    val updatedContent by rememberUpdatedState(displayContent)
     LaunchedEffect(Unit) {
         snapshotFlow { updatedContent }
             .distinctUntilChanged()
@@ -416,14 +443,14 @@ fun MarkdownBlock(
             .collect { setData(it) }
     }
 
-    val intent = analyzeRichTextContent(content)
-    val hasStatusBlock = intent.hasStatusBlock || intent.hasJsonPatch || intent.isRawHtmlDocument
+    val hasStatusBlock = segments.any { it.kind != RichTextSegment.Kind.MARKDOWN }
 
     if (hasStatusBlock) {
         MarkdownWebView(
-            content = normalizedContent,
+            content = displayContent,
             modifier = modifier,
-            isRawHtml = intent.isRawHtmlDocument,
+            isRawHtml = segments.any { it.kind == RichTextSegment.Kind.HTML_DOCUMENT },
+            applyTavernFrontendPolicy = segments.any { it.kind == RichTextSegment.Kind.HTML_DOCUMENT },
             tavernConversationId = tavernConversationId,
             tavernCurrentMessage = tavernCurrentMessage,
             tavernContextSnapshot = tavernContextSnapshot,
@@ -452,6 +479,12 @@ fun MarkdownBlock(
             }
         }
     }
+}
+
+private fun String.asHtmlCodeFence(): String {
+    val longestRun = Regex("`+").findAll(this).maxOfOrNull { it.value.length } ?: 0
+    val fence = "`".repeat(maxOf(3, longestRun + 1))
+    return "$fence html\n$this\n$fence"
 }
 
 // for debug

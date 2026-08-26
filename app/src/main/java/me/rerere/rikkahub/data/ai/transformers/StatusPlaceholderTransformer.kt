@@ -151,6 +151,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
 
         ensureScriptLoaded(ctx)
         val cardTemplate = extractTavernCardStatusTemplate(ctx.assistant.tavernCardJson)
+        val statusStore = ctx.statusVariableStore ?: store
 
         return messages.map { message ->
             if (message.role != MessageRole.ASSISTANT) {
@@ -207,8 +208,10 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                                 if (patchContent.isNotBlank()) {
                                     val ops = json.decodeFromString<List<JsonPatchOp>>(patchContent)
                                     if (ops.isNotEmpty()) {
-                                        store.applyPatch(convId, ops)
-                                        variablesChanged = true
+                                        if (ctx.allowStatusVariableMutations) {
+                                            statusStore.applyPatch(convId, ops)
+                                            variablesChanged = true
+                                        }
                                     }
                                 }
                             } catch (e: Exception) {
@@ -219,8 +222,10 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                         "barePatch" -> {
                             try {
                                 val ops = json.decodeFromString<List<JsonPatchOp>>(rawContent)
-                                store.applyPatch(convId, ops)
-                                variablesChanged = true
+                                if (ctx.allowStatusVariableMutations) {
+                                    statusStore.applyPatch(convId, ops)
+                                    variablesChanged = true
+                                }
                             } catch (e: Exception) {
                                 android.util.Log.e("StatusPlhd", "  ✗ Bare patch parse error", e)
                                 resultParts.add(part.copy(text = rawContent))
@@ -239,8 +244,10 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                                         path = "/_expression",
                                         value = kotlinx.serialization.json.JsonPrimitive(exprName)
                                     )
-                                    store.applyPatch(convId, listOf(exprOp))
-                                    variablesChanged = true
+                                    if (ctx.allowStatusVariableMutations) {
+                                        statusStore.applyPatch(convId, listOf(exprOp))
+                                        variablesChanged = true
+                                    }
                                     } catch (e: Exception) {
                                     e.printStackTrace()
                                 }
@@ -273,7 +280,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                         newParts.add(part.copy(text = before))
                     }
                     try {
-                        val variables = store.toJsObject(convId)
+                        val variables = statusStore.toJsObject(convId)
                         val metadata = buildMetadata(ctx, convId)
                         val charPages = buildCharacterPages(variables)
                         val worldHeader = if (charPages.isNotEmpty()) buildWorldHtml(variables) else ""
@@ -307,7 +314,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                 val rendered = partsWithPlaceholders.map { part ->
                     if (part is UIMessagePart.StatusPlaceholder) {
                         try {
-                            val variables = store.toJsObject(convId)
+                            val variables = statusStore.toJsObject(convId)
                             val metadata = buildMetadata(ctx, convId)
                             val charPages = buildCharacterPages(variables)
                             val worldHeader = if (charPages.isNotEmpty()) buildWorldHtml(variables) else ""
@@ -330,7 +337,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                 // Auto-insert StatusPlaceholder if variables were changed but no placeholder exists
                 if (!hasPlaceholders) {
                     try {
-                        val variables = store.toJsObject(convId)
+                        val variables = statusStore.toJsObject(convId)
                         val metadata = buildMetadata(ctx, convId)
                         val charPages = buildCharacterPages(variables)
                         val worldHeader = if (charPages.isNotEmpty()) buildWorldHtml(variables) else ""
@@ -360,6 +367,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
     ): List<UIMessage> {
         val convId = ctx.conversationId ?: return messages
         val cardTemplate = extractTavernCardStatusTemplate(ctx.assistant.tavernCardJson)
+        val statusStore = ctx.statusVariableStore ?: store
 
         // Only re-render the LAST message's StatusPlaceholder with the final state.
         // Older messages keep their snapshot-of-that-moment HTML — otherwise
@@ -374,7 +382,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
                             return@map part.copy(htmlContent = cardTemplate, characterPages = emptyList())
                         }
                         try {
-                            val variables = store.toJsObject(convId)
+                            val variables = statusStore.toJsObject(convId)
                             val metadata = buildMetadata(ctx, convId)
                             val html = renderer.render(variables, metadata)
                             part.copy(htmlContent = html.ifBlank { part.htmlContent })
@@ -462,7 +470,7 @@ object StatusPlaceholderTransformer : OutputMessageTransformer, KoinComponent {
         metadata["char_name"] = ctx.assistant.name
         metadata["user_name"] = ctx.settings.displaySetting.userNickname.ifBlank { "User" }
         // Get current expression from variable store
-        val vars = store.getValue(convId)
+        val vars = (ctx.statusVariableStore ?: store).getValue(convId)
         vars["_expression"]?.let { expr ->
             if (expr is kotlinx.serialization.json.JsonPrimitive && expr.isString) {
                 metadata["expression"] = expr.content

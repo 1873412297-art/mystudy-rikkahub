@@ -1,9 +1,13 @@
 package me.rerere.rikkahub.service
 
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -14,23 +18,34 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import me.rerere.ai.core.ReasoningLevel
+import me.rerere.ai.core.MessageRole
+import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.CustomBody
 import me.rerere.ai.provider.CustomHeader
 import me.rerere.ai.provider.Model
+import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AuthorNote
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.datastore.DisplaySetting
 import me.rerere.rikkahub.data.datastore.Settings
-import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.ai.status.StatusVariableStore
+import me.rerere.rikkahub.data.ai.status.JsonPatchOp
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.Lorebook
 import me.rerere.rikkahub.data.model.PromptInjection
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
+import me.rerere.rikkahub.data.model.toMessageNode
+import me.rerere.rikkahub.data.repository.runCommittedConversationCleanup
 import me.rerere.rikkahub.service.group.GroupDirectorCommand
 import me.rerere.rikkahub.service.group.GroupDirectorCommandContext
 import me.rerere.rikkahub.service.group.GroupDirectorEngine
@@ -39,7 +54,11 @@ import me.rerere.rikkahub.service.group.GroupPlaybackState
 import me.rerere.rikkahub.service.group.GroupRuntimeState
 import me.rerere.rikkahub.service.tavern.TavernGreetingMutationJournal
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.uuid.Uuid
@@ -127,6 +146,816 @@ class ChatServiceTest {
         assertEquals("closed", rolledBack.lorebooks.single().entries.single().content)
     }
 
+    @Test
+    fun `ui field merge preserves runtime messages while applying requested conversation fields`() {
+        val conversationId = Uuid.random()
+        val runtime = UIMessage.assistant("runtime")
+        val current = Conversation.ofId(conversationId, messages = listOf(runtime.toMessageNode()))
+        val requested = current.copy(
+            messageNodes = emptyList(),
+            customSystemPrompt = "prompt",
+            authorNote = AuthorNote(enabled = true, content = "note"),
+            workspaceCwd = "C:/workspace",
+        )
+
+        val updated = mergeConversationUiFields(current, requested)
+
+        assertEquals(listOf(runtime.id), updated.currentMessages.map { it.id })
+        assertEquals("prompt", updated.customSystemPrompt)
+        assertEquals("note", updated.authorNote?.content)
+        assertEquals("C:/workspace", updated.workspaceCwd)
+    }
+
+    @Test
+    fun `compressed history keeps runtime nodes appended after the compression baseline`() {
+        val conversationId = Uuid.random()
+        val old = UIMessage.user("old")
+        val kept = UIMessage.assistant("kept")
+        val runtime = UIMessage.user("runtime")
+        val baseline = Conversation.ofId(
+            conversationId,
+            messages = listOf(old.toMessageNode(), kept.toMessageNode()),
+        )
+        val latest = baseline.copy(messageNodes = baseline.messageNodes + runtime.toMessageNode())
+
+        val updated = applyCompressedConversation(
+            baseline = baseline,
+            latest = latest,
+            compressedSummaries = listOf("summary"),
+            keepRecentMessages = 1,
+        )
+
+        assertEquals(listOf("summary", "kept", "runtime"), updated.currentMessages.map { it.toText() })
+    }
+
+    @Test
+    fun `stale initialization token cannot install over a newer live mutation`() {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(conversationId, Conversation.ofId(conversationId), scope, onIdle = {})
+        try {
+            val token = session.beginInitialization()
+            session.recordConversationMutation()
+
+            assertFalse(session.canInstallInitialization(token))
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `stale initialization marks the same session ready without replacing its live mutation`() {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(conversationId, Conversation.ofId(conversationId), scope, onIdle = {})
+        try {
+            val token = session.beginInitialization()
+            session.recordConversationMutation()
+
+            assertEquals(
+                InitializationInstallAction.MARK_READY,
+                initializationInstallAction(session, token, sessionIsCurrent = true, isReady = false),
+            )
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `superseded initializer does not mark the session ready`() {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(conversationId, Conversation.ofId(conversationId), scope, onIdle = {})
+        try {
+            val firstInitializer = session.beginInitialization()
+            session.beginInitialization()
+
+            assertEquals(
+                InitializationInstallAction.SKIP,
+                initializationInstallAction(session, firstInitializer, sessionIsCurrent = true, isReady = false),
+            )
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `superseded initializer does not overwrite variables installed by the winning loader`() {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(conversationId, Conversation.ofId(conversationId), scope, onIdle = {})
+        val variables = StatusVariableStore()
+        try {
+            val firstLoader = session.beginInitialization()
+            val secondLoader = session.beginInitialization()
+            val oldVariables = buildJsonObject { put("source", "first") }
+            val currentVariables = buildJsonObject { put("source", "second") }
+
+            applyInitializedStatusVariables(
+                action = initializationInstallAction(session, secondLoader, sessionIsCurrent = true, isReady = false),
+                store = variables,
+                conversationId = conversationId,
+                variables = currentVariables,
+            )
+            applyInitializedStatusVariables(
+                action = initializationInstallAction(session, firstLoader, sessionIsCurrent = true, isReady = false),
+                store = variables,
+                conversationId = conversationId,
+                variables = oldVariables,
+            )
+
+            assertEquals(currentVariables, variables.getValue(conversationId))
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `same initializer mutation marks ready without overwriting live variables`() {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(conversationId, Conversation.ofId(conversationId), scope, onIdle = {})
+        val variables = StatusVariableStore()
+        try {
+            val loader = session.beginInitialization()
+            val liveVariables = buildJsonObject { put("source", "live") }
+            variables.set(conversationId, liveVariables)
+            session.recordConversationMutation()
+
+            applyInitializedStatusVariables(
+                action = initializationInstallAction(session, loader, sessionIsCurrent = true, isReady = false),
+                store = variables,
+                conversationId = conversationId,
+                variables = buildJsonObject { put("source", "stored") },
+            )
+
+            assertEquals(liveVariables, variables.getValue(conversationId))
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `initialization candidate renders variables in a temporary store before publish`() = runBlocking {
+        val conversationId = Uuid.random()
+        val globalStore = StatusVariableStore()
+        val initialVariables = buildJsonObject { put("hp", 10) }
+        globalStore.init(conversationId, initialVariables)
+
+        val candidate = renderInitializationStatusCandidate(conversationId, initialVariables) { temporaryStore ->
+            temporaryStore.applyPatch(
+                conversationId,
+                listOf(JsonPatchOp(op = "replace", path = "/hp", value = JsonPrimitive(20))),
+            )
+            UIMessage.assistant("<StatusPlaceHolderImpl/>")
+        }
+
+        assertEquals("<StatusPlaceHolderImpl/>", candidate.value.toText())
+        assertEquals("20", candidate.statusVariables["hp"]!!.jsonPrimitive.content)
+        assertEquals(initialVariables, globalStore.getValue(conversationId))
+
+        applyInitializedStatusVariables(
+            action = InitializationInstallAction.INSTALL,
+            store = globalStore,
+            conversationId = conversationId,
+            variables = candidate.statusVariables,
+        )
+
+        assertEquals(candidate.statusVariables, globalStore.getValue(conversationId))
+    }
+
+    @Test
+    fun `assistant conversation deletion uses a stable session lock order`() {
+        val firstId = Uuid.parse("00000000-0000-4000-8000-000000000003")
+        val secondId = Uuid.parse("00000000-0000-4000-8000-000000000001")
+        val thirdId = Uuid.parse("00000000-0000-4000-8000-000000000002")
+
+        val ordered = orderedAssistantConversationDeletionIds(listOf(firstId, secondId, thirdId))
+
+        assertEquals(listOf(secondId, thirdId, firstId), ordered)
+    }
+
+    @Test
+    fun `assistant deletion attempts every ordered conversation after one deletion fails`() = runBlocking {
+        val firstId = Uuid.parse("00000000-0000-4000-8000-000000000001")
+        val secondId = Uuid.parse("00000000-0000-4000-8000-000000000002")
+        val attempted = mutableListOf<Uuid>()
+
+        val result = deleteAssistantConversationIds(
+            conversationIds = listOf(firstId, secondId),
+            delete = { conversationId ->
+                attempted += conversationId
+                conversationId != firstId
+            },
+        )
+
+        assertFalse(result.succeeded)
+        assertEquals(listOf(firstId, secondId), attempted)
+    }
+
+    @Test
+    fun `assistant deletion records a thrown failure and continues later conversations`() = runBlocking {
+        val firstId = Uuid.parse("00000000-0000-4000-8000-000000000001")
+        val secondId = Uuid.parse("00000000-0000-4000-8000-000000000002")
+        val attempted = mutableListOf<Uuid>()
+
+        val result = deleteAssistantConversationIds(
+            conversationIds = listOf(firstId, secondId),
+            delete = { conversationId ->
+                attempted += conversationId
+                if (conversationId == firstId) error("delete failed")
+                true
+            },
+        )
+
+        assertEquals(listOf(firstId, secondId), attempted)
+        assertEquals(setOf(firstId), result.failedConversationIds)
+        assertTrue(result.errors.getValue(firstId).message!!.contains("delete failed"))
+    }
+
+    @Test
+    fun `assistant deletion rethrows cancellation before later conversations`() = runBlocking {
+        val firstId = Uuid.parse("00000000-0000-4000-8000-000000000001")
+        val secondId = Uuid.parse("00000000-0000-4000-8000-000000000002")
+        val attempted = mutableListOf<Uuid>()
+        val cancellation = CancellationException("cancel assistant deletion")
+
+        try {
+            deleteAssistantConversationIds(listOf(firstId, secondId)) { conversationId ->
+                attempted += conversationId
+                if (conversationId == firstId) throw cancellation
+                true
+            }
+            fail("CancellationException should escape assistant deletion")
+        } catch (actual: CancellationException) {
+            assertSame(cancellation, actual)
+        }
+
+        assertEquals(listOf(firstId), attempted)
+    }
+
+    @Test
+    fun `assistant deletion observes cancellation after a non cancellable first commit`() = runBlocking {
+        val firstId = Uuid.parse("00000000-0000-4000-8000-000000000001")
+        val secondId = Uuid.parse("00000000-0000-4000-8000-000000000002")
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val firstCommitStarted = CompletableDeferred<Unit>()
+        val finishFirstCommit = CompletableDeferred<Unit>()
+        val attempted = mutableListOf<Uuid>()
+        try {
+            val deletion = scope.async {
+                deleteAssistantConversationIds(listOf(firstId, secondId)) { conversationId ->
+                    attempted += conversationId
+                    if (conversationId == firstId) {
+                        withContext(NonCancellable) {
+                            firstCommitStarted.complete(Unit)
+                            finishFirstCommit.await()
+                        }
+                    }
+                    true
+                }
+            }
+            firstCommitStarted.await()
+            deletion.cancel()
+            finishFirstCommit.complete(Unit)
+
+            try {
+                deletion.await()
+                fail("cancellation should stop before the second conversation")
+            } catch (_: CancellationException) {
+                // Expected: the first committed, then the loop sees cancellation before the next id.
+            }
+            assertEquals(listOf(firstId), attempted)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `assistant deletion treats a moved conversation as a safe skip`() {
+        assertTrue(isAssistantBatchDeleteSuccess(ConversationDeleteResult.MOVED))
+        assertTrue(isAssistantBatchDeleteSuccess(ConversationDeleteResult.DELETED))
+        assertFalse(isAssistantBatchDeleteSuccess(ConversationDeleteResult.NOT_FOUND))
+    }
+
+    @Test
+    fun `assistant deletion preserves a conversation moved after id collection`() = runBlocking {
+        val conversationId = Uuid.random()
+        val assistantA = Uuid.random()
+        val assistantB = Uuid.random()
+        var persisted = Conversation.ofId(conversationId).copy(assistantId = assistantA)
+        val collectedIds = listOf(conversationId)
+
+        persisted = persisted.copy(assistantId = assistantB)
+        val result = deleteConversationWithExpectedAssistant(
+            expectedAssistantId = assistantA,
+            load = { persisted },
+            delete = { candidate ->
+                if (candidate.assistantId != assistantA || persisted.assistantId != assistantA) {
+                    false
+                } else {
+                    persisted = candidate
+                    true
+                }
+            },
+        )
+
+        assertEquals(listOf(conversationId), collectedIds)
+        assertEquals(ConversationDeleteResult.MOVED, result)
+        assertEquals(assistantB, persisted.assistantId)
+    }
+
+    @Test
+    fun `assistant deletion gate allows moving out and refuses moving in`() {
+        val deletingAssistant = Uuid.random()
+        val otherAssistant = Uuid.random()
+        val deleting = setOf(deletingAssistant)
+
+        assertTrue(canMoveConversationToAssistant(otherAssistant, deleting))
+        assertFalse(canMoveConversationToAssistant(deletingAssistant, deleting))
+    }
+
+    @Test
+    fun `assistant deletion keeps its gate through final assistant cleanup`() = runBlocking {
+        val assistantId = Uuid.random()
+        val deleting = linkedSetOf<Uuid>()
+        var finalized = false
+
+        val result = runAssistantDeletionGate(
+            assistantId = assistantId,
+            deletingAssistantIds = deleting,
+            deleteConversations = {
+                assertTrue(assistantId in deleting)
+                true
+            },
+            finalizeAssistantDeletion = {
+                assertTrue(assistantId in deleting)
+                finalized = true
+            },
+        )
+
+        assertTrue(result.succeeded)
+        assertTrue(finalized)
+        assertFalse(assistantId in deleting)
+    }
+
+    @Test
+    fun `assistant deletion releases its gate after final cleanup failure`() = runBlocking {
+        val assistantId = Uuid.random()
+        val deleting = linkedSetOf<Uuid>()
+
+        val result = runAssistantDeletionGate(
+            assistantId = assistantId,
+            deletingAssistantIds = deleting,
+            deleteConversations = { true },
+            finalizeAssistantDeletion = { error("settings deletion failed") },
+        )
+
+        assertFalse(result.succeeded)
+        assertTrue(result.finalizeError!!.message!!.contains("settings deletion failed"))
+        assertFalse(assistantId in deleting)
+    }
+
+    @Test
+    fun `assistant deletion clears its gate when cancelled finalizer waits for the gate mutex`() = runBlocking {
+        val assistantId = Uuid.random()
+        val deleting = linkedSetOf<Uuid>()
+        val gateMutex = Mutex()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val finalizerStarted = CompletableDeferred<Unit>()
+        val finishFinalizer = CompletableDeferred<Unit>()
+        try {
+            val deletion = scope.async {
+                runAssistantDeletionGate(
+                    assistantId = assistantId,
+                    deletingAssistantIds = deleting,
+                    gateMutex = gateMutex,
+                    deleteConversations = { true },
+                    finalizeAssistantDeletion = {
+                        withContext(NonCancellable) {
+                            finalizerStarted.complete(Unit)
+                            finishFinalizer.await()
+                        }
+                    },
+                )
+            }
+            finalizerStarted.await()
+            gateMutex.lock()
+            deletion.cancel()
+            finishFinalizer.complete(Unit)
+            assertTrue(assistantId in deleting)
+            gateMutex.unlock()
+
+            withTimeout(500) {
+                while (assistantId in deleting) delay(1)
+            }
+            assertFalse(assistantId in deleting)
+            try {
+                deletion.await()
+                fail("cancellation should propagate after the gate is released")
+            } catch (_: CancellationException) {
+                // Expected.
+            }
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `restore rejects a deleting or missing assistant`() {
+        val assistantId = Uuid.random()
+
+        assertFalse(canRestoreConversation(assistantExists = false, assistantIsDeleting = false))
+        assertFalse(canRestoreConversation(assistantExists = true, assistantIsDeleting = true))
+        assertTrue(canRestoreConversation(assistantExists = true, assistantIsDeleting = false))
+    }
+
+    @Test
+    fun `committed deletion keeps later cleanup steps after FTS failure`() = runBlocking {
+        var filesCleaned = false
+        var statusCleared = false
+
+        val failures = runCommittedConversationCleanup(
+            deleteFts = { error("fts unavailable") },
+            deleteFiles = { filesCleaned = true },
+            clearStatus = { statusCleared = true },
+        )
+
+        assertEquals(1, failures.size)
+        assertTrue(filesCleaned)
+        assertTrue(statusCleared)
+    }
+
+    @Test
+    fun `initialization publishes variables only after persistence and live publish succeed`() = runBlocking {
+        val conversationId = Uuid.random()
+        val store = StatusVariableStore()
+        val before = buildJsonObject { put("hp", 10) }
+        val candidate = buildJsonObject { put("hp", 20) }
+        store.init(conversationId, before)
+
+        try {
+            persistInitializationThenPublishStatusVariables(
+                persistAndPublish = { error("disk unavailable") },
+                publishStatusVariables = { store.init(conversationId, candidate) },
+            )
+            fail("persistence failure should stop initialization")
+        } catch (expected: IllegalStateException) {
+            assertTrue(expected.message!!.contains("disk unavailable"))
+        }
+
+        assertEquals(before, store.getValue(conversationId))
+    }
+
+    @Test
+    fun `initialization does not publish variables when persistence declines installation`() = runBlocking {
+        var published = false
+
+        val installed = persistInitializationThenPublishStatusVariables(
+            persistAndPublish = { false },
+            publishStatusVariables = { published = true },
+        )
+
+        assertFalse(installed)
+        assertFalse(published)
+    }
+
+    @Test
+    fun `deleted non-ready conversation cannot be recreated by a normal save`() {
+        assertFalse(canPersistConversation(exists = false, isReady = false, allowCreate = false))
+        assertTrue(canPersistConversation(exists = false, isReady = true, allowCreate = false))
+        assertTrue(canPersistConversation(exists = false, isReady = false, allowCreate = true))
+    }
+
+    @Test
+    fun `runtime mutation may persist an initialized new conversation but not recreate a deleted one`() {
+        assertTrue(canStartTavernRuntimeMutation(exists = false, isInitializedNewConversation = true))
+        assertTrue(canStartTavernRuntimeMutation(exists = true, isInitializedNewConversation = false))
+        assertFalse(canStartTavernRuntimeMutation(exists = false, isInitializedNewConversation = false))
+    }
+
+    @Test
+    fun `moderator snapshot retains persisted queue order when assistant order differs`() {
+        assertEquals(
+            listOf(groupMemberB, groupMemberA),
+            orderedModeratorEligibleMemberIds(
+                persistedQueue = listOf(groupMemberB, groupMemberA),
+                eligibleMemberIds = listOf(groupMemberA, groupMemberB),
+            ),
+        )
+    }
+
+    @Test
+    fun `conversation mutation lock serializes normal and runtime writes`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(scope)
+        val active = AtomicInteger()
+        val maximumActive = AtomicInteger()
+
+        try {
+            val normalSave = async(Dispatchers.Default) {
+                session.withConversationMutationLock {
+                    val current = active.incrementAndGet()
+                    maximumActive.accumulateAndGet(current, ::maxOf)
+                    delay(10)
+                    active.decrementAndGet()
+                }
+            }
+            val runtimeCreate = async(Dispatchers.Default) {
+                session.withRuntimeMessageLock {
+                    val current = active.incrementAndGet()
+                    maximumActive.accumulateAndGet(current, ::maxOf)
+                    delay(10)
+                    active.decrementAndGet()
+                }
+            }
+            awaitAll(normalSave, runtimeCreate)
+        } finally {
+            scope.cancel()
+        }
+
+        assertEquals(1, maximumActive.get())
+    }
+
+    @Test
+    fun `cleanup waits for an admitted runtime mutation then rejects a late mutation`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = createGroupSession(scope)
+        val entered = CompletableDeferred<Unit>()
+        val allowPersist = CompletableDeferred<Unit>()
+        try {
+            val runtimeMutation = async(Dispatchers.Default) {
+                session.withRuntimeMessageLock {
+                    entered.complete(Unit)
+                    allowPersist.await()
+                }
+            }
+            entered.await()
+            val cleanup = async(Dispatchers.Default) { session.closeForCleanup() }
+            assertNull(withTimeoutOrNull(50) { cleanup.await(); true })
+
+            allowPersist.complete(Unit)
+            runtimeMutation.await()
+            cleanup.await()
+
+            try {
+                session.withRuntimeMessageLock { fail("closed session accepted a runtime mutation") }
+            } catch (_: IllegalStateException) {
+                // Expected: cleanup closed the session before the second mutation could enter.
+            }
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `runtime lifecycle lets admitted persistence finish before cleanup rejects late mutation`() = runBlocking {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(conversationId, Conversation.ofId(conversationId), scope, onIdle = {})
+        val lifecycle = TavernRuntimeMutationLifecycle()
+        val mutationLock = Mutex()
+        val enteredMutation = CompletableDeferred<Unit>()
+        val releaseMutation = CompletableDeferred<Unit>()
+        val admissionsClosed = CompletableDeferred<Unit>()
+        val persisted = mutableListOf<String>()
+        val events = mutableListOf<String>()
+        var ready = true
+        try {
+            val admitted = async(Dispatchers.Default) {
+                lifecycle.mutate(
+                    canMutate = { ready },
+                    acquireSession = {},
+                    releaseSession = {},
+                    withSessionMutationLock = { block -> mutationLock.withLock { block() } },
+                ) {
+                    enteredMutation.complete(Unit)
+                    releaseMutation.await()
+                    persisted += "saved"
+                    events += "MESSAGE_SENT"
+                }
+            }
+            enteredMutation.await()
+            val cleanup = async(Dispatchers.Default) {
+                lifecycle.closeAdmissionsAndAwait { admissionsClosed.complete(Unit) }
+                ready = false
+                session.closeForCleanup()
+            }
+            admissionsClosed.await()
+            val lateError = async(Dispatchers.Default) {
+                try {
+                    lifecycle.mutate(
+                        canMutate = { ready },
+                        acquireSession = {},
+                        releaseSession = {},
+                        withSessionMutationLock = { block -> mutationLock.withLock { block() } },
+                    ) { fail("late mutation entered") }
+                    null
+                } catch (error: IllegalStateException) {
+                    error
+                }
+            }.await()
+
+            assertEquals("CONVERSATION_NOT_READY", lateError?.message)
+            assertNull(withTimeoutOrNull(50) { cleanup.await(); true })
+            releaseMutation.complete(Unit)
+            admitted.await()
+            cleanup.await()
+
+            assertEquals(listOf("saved"), persisted)
+            assertEquals(listOf("MESSAGE_SENT"), events)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `cancelled runtime mutation releases its admission so cleanup can drain`() = runBlocking {
+        val lifecycle = TavernRuntimeMutationLifecycle()
+        val mutationLock = Mutex()
+        val entered = CompletableDeferred<Unit>()
+        var references = 0
+        val mutation = async(Dispatchers.Default) {
+            lifecycle.mutate(
+                canMutate = { true },
+                acquireSession = { references++ },
+                releaseSession = { references-- },
+                withSessionMutationLock = { block -> mutationLock.withLock { block() } },
+            ) {
+                entered.complete(Unit)
+                awaitCancellation()
+            }
+        }
+
+        entered.await()
+        mutation.cancelAndJoin()
+
+        withTimeout(500) { lifecycle.closeAdmissionsAndAwait() }
+        assertEquals(0, references)
+    }
+
+    @Test
+    fun `normal full save and runtime create cannot overwrite each other`() = runBlocking {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(
+            id = conversationId,
+            initial = Conversation.ofId(conversationId),
+            scope = scope,
+            onIdle = {},
+        )
+        val runtimeEnteredPersist = CompletableDeferred<Unit>()
+        val allowRuntimePersist = CompletableDeferred<Unit>()
+        val normalRead = CompletableDeferred<Conversation>()
+        val allowNormalSave = CompletableDeferred<Unit>()
+        val store = TavernRuntimeMessageMutationStore(object : TavernRuntimeMessagePersistenceAdapter {
+            override fun isReady(conversationId: Uuid): Boolean = true
+
+            override suspend fun <T> mutate(conversationId: Uuid, block: suspend () -> T): T =
+                session.withRuntimeMessageLock(block)
+
+            override fun currentConversation(conversationId: Uuid): Conversation = session.state.value
+
+            override suspend fun persist(conversationId: Uuid, conversation: Conversation): Boolean {
+                runtimeEnteredPersist.complete(Unit)
+                allowRuntimePersist.await()
+                session.state.value = conversation
+                return true
+            }
+
+            override suspend fun persistAfterMessageRemoval(
+                conversationId: Uuid,
+                before: Conversation,
+                after: Conversation,
+            ): Boolean = persist(conversationId, after)
+
+            override fun emit(event: TavernRuntimeMessageMutationEvent) = Unit
+        })
+
+        try {
+            val runtimeCreate = async(Dispatchers.Default) {
+                store.create(conversationId, MessageRole.USER, "runtime")
+            }
+            runtimeEnteredPersist.await()
+            val normalSave = async(Dispatchers.Default) {
+                session.withConversationMutationLock {
+                    val snapshot = session.state.value
+                    normalRead.complete(snapshot)
+                    allowNormalSave.await()
+                    session.state.value = snapshot.copy(
+                        messageNodes = snapshot.messageNodes + UIMessage.user("normal").toMessageNode(),
+                    )
+                }
+            }
+
+            assertNull(withTimeoutOrNull(250) { normalRead.await() })
+            allowRuntimePersist.complete(Unit)
+            runtimeCreate.await()
+            normalRead.await()
+            allowNormalSave.complete(Unit)
+            normalSave.await()
+        } finally {
+            scope.cancel()
+        }
+
+        assertEquals(setOf("runtime", "normal"), session.state.value.currentMessages.map { it.toText() }.toSet())
+    }
+
+    @Test
+    fun `stream chunk merge and runtime mutation share one conversation lock`() = runBlocking {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(
+            id = conversationId,
+            initial = Conversation.ofId(conversationId),
+            scope = scope,
+            onIdle = {},
+        )
+        val streamRead = CompletableDeferred<Unit>()
+        val allowStreamCommit = CompletableDeferred<Unit>()
+        val runtimeRead = CompletableDeferred<Conversation>()
+
+        try {
+            val streamChunk = async(Dispatchers.Default) {
+                session.withGroupDirectorLock {
+                    session.withConversationMutationLock {
+                        val snapshot = session.state.value
+                        streamRead.complete(Unit)
+                        allowStreamCommit.await()
+                        session.state.value = snapshot.copy(
+                            messageNodes = snapshot.messageNodes + UIMessage.assistant("chunk").toMessageNode(),
+                        )
+                    }
+                }
+            }
+            streamRead.await()
+            val runtimeMutation = async(Dispatchers.Default) {
+                session.withRuntimeMessageLock {
+                    val snapshot = session.state.value
+                    runtimeRead.complete(snapshot)
+                    session.state.value = snapshot.copy(
+                        messageNodes = snapshot.messageNodes + UIMessage.user("runtime").toMessageNode(),
+                    )
+                }
+            }
+
+            assertNull(withTimeoutOrNull(250) { runtimeRead.await() })
+            allowStreamCommit.complete(Unit)
+            streamChunk.await()
+            runtimeRead.await()
+            runtimeMutation.await()
+        } finally {
+            scope.cancel()
+        }
+
+        assertEquals(setOf("chunk", "runtime"), session.state.value.currentMessages.map { it.toText() }.toSet())
+    }
+
+    @Test
+    fun `production mutateConversation waits before deriving a tool approval update`() = runBlocking {
+        val conversationId = Uuid.random()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val session = ConversationSession(
+            id = conversationId,
+            initial = Conversation.ofId(conversationId),
+            scope = scope,
+            onIdle = {},
+        )
+        val runtimeEntered = CompletableDeferred<Unit>()
+        val allowRuntimeCommit = CompletableDeferred<Unit>()
+        val approvalRead = CompletableDeferred<Conversation>()
+
+        try {
+            val runtimeCreate = async(Dispatchers.Default) {
+                session.withRuntimeMessageLock {
+                    runtimeEntered.complete(Unit)
+                    allowRuntimeCommit.await()
+                    session.state.value = session.state.value.copy(
+                        messageNodes = session.state.value.messageNodes + UIMessage.user("runtime").toMessageNode(),
+                    )
+                }
+            }
+            runtimeEntered.await()
+            val toolApproval = async(Dispatchers.Default) {
+                mutateConversation(session) { current ->
+                    approvalRead.complete(current)
+                    session.state.value = current.copy(
+                        messageNodes = current.messageNodes + UIMessage.assistant("approved").toMessageNode(),
+                    )
+                }
+            }
+
+            assertNull(withTimeoutOrNull(250) { approvalRead.await() })
+            allowRuntimeCommit.complete(Unit)
+            runtimeCreate.await()
+            approvalRead.await()
+            toolApproval.await()
+        } finally {
+            scope.cancel()
+        }
+
+        assertEquals(setOf("runtime", "approved"), session.state.value.currentMessages.map { it.toText() }.toSet())
+    }
 
     @Test
     fun `session director lock serializes state commits`() = runBlocking {
@@ -801,6 +1630,47 @@ class ChatServiceTest {
         assertEquals(ReasoningLevel.AUTO, params.reasoningLevel)
         assertEquals(headers, params.customHeaders)
         assertEquals(bodies, params.customBody)
+    }
+
+    @Test
+    fun `external web search is disabled when assistant preference is disabled`() {
+        val assistant = Assistant(enableWebSearch = false)
+        val model = Model()
+
+        assertFalse(shouldUseExternalWebSearch(assistant, model))
+    }
+
+    @Test
+    fun `external web search is enabled when assistant preference is enabled`() {
+        val assistant = Assistant(enableWebSearch = true)
+        val model = Model()
+
+        assertTrue(shouldUseExternalWebSearch(assistant, model))
+    }
+
+    @Test
+    fun `built-in search suppresses enabled external web search`() {
+        val assistant = Assistant(enableWebSearch = true)
+        val model = Model(tools = setOf(BuiltInTools.Search))
+
+        assertFalse(shouldUseExternalWebSearch(assistant, model))
+    }
+
+    @Test
+    fun `built-in search remains exclusive when external web search is disabled`() {
+        val assistant = Assistant(enableWebSearch = false)
+        val model = Model(tools = setOf(BuiltInTools.Search))
+
+        assertFalse(shouldUseExternalWebSearch(assistant, model))
+    }
+
+    @Test
+    fun `unrelated built-in tools do not suppress external web search`() {
+        val assistant = Assistant(enableWebSearch = true)
+        val model = Model(tools = setOf(BuiltInTools.UrlContext))
+
+        assertTrue(shouldUseExternalWebSearch(assistant, model))
+
     }
 
     @Test

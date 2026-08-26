@@ -54,6 +54,7 @@ internal data class RichTextSegment(
         JSON_PATCH,
         JSON_PATCH_DIAGNOSTIC,
         HTML_DOCUMENT,
+        FRONTEND_HTML,
     }
 }
 
@@ -83,7 +84,9 @@ internal fun shouldUseWebViewRendering(content: String): Boolean {
 internal fun chooseRendererMode(content: String): RichTextRendererMode {
     val segments = parseRichTextSegments(content)
     return when {
-        segments.any { it.kind == RichTextSegment.Kind.HTML_DOCUMENT } -> RichTextRendererMode.WEBVIEW_SEGMENTS
+        segments.any {
+            it.kind == RichTextSegment.Kind.HTML_DOCUMENT || it.kind == RichTextSegment.Kind.FRONTEND_HTML
+        } -> RichTextRendererMode.WEBVIEW_SEGMENTS
         segments.any { it.kind != RichTextSegment.Kind.MARKDOWN } -> RichTextRendererMode.STABLE_DOM
         else -> RichTextRendererMode.NATIVE_MARKDOWN
     }
@@ -116,10 +119,28 @@ internal fun parseRichTextSegments(content: String): List<RichTextSegment> {
     val segments = mutableListOf<RichTextSegment>()
     var cursor = 0
 
+    fun addPlainMarkdown(raw: String) {
+        if (raw.isNotBlank()) {
+            segments += RichTextSegment(RichTextSegment.Kind.MARKDOWN, raw)
+        }
+    }
+
     fun addMarkdown(raw: String) {
         val unwrapped = unwrapMainTextBlocks(raw)
-        if (unwrapped.isNotBlank()) {
-            segments += RichTextSegment(RichTextSegment.Kind.MARKDOWN, unwrapped)
+        val frontendSegments = TavernFrontendBlockExtractor.extract(unwrapped)
+        if (frontendSegments.none { it is TavernFrontendSegment.Frontend }) {
+            addPlainMarkdown(unwrapped)
+            return
+        }
+        frontendSegments.forEach { segment ->
+            when (segment) {
+                is TavernFrontendSegment.Text -> addPlainMarkdown(segment.content)
+                is TavernFrontendSegment.Code -> addPlainMarkdown(segment.toMarkdownFence())
+                is TavernFrontendSegment.Frontend -> segments += RichTextSegment(
+                    kind = RichTextSegment.Kind.FRONTEND_HTML,
+                    raw = segment.html,
+                )
+            }
         }
     }
 
@@ -162,6 +183,13 @@ internal fun parseRichTextSegments(content: String): List<RichTextSegment> {
     return segments.ifEmpty {
         listOf(RichTextSegment(RichTextSegment.Kind.MARKDOWN, unwrapMainTextBlocks(normalized)))
     }
+}
+
+private fun TavernFrontendSegment.Code.toMarkdownFence(): String {
+    val longestRun = Regex("`+").findAll(code).maxOfOrNull { it.value.length } ?: 0
+    val fence = "`".repeat(maxOf(3, longestRun + 1))
+    val info = language.takeIf { it.isNotEmpty() }.orEmpty()
+    return "$fence$info\n$code$fence"
 }
 
 private data class SegmentCandidate(

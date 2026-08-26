@@ -7,9 +7,11 @@ import androidx.paging.PagingData
 import androidx.paging.PagingSource
 import androidx.paging.map
 import androidx.room.withTransaction
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.db.fts.MessageFtsManager
@@ -31,6 +33,23 @@ import me.rerere.rikkahub.utils.JsonInstant
 import java.time.Instant
 import kotlin.uuid.Uuid
 
+/** Completes every post-commit cleanup step even when FTS/files cleanup fails or its caller is cancelled. */
+internal suspend fun runCommittedConversationCleanup(
+    deleteFts: suspend () -> Unit,
+    deleteFiles: suspend () -> Unit,
+    clearStatus: () -> Unit,
+): List<Exception> = withContext(NonCancellable) {
+    val failures = mutableListOf<Exception>()
+    runCatching { deleteFts() }
+        .exceptionOrNull()
+        ?.let { error -> if (error is Exception) failures += error else throw error }
+    runCatching { deleteFiles() }
+        .exceptionOrNull()
+        ?.let { error -> if (error is Exception) failures += error else throw error }
+    clearStatus()
+    failures
+}
+
 class ConversationRepository(
     private val conversationDAO: ConversationDAO,
     private val messageNodeDAO: MessageNodeDAO,
@@ -42,6 +61,11 @@ class ConversationRepository(
     private val tavernScriptRegistry: TavernScriptRegistry,
     private val tavernSendHookStore: TavernSendHookStore,
 ) {
+    data class ConversationDeletionCommit(
+        val conversation: Conversation,
+        val committed: Boolean,
+    )
+
     companion object {
         private const val PAGE_SIZE = 20
         private const val INITIAL_LOAD_SIZE = 40
@@ -313,25 +337,56 @@ class ConversationRepository(
         messageFtsManager.indexConversation(conversation)
     }
 
-    suspend fun deleteConversation(conversation: Conversation) {
+    suspend fun commitConversationDeletion(conversation: Conversation): ConversationDeletionCommit {
         // 获取完整的 Conversation（包含 messageNodes）以正确清理文件
         val fullConversation = if (conversation.messageNodes.isEmpty()) {
             getConversationById(conversation.id) ?: conversation
         } else {
             conversation
         }
-        messageFtsManager.deleteConversation(conversation.id.toString())
-        database.withTransaction {
+        val deleted = database.withTransaction {
             // message_node 会通过 CASCADE 自动删除
-            conversationDAO.delete(
-                conversationToConversationEntity(conversation)
-            )
+            conversationDAO.deleteByIdAndReturnCount(conversation.id.toString())
         }
-        filesManager.deleteChatFiles(fullConversation.files)
-        // 清理该会话在内存中的状态变量（避免 per-conversation 存储长期累积）
-        statusVariableStore.remove(conversation.id)
-        tavernScriptRegistry.removeOwner(conversation.id.toString())
-        tavernSendHookStore.remove(conversation.id)
+        return ConversationDeletionCommit(fullConversation, committed = deleted > 0)
+    }
+
+    /** Commits deletion only if ownership still matches, so a batch cannot remove a moved conversation. */
+    suspend fun commitConversationDeletionIfAssistantId(
+        conversation: Conversation,
+        assistantId: Uuid,
+    ): ConversationDeletionCommit {
+        if (conversation.assistantId != assistantId) {
+            return ConversationDeletionCommit(conversation, committed = false)
+        }
+        val deleted = database.withTransaction {
+            conversationDAO.deleteByIdAndAssistantId(conversation.id.toString(), assistantId.toString())
+        }
+        return ConversationDeletionCommit(conversation, committed = deleted > 0)
+    }
+
+    /** Runs non-transactional cleanup only after Room commits and returns recoverable failures. */
+    suspend fun cleanupCommittedConversationDeletion(conversation: Conversation): List<Exception> =
+        runCommittedConversationCleanup(
+            deleteFts = { messageFtsManager.deleteConversation(conversation.id.toString()) },
+            deleteFiles = { filesManager.deleteChatFiles(conversation.files) },
+            clearStatus = {
+                // 清理该会话在内存中的状态变量（避免 per-conversation 存储长期累积）
+                statusVariableStore.remove(conversation.id)
+                tavernScriptRegistry.removeOwner(conversation.id.toString())
+                tavernSendHookStore.remove(conversation.id)
+            },
+        )
+
+    suspend fun deleteConversation(conversation: Conversation) {
+        val commit = commitConversationDeletion(conversation)
+        if (commit.committed) cleanupCommittedConversationDeletion(commit.conversation)
+    }
+
+    suspend fun deleteConversationIfAssistantId(conversation: Conversation, assistantId: Uuid): Boolean {
+        val commit = commitConversationDeletionIfAssistantId(conversation, assistantId)
+        if (commit.committed) cleanupCommittedConversationDeletion(commit.conversation)
+        return commit.committed
     }
 
     suspend fun searchMessages(
@@ -383,14 +438,42 @@ class ConversationRepository(
         )
     }
 
+    suspend fun updateConversationTitle(conversationId: Uuid, title: String): Boolean {
+        return conversationDAO.updateTitle(
+            id = conversationId.toString(),
+            title = title,
+            updateAt = System.currentTimeMillis(),
+        ) > 0
+    }
+
+    suspend fun toggleConversationPinStatus(conversationId: Uuid): Boolean {
+        return conversationDAO.togglePinStatusAtomically(
+            id = conversationId.toString(),
+            updateAt = System.currentTimeMillis(),
+        ) > 0
+    }
+
+    suspend fun updateConversationAssistant(
+        conversationId: Uuid,
+        assistantId: Uuid,
+        clearFolder: Boolean,
+    ): Boolean {
+        return conversationDAO.updateAssistantAndFolder(
+            id = conversationId.toString(),
+            assistantId = assistantId.toString(),
+            clearFolder = clearFolder,
+            updateAt = System.currentTimeMillis(),
+        ) > 0
+    }
+
     /**
      * 单列更新会话的文件夹归属，folderId 为 null 表示移出文件夹（未归类）。
      */
-    suspend fun updateConversationFolderId(conversationId: Uuid, folderId: Uuid?) {
-        conversationDAO.updateFolderId(
+    suspend fun updateConversationFolderId(conversationId: Uuid, folderId: Uuid?): Boolean {
+        return conversationDAO.updateFolderId(
             id = conversationId.toString(),
             folderId = folderId?.toString() ?: ""
-        )
+        ) > 0
     }
 
     private fun conversationSummaryToConversation(entity: LightConversationEntity): Conversation {

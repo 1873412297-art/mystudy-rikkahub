@@ -138,7 +138,7 @@ internal class TavernConversationRuntimeBridge(
     emitResult: (callbackName: String, responseJson: String) -> Unit,
 ) {
     private val trustedToken = actionToken.toByteArray(StandardCharsets.UTF_8)
-    private val delegate = TavernRuntimeBridge(controller, emitResult)
+    private val delegate = TavernRuntimeBridge(controller, emitResult = emitResult)
 
     init {
         require(actionToken.isNotBlank()) { "A non-empty action token is required" }

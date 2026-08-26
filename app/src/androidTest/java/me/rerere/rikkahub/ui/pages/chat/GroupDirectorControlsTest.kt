@@ -1,17 +1,20 @@
 package me.rerere.rikkahub.ui.pages.chat
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.platform.app.InstrumentationRegistry
+import com.dokar.sonner.rememberToasterState
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.data.model.TurnTakingStrategy
 import me.rerere.rikkahub.service.group.GroupDirectorCommand
 import me.rerere.rikkahub.service.group.GroupPlaybackState
+import me.rerere.rikkahub.ui.context.LocalToaster
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -82,11 +85,14 @@ class GroupDirectorControlsTest {
             ),
         )
         composeRule.setContent {
-            MaterialTheme {
-                GroupDirectorSheetContent(
-                    state = state,
-                    onCommand = { commands = commands + it },
-                )
+            val toaster = rememberToasterState()
+            CompositionLocalProvider(LocalToaster provides toaster) {
+                MaterialTheme {
+                    GroupDirectorSheetContent(
+                        state = state,
+                        onCommand = { commands = commands + it },
+                    )
+                }
             }
         }
 

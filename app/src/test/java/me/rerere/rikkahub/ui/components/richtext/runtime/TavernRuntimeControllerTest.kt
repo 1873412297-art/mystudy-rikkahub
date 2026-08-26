@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -37,13 +38,39 @@ class TavernRuntimeControllerTest {
     }
 
     @Test
-    fun `unknown method returns unsupported error`() {
+    fun `unknown method returns structured unsupported host capability error`() {
         val response = controller.dispatch(
             TavernRuntimeRequest(id = "2", method = "unknown.method")
         )
 
         assertFalse(response.ok)
-        assertEquals("UNSUPPORTED", response.error!!.code)
+        val error = response.error ?: error("missing runtime error")
+        assertEquals("UNSUPPORTED_HOST_CAPABILITY", error.code)
+        assertTrue(error.message.contains("2"))
+        assertTrue(error.message.contains("unknown.method"))
+    }
+
+    @Test
+    fun `explicit unavailable host capability methods return structured errors`() {
+        val methods = listOf(
+            "extensions.install",
+            "extensions.uninstall",
+            "extensions.update",
+            "server.getAdminStatus",
+            "server.filesystem.read",
+            "dom.jquery.queryTopLevel",
+            "backend.st.request",
+        )
+
+        methods.forEachIndexed { index, method ->
+            val response = controller.dispatch(TavernRuntimeRequest(id = "unsupported-$index", method = method))
+
+            assertFalse("$method must reject", response.ok)
+            val error = response.error ?: error("missing runtime error")
+            assertEquals("$method code", "UNSUPPORTED_HOST_CAPABILITY", error.code)
+            assertTrue("$method must identify request", error.message.contains("unsupported-$index"))
+            assertTrue("$method must identify method", error.message.contains(method))
+        }
     }
 
     @Test
@@ -167,6 +194,64 @@ class TavernRuntimeControllerTest {
 
         assertTrue(setResponse.ok)
         assertEquals("1", getResponse.result!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `switching the active conversation moves chat variables to that conversation`() {
+        val firstConversation = Uuid.random()
+        val secondConversation = Uuid.random()
+        val controller = TavernRuntimeController(
+            conversationId = firstConversation,
+            permissionStore = TavernRuntimePermissionStore(
+                initial = TavernRuntimePermissions(allowVariablesWrite = true)
+            ),
+        )
+
+        controller.dispatch(
+            TavernRuntimeRequest(
+                id = "set-first",
+                method = "variables.set",
+                params = JsonObject(
+                    mapOf(
+                        "scope" to JsonPrimitive("chat"),
+                        "key" to JsonPrimitive("place"),
+                        "value" to JsonPrimitive("first"),
+                    )
+                ),
+            )
+        )
+
+        controller.updateConversationId(secondConversation)
+
+        val secondValue = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "get-second",
+                method = "variables.get",
+                params = JsonObject(
+                    mapOf(
+                        "scope" to JsonPrimitive("chat"),
+                        "key" to JsonPrimitive("place"),
+                    )
+                ),
+            )
+        )
+        assertEquals(JsonNull, secondValue.result)
+
+        controller.updateConversationId(firstConversation)
+
+        val firstValueAgain = controller.dispatch(
+            TavernRuntimeRequest(
+                id = "get-first-again",
+                method = "variables.get",
+                params = JsonObject(
+                    mapOf(
+                        "scope" to JsonPrimitive("chat"),
+                        "key" to JsonPrimitive("place"),
+                    )
+                ),
+            )
+        )
+        assertEquals("first", firstValueAgain.result!!.jsonPrimitive.content)
     }
 
     @Test
@@ -625,6 +710,7 @@ class TavernRuntimeControllerTest {
             )
         )
         assertTrue(response.ok)
+        assertTrue(registry.listMacros().isEmpty())
         // JVM 环境无 QuickJS 原生库 → registry 降级无引擎模式，展开失败原样返回（best-effort）
         assertEquals("hello", controller.mutateOutgoing("hello"))
     }

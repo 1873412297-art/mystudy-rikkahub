@@ -220,25 +220,68 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
         currentMessageWriter = ::writeCurrentMessage,
     )
 
-    override fun get(conversationId: Uuid?, scope: String, key: String): JsonElement? = synchronized(lock) {
-        variables(scope.toGreetingScope())[key]
-    }
+    override fun get(conversationId: Uuid?, scope: String, key: String, ownerId: String?): JsonElement? =
+        synchronized(lock) {
+            variables(scope.toGreetingScope())[key]
+        }
 
-    override fun list(conversationId: Uuid?, scope: String): JsonObject =
+    override fun list(conversationId: Uuid?, scope: String, ownerId: String?): JsonObject =
         listVariables(scope.toGreetingScope())
 
-    override fun set(conversationId: Uuid?, scope: String, key: String, value: JsonElement) {
+    override fun set(conversationId: Uuid?, scope: String, key: String, value: JsonElement, ownerId: String?) {
         setVariable(scope.toGreetingScope(), key, value)
     }
 
-    override fun delete(conversationId: Uuid?, scope: String, key: String): Boolean =
+    override fun delete(conversationId: Uuid?, scope: String, key: String, ownerId: String?): Boolean =
         deleteVariable(scope.toGreetingScope(), key)
+
+    override fun replace(conversationId: Uuid?, scope: String, variables: JsonObject, ownerId: String?) {
+        synchronized(lock) {
+            if (frozen) return@synchronized
+            val greetingScope = scope.toGreetingScope()
+            val store = if (greetingScope == TavernGreetingVariableScope.CHAT) chatVariables else globalVariables
+            val removedKeys = store.keys - variables.keys
+            store.clear()
+            variables.forEach { (key, value) -> store[key] = value }
+            if (greetingScope == TavernGreetingVariableScope.GLOBAL) {
+                removedKeys.forEach { globalVariableMutations[it] = null }
+                variables.forEach { (key, value) -> globalVariableMutations[key] = value }
+            }
+            publishLocked()
+        }
+    }
 
     override fun listEntries(): List<JsonObject> = synchronized(lock) { worldEntries.values.toList() }
 
     override fun upsertEntry(entry: JsonObject): String = upsertWorldEntry(entry)
 
     override fun deleteEntry(id: String): Boolean = deleteWorldEntry(id)
+
+    // 候选运行时的世界模型是平铺条目集（无独立 book 实体）；
+    // book 级 API 以单一合成 book 暴露，book 级变更不支持（返回 null/false）。
+    override fun listBooks(): List<JsonObject> = synchronized(lock) {
+        if (worldEntries.isEmpty()) return@synchronized emptyList()
+        listOf(greetingBookJson(includeEntries = false))
+    }
+
+    override fun getBook(nameOrId: String): JsonObject? = synchronized(lock) {
+        if (worldEntries.isEmpty()) return@synchronized null
+        if (nameOrId != GREETING_BOOK_ID && nameOrId != GREETING_BOOK_NAME) return@synchronized null
+        greetingBookJson(includeEntries = true)
+    }
+
+    override fun createBook(name: String, entries: List<JsonObject>): JsonObject? = null
+
+    override fun updateBook(nameOrId: String, patch: JsonObject): JsonObject? = null
+
+    override fun deleteBook(nameOrId: String): Boolean = false
+
+    private fun greetingBookJson(includeEntries: Boolean): JsonObject = buildJsonObject {
+        put("id", GREETING_BOOK_ID)
+        put("name", GREETING_BOOK_NAME)
+        put("entryCount", worldEntries.size)
+        if (includeEntries) put("entries", kotlinx.serialization.json.JsonArray(worldEntries.values.toList()))
+    }
 
     override fun onMacroRegistered(name: String, source: String) = registerMacro(name, source)
 
@@ -285,6 +328,9 @@ class TavernGreetingCandidateRuntime internal constructor(initial: TavernGreetin
         if (scope == TavernGreetingVariableScope.CHAT) chatVariables else globalVariables
 
     private companion object {
+        const val GREETING_BOOK_ID = "greeting"
+        const val GREETING_BOOK_NAME = "greeting"
+
         fun entryId(entry: JsonObject): String =
             (entry["id"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() } ?: Uuid.random().toString()
     }

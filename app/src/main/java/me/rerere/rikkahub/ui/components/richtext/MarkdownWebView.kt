@@ -12,9 +12,16 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebViewRenderProcess
 import android.webkit.WebViewRenderProcessClient
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -23,8 +30,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,6 +51,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -62,8 +73,10 @@ import me.rerere.rikkahub.data.ai.status.StatusVariableStore
 import me.rerere.rikkahub.data.ai.status.TavernHostEventBus
 import me.rerere.rikkahub.data.ai.status.TavernHostEventType
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeBridge
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimeController
+import me.rerere.rikkahub.ui.components.richtext.runtime.ChatServiceTavernRuntimeMessageGateway
 import me.rerere.rikkahub.ui.components.richtext.runtime.TavernRuntimePermissionStore
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsBackedTavernWorldRepository
 import me.rerere.rikkahub.ui.components.richtext.runtime.SettingsStoreTavernVariableGateway
@@ -227,6 +240,13 @@ internal fun MarkdownWebView(
     content: String,
     modifier: Modifier = Modifier,
     isRawHtml: Boolean = false,
+    /** 对消息前端应用酒馆助手的脚本与网络权限；STABLE_DOM 等宿主文档不受此开关影响。 */
+    applyTavernFrontendPolicy: Boolean = false,
+    onWebViewCreated: (WebView) -> Unit = {},
+    onWebViewDisposed: (WebView) -> Unit = {},
+    onWebViewLoadFailed: (String) -> Unit = {},
+    onWebViewRendererCrashed: (WebView?, Boolean) -> Unit = { _, _ -> },
+    additionalJavascriptInterface: Pair<String, Any>? = null,
     /**
      * 高度上限（dp）：超过此高度的内容会触发 WebView 内部纵向滚动，
      * 而不是把外层 Compose 容器撑到无限高。
@@ -290,9 +310,13 @@ internal fun MarkdownWebView(
     tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
     /** Secondary viewers (HUD/fullscreen) must not replace the conversation's send-hook owner. */
     ownsSendHookController: Boolean = true,
+    /** 隐藏浏览器会话的受信脚本身份；消息前端保持 null，绝不归因到常驻脚本。 */
+    tavernScriptId: String? = null,
 ) {
     val context = LocalContext.current
     val settingsStore: SettingsStore = koinInject()
+    val chatService: ChatService = koinInject()
+    val providerManager: me.rerere.ai.provider.ProviderManager = koinInject()
     val statusVariableStore: StatusVariableStore = koinInject()
     val tavernHostEventBus: TavernHostEventBus = koinInject()
     val tavernScriptRegistry: TavernScriptRegistry = koinInject()
@@ -323,7 +347,7 @@ internal fun MarkdownWebView(
     // headerSource 每次 RPC 调用读最新透传 lambda（assistant/model 头变化即时生效，不重建 controller）
     val latestHeaderSource by rememberUpdatedState(tavernHeaderSource)
     val isolatedScriptRegistry = remember { TavernScriptRegistry() }
-    val runtimeController = remember(settingsStore, tavernConversationId, ownsSendHookController) {
+    val runtimeController = remember(settingsStore, ownsSendHookController) {
         TavernRuntimeController(
             conversationId = tavernConversationId,
             worldRepository = SettingsBackedTavernWorldRepository(
@@ -334,14 +358,20 @@ internal fun MarkdownWebView(
                 statusVariableStore = statusVariableStore,
                 settingsGateway = SettingsStoreTavernVariableGateway(settingsStore),
             ),
+            messageGateway = ChatServiceTavernRuntimeMessageGateway(chatService),
             hostEventFlow = tavernHostEventBus.events,
             hostEventScope = runtimeCoroutineScope,
             // 共享 Koin 单例注册表：WebView 侧注册的宏/命令对发送管线（ChatService）可见
             scriptRegistry = if (ownsSendHookController) tavernScriptRegistry else isolatedScriptRegistry,
             headerSource = { latestHeaderSource?.invoke() ?: emptyList() },
+            generationGateway = me.rerere.rikkahub.ui.components.richtext.runtime.ProviderBackedTavernGenerationGateway(
+                settingsStore = settingsStore,
+                providerManager = providerManager,
+            ),
+            scriptId = tavernScriptId,
         )
     }
-    val sendHookBinding = remember(tavernSendHookStore, runtimeController, ownsSendHookController) {
+    val sendHookBinding = remember(tavernSendHookStore, runtimeController, ownsSendHookController, tavernConversationId) {
         TavernSendHookControllerBinding(
             store = tavernSendHookStore,
             controller = runtimeController,
@@ -349,8 +379,11 @@ internal fun MarkdownWebView(
             conversationId = tavernConversationId,
         )
     }
-    // controller 重建（tavernConversationId 变化）或离开组合时，取消旧 controller 的
-    // 宿主事件收集 job，避免旧 job 泄漏到组合结束才取消、期间继续向无人消费的 SharedFlow 空发
+    SideEffect {
+        runtimeController.updateConversationId(tavernConversationId)
+    }
+    // controller 离开组合时取消宿主事件收集 job，避免 job 泄漏到组合结束才取消、
+    // 期间继续向无人消费的 SharedFlow 空发。会话切换仅更新 controller 的绑定，不重建 WebView。
     DisposableEffect(runtimeController) {
         onDispose {
             runtimeController.cancelHostEventCollection()
@@ -380,8 +413,12 @@ internal fun MarkdownWebView(
     DisposableEffect(Unit) {
         onDispose {
             val webView = tavernWebViewRef.value ?: return@onDispose
+            onWebViewDisposed(webView)
             runCatching { webView.removeJavascriptInterface("RikkahubBridge") }
             runCatching { webView.removeJavascriptInterface("TavernRuntimeBridge") }
+            additionalJavascriptInterface?.first?.let { name ->
+                runCatching { webView.removeJavascriptInterface(name) }
+            }
             runCatching { webView.stopLoading() }
             runCatching { webView.destroy() }
             tavernWebViewRef.value = null
@@ -400,10 +437,20 @@ internal fun MarkdownWebView(
     }
 
     val useIframeSandbox = isRawHtml || looksLikeHtmlDocument(content)
+    val allowFrontendScripts = (!applyTavernFrontendPolicy || appSettings.tavernHelperRenderSettings.allowScripts) &&
+        appSettings.runtimePermissions.allowMessageScripts
+    val allowFrontendNetwork = !applyTavernFrontendPolicy || appSettings.tavernHelperRenderSettings.allowNetwork
     val maxHeightPx = maxHeightDp?.let { with(density) { it.dp.toPx().toInt() } }
+    // 消息前端错误态（spec §314）：加载失败/renderer 崩溃 → 可折叠错误卡，不显示空白气泡
+    var tempAllowNetwork by remember(content) { mutableStateOf(false) }
+    val effectiveAllowNetwork = allowFrontendNetwork || tempAllowNetwork
+    var frontendFailure by remember(content) { mutableStateOf<String?>(null) }
+    var showSourceDialog by remember { mutableStateOf(false) }
     // baseKey 不含 content：路径/主题/角色/卡样式变化才整文档重载
     val baseKey = listOf(
         useIframeSandbox,
+        allowFrontendScripts,
+        effectiveAllowNetwork,
         fixedHeight,
         bgHex,
         textHex,
@@ -462,12 +509,48 @@ internal fun MarkdownWebView(
         color = bg,
         tonalElevation = 1.dp,
     ) {
+        val failure = frontendFailure
+        if (failure != null) {
+            TavernFrontendErrorCard(
+                reason = failure,
+                source = content,
+                networkAlreadyAllowed = allowFrontendNetwork,
+                onViewSource = { showSourceDialog = true },
+                onTempAllowNetwork = {
+                    tempAllowNetwork = true
+                    frontendFailure = null
+                },
+                onReload = { frontendFailure = null },
+            )
+            if (showSourceDialog) {
+                AlertDialog(
+                    onDismissRequest = { showSourceDialog = false },
+                    confirmButton = {
+                        TextButton(onClick = { showSourceDialog = false }) { Text("关闭") }
+                    },
+                    title = { Text("前端源码") },
+                    text = {
+                        SelectionContainer {
+                            Column(Modifier.verticalScroll(rememberScrollState())) {
+                                Text(
+                                    content,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                            }
+                        }
+                    },
+                )
+            }
+        } else {
         // 记录已加载的 (baseKey, contentKey) 组合，避免 update 块每次 recompose
         // 都触发 loadDataWithBaseURL —— 重 load 会让 iframe 被推倒重建，高度从占位值
         // 起步重新测量，造成「渲染一半不动」的视觉假象。
         val lastBaseKey = remember { mutableStateOf<String?>(null) }
         val lastContentKey = remember { mutableStateOf<String?>(null) }
         val lastSegments = remember { mutableStateOf<List<StableDomSegment>>(emptyList()) }
+        val patchThrottle = remember { TavernStreamingPatchThrottle() }
+        val trailingStreamSegments = remember { mutableStateOf<List<StableDomSegment>?>(null) }
         Box {
             if (
                 renderState.status != MarkdownWebViewRenderStatus.FAILED &&
@@ -479,6 +562,7 @@ internal fun MarkdownWebView(
                 WebView(ctx).apply {
                     val webView = this
                     tavernWebViewRef.value = this
+                    onWebViewCreated(this)
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
                     isVerticalScrollBarEnabled = false
                     isHorizontalScrollBarEnabled = false
@@ -644,9 +728,13 @@ internal fun MarkdownWebView(
                                 "(function(){var cb=window['$callbackName'];" +
                                     "if(typeof cb==='function'){cb(JSON.parse($payload));}})();"
                             )
-                        }
+                        },
+                        scriptId = tavernScriptId,
                     )
                     addJavascriptInterface(tavernBridge, "TavernRuntimeBridge")
+                    additionalJavascriptInterface?.let { (name, value) ->
+                        addJavascriptInterface(value, name)
+                    }
 
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(
@@ -687,95 +775,108 @@ internal fun MarkdownWebView(
                             }
                         }
 
-                        override fun onReceivedError(
-                            view: WebView?,
-                            request: WebResourceRequest?,
-                            error: android.webkit.WebResourceError?,
-                        ) {
-                            if (request?.isForMainFrame == true) {
-                                renderState = renderState.onFailure(generation, "富文本加载失败，原始内容已保留")
-                            }
-                        }
-
-                        override fun onRenderProcessGone(
-                            view: WebView?,
-                            detail: RenderProcessGoneDetail?,
-                        ): Boolean {
-                            val reason = if (detail?.didCrash() == true) {
-                                "富文本渲染进程崩溃，原始内容已保留"
-                            } else {
-                                "富文本渲染进程已退出，原始内容已保留"
-                            }
-                            renderState = renderState.onFailure(generation, reason)
-                            return true
-                        }
 
                         override fun onPageFinished(view: WebView?, url: String?) {
                             // 父页 shell 加载完时立刻测父页（适用 markdown 路径——markdown-it/katex
                             // 跑完后 body height 就是实际高度）。
                             // sandbox iframe 路径不依赖这次测量——iframe 内 JS 会通过 postMessage
                             // 持续上报真实高度到 RikkahubBridge.reportHeight，那条路径会更新 viewHeight。
-                            // 但首次还是测一下，给个不至于 60dp 闪一下的初值。
-                            val callbackView = view ?: return
-                            if (callbackView !== webView) return
-                            callbackView.measureContentHeight { pxHeight ->
-                                runIfCurrentMarkdownWebViewHeightCallback(
-                                    callbackGeneration = generation,
-                                    currentGeneration = renderState.generation,
-                                    callbackWebViewIdentity = callbackView,
-                                    currentWebViewIdentity = tavernWebViewRef.value,
-                                ) {
-                                    val h = pxHeight + 16
-                                    contentHeightPx = h
-                                    if (maxHeightPx != null && h > maxHeightPx) {
-                                        viewHeight = maxHeightPx
-                                        hasOverflow = true
-                                        callbackView.isVerticalScrollBarEnabled = true
-                                    } else {
-                                        viewHeight = h.coerceAtLeast(60)
-                                        hasOverflow = false
-                                        callbackView.isVerticalScrollBarEnabled = false
+                            // 前端 HTML 只能使用其注入脚本上报的真实内容高度。这里若测量 WebView
+                            // 当前视口，会把 maxHeight (通常为 600dp) 当成内容高度写回，短卡片
+                            // 随即形成“视口越高、上报越高”的自我撑高循环。
+                            if (shouldMeasurePageHeight(applyTavernFrontendPolicy)) {
+                                // 首次先测一下，给个不至于 60dp 闪一下的初值。
+                                val callbackView = view ?: return
+                                if (callbackView !== webView) return
+                                callbackView.measureContentHeight { pxHeight ->
+                                    runIfCurrentMarkdownWebViewHeightCallback(
+                                        callbackGeneration = generation,
+                                        currentGeneration = renderState.generation,
+                                        callbackWebViewIdentity = callbackView,
+                                        currentWebViewIdentity = tavernWebViewRef.value,
+                                    ) {
+                                        val h = pxHeight + 16
+                                        contentHeightPx = h
+                                        if (maxHeightPx != null && h > maxHeightPx) {
+                                            viewHeight = maxHeightPx
+                                            hasOverflow = true
+                                            callbackView.isVerticalScrollBarEnabled = true
+                                        } else {
+                                            viewHeight = h.coerceAtLeast(60)
+                                            hasOverflow = false
+                                            callbackView.isVerticalScrollBarEnabled = false
+                                        }
                                     }
                                 }
-                            }
-                            // 多次延迟重测兜底——markdown 异步渲染（mermaid/katex/dompurify）
-                            // 完成时间不固定。sandbox 路径走 postMessage 不依赖这里。
-                            listOf(150L, 400L, 1000L, 2500L).forEach { delay ->
-                                callbackView.postDelayed({
-                                    if (
-                                        !isCurrentMarkdownWebViewHeightCallback(
-                                            callbackGeneration = generation,
-                                            currentGeneration = renderState.generation,
-                                            callbackWebViewIdentity = callbackView,
-                                            currentWebViewIdentity = tavernWebViewRef.value,
-                                        )
-                                    ) return@postDelayed
-                                    callbackView.measureContentHeight { h2 ->
-                                        runIfCurrentMarkdownWebViewHeightCallback(
-                                            callbackGeneration = generation,
-                                            currentGeneration = renderState.generation,
-                                            callbackWebViewIdentity = callbackView,
-                                            currentWebViewIdentity = tavernWebViewRef.value,
-                                        ) {
-                                            val h = h2 + 16
-                                            // 只在新高度比当前大时才更新（防止 iframe 还没载完时
-                                            // 测到一个小值把已经报上来的大值给覆盖回去）
-                                            if (h > contentHeightPx) {
-                                                contentHeightPx = h
-                                                if (maxHeightPx == null || h <= maxHeightPx) {
-                                                    viewHeight = h.coerceAtLeast(60)
-                                                    hasOverflow = false
-                                                    callbackView.isVerticalScrollBarEnabled = false
-                                                } else if (!hasOverflow) {
-                                                    viewHeight = maxHeightPx
-                                                    hasOverflow = true
-                                                    callbackView.isVerticalScrollBarEnabled = true
+                                // 多次延迟重测兜底——markdown 异步渲染（mermaid/katex/dompurify）
+                                // 完成时间不固定。前端 HTML 路径由内容桥持续上报，不走这里。
+                                listOf(150L, 400L, 1000L, 2500L).forEach { delay ->
+                                    callbackView.postDelayed({
+                                        if (
+                                            !isCurrentMarkdownWebViewHeightCallback(
+                                                callbackGeneration = generation,
+                                                currentGeneration = renderState.generation,
+                                                callbackWebViewIdentity = callbackView,
+                                                currentWebViewIdentity = tavernWebViewRef.value,
+                                            )
+                                        ) return@postDelayed
+                                        callbackView.measureContentHeight { h2 ->
+                                            runIfCurrentMarkdownWebViewHeightCallback(
+                                                callbackGeneration = generation,
+                                                currentGeneration = renderState.generation,
+                                                callbackWebViewIdentity = callbackView,
+                                                currentWebViewIdentity = tavernWebViewRef.value,
+                                            ) {
+                                                val h = h2 + 16
+                                                // 只在新高度比当前大时才更新（防止 iframe 还没载完时
+                                                // 测到一个小值把已经报上来的大值给覆盖回去）
+                                                if (h > contentHeightPx) {
+                                                    contentHeightPx = h
+                                                    if (maxHeightPx == null || h <= maxHeightPx) {
+                                                        viewHeight = h.coerceAtLeast(60)
+                                                        hasOverflow = false
+                                                        callbackView.isVerticalScrollBarEnabled = false
+                                                    } else if (!hasOverflow) {
+                                                        viewHeight = maxHeightPx
+                                                        hasOverflow = true
+                                                        callbackView.isVerticalScrollBarEnabled = true
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
-                                }, delay)
+                                    }, delay)
+                                }
                             }
+
+                        }
+
+                        override fun onReceivedError(
+                            view: WebView?,
+                            request: android.webkit.WebResourceRequest?,
+                            error: android.webkit.WebResourceError?,
+                        ) {
+                            if (request?.isForMainFrame == true) {
+                                val detail = error?.description?.toString().orEmpty()
+                                frontendFailure = detail.ifEmpty { "页面加载失败" }
+                                onWebViewLoadFailed(detail)
+                                renderState = renderState.onFailure(generation, "富文本加载失败，原始内容已保留")
+                            }
+                        }
+
+                        override fun onRenderProcessGone(
+                            view: WebView?,
+                            detail: android.webkit.RenderProcessGoneDetail?,
+                        ): Boolean {
+                            frontendFailure = "渲染进程崩溃"
+                            onWebViewRendererCrashed(view, detail?.didCrash() == true)
+                            val reason = if (detail?.didCrash() == true) {
+                                "富文本渲染进程崩溃，原始内容已保留"
+                            } else {
+                                "富文本渲染进程已退出，原始内容已保留"
+                            }
+                            renderState = renderState.onFailure(generation, reason)
+                            view?.destroy()
+                            return true
                         }
                     }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -814,6 +915,7 @@ internal fun MarkdownWebView(
                         useWideViewPort = true
                         setSupportZoom(false)
                         mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                        blockNetworkLoads = !effectiveAllowNetwork
                         allowFileAccess = false
                         allowContentAccess = false
                         @Suppress("DEPRECATION")
@@ -823,7 +925,7 @@ internal fun MarkdownWebView(
                     }
                     val source = renderState.rawContent
                     val html = if (useIframeSandbox) {
-                        buildSandboxHostHtml(source, bgHex, textHex, fixedHeight)
+                        buildSandboxHostHtml(source, bgHex, textHex, fixedHeight, allowFrontendScripts)
                     } else {
                         buildMarkdownPreviewHtml(context, normalizeRichTextContent(source), colorScheme)
                     }
@@ -834,6 +936,7 @@ internal fun MarkdownWebView(
                 }
             },
             update = { webView ->
+                webView.settings.blockNetworkLoads = !effectiveAllowNetwork
                 // baseKey（路径/主题/角色/卡样式）变了才整文档重载；
                 // 否则 contentKey 变化时：streaming 走段 diff 增量 patch，非 streaming 才重 load。
                 if (lastBaseKey.value != baseKey) {
@@ -842,16 +945,35 @@ internal fun MarkdownWebView(
                 }
                 if (lastContentKey.value == contentKey) return@AndroidView
                 if (streaming) {
-                    val old = lastSegments.value
-                    val new = streamSegments.orEmpty()
-                    val patches = StableSegmentSnapshot.diff(old, new)
-                    lastSegments.value = new
+                    // spec §5.5：流式更新以 120ms 节流，尾随只保留最新内容
+                    val newSegments = streamSegments.orEmpty()
                     lastContentKey.value = contentKey
-                    if (patches.isEmpty()) return@AndroidView
-                    val patchJson = JSONObject.quote(StableSegmentSnapshot.encodePatches(patches))
-                    webView.postEvaluateJavascript(
-                        "window.RikkahubDomBridge && window.RikkahubDomBridge.applySegmentPatch($patchJson);"
-                    )
+                    fun dispatchStreamPatches(target: List<StableDomSegment>) {
+                        val patches = StableSegmentSnapshot.diff(lastSegments.value, target)
+                        lastSegments.value = target
+                        if (patches.isEmpty()) return
+                        val patchJson = JSONObject.quote(StableSegmentSnapshot.encodePatches(patches))
+                        webView.postEvaluateJavascript(
+                            "window.RikkahubDomBridge && window.RikkahubDomBridge.applySegmentPatch($patchJson);"
+                        )
+                    }
+                    when (val delay = patchThrottle.onContent(android.os.SystemClock.uptimeMillis())) {
+                        TavernStreamingPatchThrottle.DISPATCH_NOW -> dispatchStreamPatches(newSegments)
+                        TavernStreamingPatchThrottle.TRAILING_ALREADY_PENDING -> {
+                            trailingStreamSegments.value = newSegments
+                        }
+                        else -> {
+                            trailingStreamSegments.value = newSegments
+                            webView.postDelayed({
+                                val trailing = trailingStreamSegments.value
+                                if (trailing != null) {
+                                    trailingStreamSegments.value = null
+                                    patchThrottle.onTrailingDispatch(android.os.SystemClock.uptimeMillis())
+                                    runCatching { dispatchStreamPatches(trailing) }
+                                }
+                            }, delay)
+                        }
+                    }
                 } else {
                     renderState = renderState.reload(content)
                 }
@@ -896,6 +1018,7 @@ internal fun MarkdownWebView(
                 )
                 MarkdownWebViewRenderStatus.READY -> Unit
             }
+        }
         }
     }
 }
@@ -1276,10 +1399,17 @@ internal fun stripMarkdownCodeRegions(text: String): String {
  *     不构成数据泄漏。如果未来要按卡隔离，可以在每次 load 前调
  *     WebStorage.getInstance().deleteAllData()。
  */
-internal fun buildSandboxHostHtml(userHtml: String, bgHex: String, textHex: String, fixedHeight: Boolean = false): String {
-    val unwrapped = unwrapFencedHtml(userHtml)
+internal fun buildSandboxHostHtml(
+    userHtml: String,
+    bgHex: String,
+    textHex: String,
+    fixedHeight: Boolean = false,
+    allowUserScripts: Boolean = true,
+): String {
+    val unwrapped = sanitizeTavernFrontendHtml(unwrapFencedHtml(userHtml), allowUserScripts)
 
-    val earlyInjectTag = "<script>${buildTavernRuntimeScript()}\n${buildTavernCompatibilityPrelude()}</script>"
+    val runtimeScript = if (allowUserScripts) buildTavernRuntimeScript() else ""
+    val earlyInjectTag = "<script>$runtimeScript\n${buildTavernCompatibilityPrelude()}</script>"
     val lateInjectTag = "<script>${buildIframeInjectScript()}</script>"
 
     val isCompleteDoc = unwrapped.trimStart().let {
@@ -1346,8 +1476,21 @@ ${buildTavernViewportAdapterScript()}
     try{window.RikkahubBridge&&window.RikkahubBridge.documentReady&&window.RikkahubBridge.documentReady();}catch(e){}
   }
   function measure(){
-    var de=document.documentElement,b=document.body;
-    return Math.max(de?de.scrollHeight:0,de?de.offsetHeight:0,b?b.scrollHeight:0,b?b.offsetHeight:0);
+    var b=document.body;
+    if(!b)return 0;
+    var base=b.getBoundingClientRect(),top=base.top,maxBottom=0;
+    try{
+      var range=document.createRange();
+      range.selectNodeContents(b);
+      var rr=range.getBoundingClientRect();
+      maxBottom=Math.max(maxBottom,rr.bottom-top);
+    }catch(e){}
+    var nodes=b.querySelectorAll('*');
+    for(var i=0;i<nodes.length;i++){
+      var rect=nodes[i].getBoundingClientRect();
+      maxBottom=Math.max(maxBottom,rect.bottom-top);
+    }
+    return Math.max(1,Math.ceil(maxBottom));
   }
   var lastH=0,rafId=null;
   function tick(){
@@ -1390,3 +1533,63 @@ ${buildTavernViewportAdapterScript()}
 
 internal fun hex(c: androidx.compose.ui.graphics.Color) =
     String.format("#%02X%02X%02X", (c.red * 255).toInt(), (c.green * 255).toInt(), (c.blue * 255).toInt())
+
+internal fun shouldMeasurePageHeight(applyTavernFrontendPolicy: Boolean): Boolean =
+    !applyTavernFrontendPolicy
+
+@Composable
+private fun TavernFrontendErrorCard(
+    reason: String,
+    source: String,
+    networkAlreadyAllowed: Boolean,
+    onViewSource: () -> Unit,
+    onTempAllowNetwork: () -> Unit,
+    onReload: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.padding(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "前端渲染失败",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "收起" else "详情")
+            }
+        }
+        if (expanded) {
+            Text(
+                text = reason,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            SelectionContainer {
+                Text(
+                    text = source.take(600),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Row(
+            horizontalArrangement = Arrangement.End,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            TextButton(onClick = onViewSource) {
+                Text("查看源码")
+            }
+            if (!networkAlreadyAllowed) {
+                TextButton(onClick = onTempAllowNetwork) {
+                    Text("临时允许网络")
+                }
+            }
+            TextButton(onClick = onReload) {
+                Text("重载")
+            }
+        }
+    }
+}

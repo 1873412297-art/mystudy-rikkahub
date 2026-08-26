@@ -16,6 +16,7 @@ import me.rerere.rikkahub.ui.pages.stats.StatsVM
 import me.rerere.rikkahub.ui.pages.imggen.ImgGenVM
 import me.rerere.rikkahub.ui.pages.extensions.PromptVM
 import me.rerere.rikkahub.ui.pages.extensions.QuickMessagesVM
+import me.rerere.rikkahub.ui.pages.extensions.tavernhelper.TavernHelperVM
 import me.rerere.rikkahub.ui.pages.extensions.skills.SkillDetailVM
 import me.rerere.rikkahub.ui.pages.extensions.skills.SkillsVM
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceDetailVM
@@ -67,6 +68,7 @@ val viewModelModule = module {
     viewModelOf(::ImgGenVM)
     viewModelOf(::PromptVM)
     viewModelOf(::QuickMessagesVM)
+    viewModelOf(::TavernHelperVM)
     viewModelOf(::SkillsVM)
     viewModelOf(::SkillDetailVM)
     viewModelOf(::WorkspaceVM)

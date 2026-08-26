@@ -119,7 +119,7 @@ fun ChatMessage(
     onEdit: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit,
-    onUpdate: (MessageNode) -> Unit,
+    onSelectMessageNode: (kotlin.uuid.Uuid, Int) -> Unit,
     isFavorite: Boolean = false,
     onToggleFavorite: (() -> Unit)? = null,
     onTranslate: ((UIMessage, Locale) -> Unit)? = null,
@@ -142,6 +142,7 @@ fun ChatMessage(
      * ChatList 组装透传，与 tavernContextSnapshot 同路。
      */
     tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
+    tavernMessageDepth: Int? = null,
 ) {
     val message = node.messages[node.selectIndex]
     val tavernCurrentMessage = remember(message) {
@@ -232,6 +233,7 @@ fun ChatMessage(
                     tavernCurrentMessage = tavernCurrentMessage,
                     tavernContextSnapshot = tavernContextSnapshot,
                     tavernHeaderSource = tavernHeaderSource,
+                    tavernMessageDepth = tavernMessageDepth,
                 )
             }
 
@@ -261,7 +263,7 @@ fun ChatMessage(
                     message = message,
                     onRegenerate = onRegenerate,
                     node = node,
-                    onUpdate = onUpdate,
+                    onSelectMessageNode = onSelectMessageNode,
                     onOpenActionSheet = {
                         showActionsSheet = true
                     },
@@ -405,6 +407,7 @@ private fun MessagePartsBlock(
     tavernCurrentMessage: kotlinx.serialization.json.JsonElement? = null,
     tavernContextSnapshot: kotlinx.serialization.json.JsonObject? = null,
     tavernHeaderSource: (() -> List<Pair<String, String>>)? = null,
+    tavernMessageDepth: Int? = null,
 ) {
     val context = LocalContext.current
     val contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
@@ -481,6 +484,12 @@ private fun MessagePartsBlock(
                                     )
                                 }
                             }
+
+                            is ThinkingStep.ServerToolStep -> {
+                                key(step.tool.toolCallId.ifBlank { step.hashCode().toString() }) {
+                                    ChatMessageServerToolStep(tool = step.tool)
+                                }
+                            }
                         }
                     }
                 }
@@ -531,6 +540,7 @@ private fun MessagePartsBlock(
                                                 tavernHeaderSource = tavernHeaderSource,
                                                 webViewMaxHeightDp = null,
                                                 webViewVerticalScrollMode = MarkdownWebViewVerticalScrollMode.PARENT,
+                                                tavernMessageDepth = tavernMessageDepth,
                                             )
                                         }
                                     }
@@ -560,6 +570,7 @@ private fun MessagePartsBlock(
                                                     tavernHeaderSource = tavernHeaderSource,
                                                     webViewMaxHeightDp = null,
                                                     webViewVerticalScrollMode = MarkdownWebViewVerticalScrollMode.PARENT,
+                                                    tavernMessageDepth = tavernMessageDepth,
                                                 )
                                             }
                                         }
@@ -582,6 +593,7 @@ private fun MessagePartsBlock(
                                             tavernHeaderSource = tavernHeaderSource,
                                             webViewMaxHeightDp = null,
                                             webViewVerticalScrollMode = MarkdownWebViewVerticalScrollMode.PARENT,
+                                            tavernMessageDepth = tavernMessageDepth,
                                             modifier = Modifier
                                                 .animateContentSize()
                                         )

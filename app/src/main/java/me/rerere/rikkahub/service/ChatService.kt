@@ -5,6 +5,8 @@ import android.content.Context
 import android.util.Log
 import androidx.core.net.toUri
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,6 +30,7 @@ import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -38,6 +41,7 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.core.Tool
+import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ModelAbility
 import me.rerere.ai.provider.ProviderManager
@@ -281,6 +285,10 @@ internal fun backgroundTextGenerationParams(
     customBody = model.customBodies,
 )
 
+internal fun shouldUseExternalWebSearch(assistant: Assistant, model: Model): Boolean {
+    return assistant.enableWebSearch && BuiltInTools.Search !in model.tools
+}
+
 data class ChatError(
     val id: Uuid = Uuid.random(),
     val title: String? = null,
@@ -361,14 +369,220 @@ internal suspend fun normalizeCancelledGroupGeneration(
         job = generationJob,
         staleValue = { session.state.value },
     ) {
-        val current = session.state.value
-        val normalizedDirector = engine.afterCancellation(current.groupRuntimeState.director)
-        val updated = current.copy(
-            groupRuntimeState = current.groupRuntimeState.copy(director = normalizedDirector)
-        )
-        persist(updated)
-        updated
+        mutateConversation(session) { current ->
+            val normalizedDirector = engine.afterCancellation(current.groupRuntimeState.director)
+            val updated = current.copy(
+                groupRuntimeState = current.groupRuntimeState.copy(director = normalizedDirector)
+            )
+            persist(updated)
+            updated
+        }
     }
+}
+
+/** Applies a final conversation mutation while holding the shared session lock. */
+internal suspend fun <T> mutateConversation(
+    session: ConversationSession,
+    block: suspend (Conversation) -> T,
+): T = session.withConversationMutationLock { block(session.state.value) }
+
+/** Applies UI-editable metadata without replacing live message nodes owned by generation and runtime mutations. */
+internal fun mergeConversationUiFields(current: Conversation, requested: Conversation): Conversation = current.copy(
+    customSystemPrompt = requested.customSystemPrompt,
+    authorNote = requested.authorNote,
+    workspaceCwd = requested.workspaceCwd,
+    modeInjectionIds = requested.modeInjectionIds,
+    lorebookIds = requested.lorebookIds,
+)
+
+/** Replaces only the validated compression baseline and keeps nodes appended while the provider was running. */
+internal fun applyCompressedConversation(
+    baseline: Conversation,
+    latest: Conversation,
+    compressedSummaries: List<String>,
+    keepRecentMessages: Int,
+): Conversation {
+    val baselineIds = baseline.messageNodes.map { it.currentMessage.id }
+    val latestPrefixIds = latest.messageNodes.take(baselineIds.size).map { it.currentMessage.id }
+    check(latestPrefixIds == baselineIds) { "Conversation changed during compression" }
+    val replacementNodes = buildList {
+        compressedSummaries.forEach { summary -> add(UIMessage.user(summary).toMessageNode()) }
+        addAll(baseline.messageNodes.takeLast(keepRecentMessages))
+        addAll(latest.messageNodes.drop(baseline.messageNodes.size))
+    }
+    return latest.copy(messageNodes = replacementNodes, chatSuggestions = emptyList())
+}
+
+private data class ModeratorDecisionSnapshot(
+    val conversation: Conversation,
+    val director: GroupDirectorState,
+    val orderedEligibleMemberIds: List<Uuid>,
+    val allowStop: Boolean,
+)
+
+internal fun orderedModeratorEligibleMemberIds(
+    persistedQueue: List<Uuid>,
+    eligibleMemberIds: List<Uuid>,
+): List<Uuid> = normalizeGroupMemberQueue(persistedQueue, eligibleMemberIds)
+
+internal enum class InitializationInstallAction {
+    INSTALL,
+    MARK_READY,
+    SKIP,
+}
+
+internal fun initializationInstallAction(
+    session: ConversationSession,
+    token: ConversationInitializationToken,
+    sessionIsCurrent: Boolean,
+    isReady: Boolean,
+): InitializationInstallAction = when {
+    !sessionIsCurrent || isReady -> InitializationInstallAction.SKIP
+    session.canInstallInitialization(token) -> InitializationInstallAction.INSTALL
+    session.isLatestInitialization(token) -> InitializationInstallAction.MARK_READY
+    else -> InitializationInstallAction.SKIP
+}
+
+/** Applies persisted status variables only when this loader won the session installation race. */
+internal fun applyInitializedStatusVariables(
+    action: InitializationInstallAction,
+    store: StatusVariableStore,
+    conversationId: Uuid,
+    variables: JsonObject,
+) {
+    if (action == InitializationInstallAction.INSTALL) {
+        store.init(conversationId, variables)
+    }
+}
+
+/** Stable order prevents opposing assistant deletions from taking session locks in different orders. */
+internal fun orderedAssistantConversationDeletionIds(conversationIds: Collection<Uuid>): List<Uuid> =
+    conversationIds.sortedBy(Uuid::toString)
+
+internal data class AssistantConversationDeletionResult(
+    val failedConversationIds: Set<Uuid>,
+    val errors: Map<Uuid, Throwable>,
+) {
+    val succeeded: Boolean get() = failedConversationIds.isEmpty()
+}
+
+data class AssistantDeletionResult(
+    val succeeded: Boolean,
+    val finalizeError: Exception? = null,
+)
+
+/** Holds the assistant gate until both its conversations and its owning settings have been finalized. */
+internal suspend fun runAssistantDeletionGate(
+    assistantId: Uuid,
+    deletingAssistantIds: MutableSet<Uuid>,
+    gateMutex: Mutex = Mutex(),
+    deleteConversations: suspend () -> Boolean,
+    finalizeAssistantDeletion: suspend () -> Unit,
+): AssistantDeletionResult {
+    val acquired = gateMutex.withLock { deletingAssistantIds.add(assistantId) }
+    if (!acquired) return AssistantDeletionResult(succeeded = false)
+    return try {
+        if (!deleteConversations()) return AssistantDeletionResult(succeeded = false)
+        try {
+            finalizeAssistantDeletion()
+            AssistantDeletionResult(succeeded = true)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            AssistantDeletionResult(succeeded = false, finalizeError = error)
+        }
+    } finally {
+        withContext(NonCancellable) {
+            gateMutex.withLock { deletingAssistantIds.remove(assistantId) }
+        }
+    }
+}
+
+enum class ConversationDeleteResult {
+    DELETED,
+    NOT_FOUND,
+    MOVED,
+}
+
+/** A moved conversation is intentionally left to its new assistant during a batch deletion. */
+internal fun isAssistantBatchDeleteSuccess(result: ConversationDeleteResult): Boolean =
+    result != ConversationDeleteResult.NOT_FOUND
+
+/** An assistant being deleted cannot receive new conversations, while moving out remains valid. */
+internal fun canMoveConversationToAssistant(assistantId: Uuid, deletingAssistantIds: Set<Uuid>): Boolean =
+    assistantId !in deletingAssistantIds
+
+internal fun canRestoreConversation(assistantExists: Boolean, assistantIsDeleting: Boolean): Boolean =
+    assistantExists && !assistantIsDeleting
+
+/**
+ * Resolves ownership immediately before the conditional delete. A batch may have collected the id while it belonged
+ * to one assistant, then another operation may have moved it before this lock is reached.
+ */
+internal suspend fun deleteConversationWithExpectedAssistant(
+    expectedAssistantId: Uuid,
+    load: suspend () -> Conversation?,
+    delete: suspend (Conversation) -> Boolean,
+): ConversationDeleteResult {
+    val conversation = load() ?: return ConversationDeleteResult.NOT_FOUND
+    if (conversation.assistantId != expectedAssistantId) return ConversationDeleteResult.MOVED
+    return if (delete(conversation)) ConversationDeleteResult.DELETED else ConversationDeleteResult.MOVED
+}
+
+internal suspend fun deleteAssistantConversationIds(
+    conversationIds: List<Uuid>,
+    delete: suspend (Uuid) -> Boolean,
+): AssistantConversationDeletionResult {
+    val failedConversationIds = linkedSetOf<Uuid>()
+    val errors = linkedMapOf<Uuid, Throwable>()
+    conversationIds.forEach { conversationId ->
+        currentCoroutineContext().ensureActive()
+        try {
+            if (!delete(conversationId)) failedConversationIds += conversationId
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            failedConversationIds += conversationId
+            errors[conversationId] = error
+        }
+    }
+    return AssistantConversationDeletionResult(failedConversationIds, errors)
+}
+
+/** A missing row may only be inserted by an initialized new conversation or an explicit creator. */
+internal fun canPersistConversation(exists: Boolean, isReady: Boolean, allowCreate: Boolean): Boolean =
+    exists || isReady || allowCreate
+
+/** Runtime writes may create the row only for the initialized in-memory conversation created by ChatService. */
+internal fun canStartTavernRuntimeMutation(exists: Boolean, isInitializedNewConversation: Boolean): Boolean =
+    exists || isInitializedNewConversation
+
+internal data class InitializationStatusCandidate<T>(
+    val value: T,
+    val statusVariables: JsonObject,
+)
+
+internal suspend fun <T> renderInitializationStatusCandidate(
+    conversationId: Uuid,
+    initialStatusVariables: JsonObject,
+    render: suspend (StatusVariableStore) -> T,
+): InitializationStatusCandidate<T> {
+    val temporaryStore = StatusVariableStore()
+    temporaryStore.init(conversationId, initialStatusVariables)
+    return InitializationStatusCandidate(
+        value = render(temporaryStore),
+        statusVariables = temporaryStore.getValue(conversationId),
+    )
+}
+
+/** Prevents a failed repository write from publishing candidate variables to the live store. */
+internal suspend fun persistInitializationThenPublishStatusVariables(
+    persistAndPublish: suspend () -> Boolean,
+    publishStatusVariables: () -> Unit,
+): Boolean {
+    if (!persistAndPublish()) return false
+    publishStatusVariables()
+    return true
 }
 
 internal fun resolveLocalGroupTurnSelection(
@@ -415,7 +629,7 @@ class ChatService(
     private val tavernHostEventBus: TavernHostEventBus,
     private val tavernScriptRegistry: TavernScriptRegistry,
     private val tavernSendHookStore: TavernSendHookStore,
-) {
+) : TavernRuntimeMessageService {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
 
@@ -428,6 +642,71 @@ class ChatService(
 
     // 统一会话管理
     private val sessions = ConcurrentHashMap<Uuid, ConversationSession>()
+    private val deletingAssistantIds = ConcurrentHashMap.newKeySet<Uuid>()
+    private val assistantDeletionGateMutex = Mutex()
+    private val tavernRuntimeReadiness = TavernRuntimeConversationReadiness()
+    private val tavernRuntimeMutationLifecycle = TavernRuntimeMutationLifecycle()
+    private val tavernRuntimeMessageStore by lazy {
+        TavernRuntimeMessageMutationStore(object : TavernRuntimeMessagePersistenceAdapter {
+            override fun isReady(conversationId: Uuid): Boolean =
+                tavernRuntimeReadiness.isReady(conversationId)
+
+            override suspend fun <T> mutate(conversationId: Uuid, block: suspend () -> T): T {
+                val session = sessions[conversationId] ?: error("CONVERSATION_NOT_READY")
+                return tavernRuntimeMutationLifecycle.mutate(
+                    canMutate = {
+                        sessions[conversationId] === session &&
+                            isReady(conversationId)
+                    },
+                    acquireSession = session::acquire,
+                    releaseSession = session::release,
+                    withSessionMutationLock = session::withRuntimeMessageLock,
+                    block = {
+                        check(
+                            canStartTavernRuntimeMutation(
+                                exists = conversationRepo.existsConversationById(conversationId),
+                                isInitializedNewConversation = session.state.value.newConversation,
+                            ),
+                        ) {
+                            "CONVERSATION_NOT_READY"
+                        }
+                        block()
+                    },
+                )
+            }
+
+            override fun currentConversation(conversationId: Uuid): Conversation =
+                getConversationFlow(conversationId).value
+
+            override suspend fun persist(conversationId: Uuid, conversation: Conversation): Boolean {
+                return saveConversationUnlocked(conversationId, conversation, PromptTraceCleanup.None)
+            }
+
+            override suspend fun persistAfterMessageRemoval(
+                conversationId: Uuid,
+                before: Conversation,
+                after: Conversation,
+            ): Boolean {
+                return saveConversationUnlocked(
+                    conversationId,
+                    after,
+                    PromptTraceCleanup.RemovedMessages(before),
+                )
+            }
+
+            override fun emit(event: TavernRuntimeMessageMutationEvent) {
+                tavernHostEventBus.emit(
+                    type = event.type,
+                    conversationId = event.conversationId,
+                    payload = buildJsonObject {
+                        put("messageId", event.message.id.toString())
+                        put("role", event.message.role.name.lowercase())
+                        put("preview", event.message.toText().take(500))
+                    },
+                )
+            }
+        })
+    }
     private val _sessionsVersion = MutableStateFlow(0L)
     private val greetingSessionFlows = ConcurrentHashMap<Uuid, MutableStateFlow<TavernGreetingSession?>>()
     private val greetingCommitMutex = Mutex()
@@ -469,14 +748,48 @@ class ChatService(
     private val _generationDoneFlow = MutableSharedFlow<Uuid>()
     val generationDoneFlow: SharedFlow<Uuid> = _generationDoneFlow.asSharedFlow()
 
-    fun cleanup() = runCatching {
-        sessions.values.forEach { it.cleanup() }
-        sessions.clear()
+    suspend fun cleanup() {
+        tavernRuntimeMutationLifecycle.closeAdmissionsAndAwait()
+        val sessionsToClose = sessions.entries.toList()
+        sessionsToClose.forEach { (conversationId, session) ->
+            tavernRuntimeReadiness.clear(conversationId)
+            session.closeForCleanup()
+            if (sessions.remove(conversationId, session)) {
+                _sessionsVersion.value++
+            }
+        }
         conversationPersistenceGate.clear()
         tavernPreviewMutationRebaser.clear()
     }
 
     // ---- Session 管理 ----
+
+    private suspend fun <T> withConversationMutation(
+        conversationId: Uuid,
+        block: suspend (ConversationSession) -> T,
+    ): T {
+        repeat(2) {
+            val session = getOrCreateSession(conversationId)
+            if (session.state.value.assistantId in deletingAssistantIds) {
+                throw IllegalStateException("ASSISTANT_DELETION_IN_PROGRESS")
+            }
+            try {
+                return session.withRefSuspend {
+                    session.withConversationMutationLock {
+                        if (sessions[conversationId] !== session) {
+                            throw IllegalStateException("CONVERSATION_SESSION_REPLACED")
+                        }
+                        block(session)
+                    }
+                }
+            } catch (error: IllegalStateException) {
+                if (error.message !in setOf("CONVERSATION_SESSION_CLOSED", "CONVERSATION_SESSION_REPLACED")) {
+                    throw error
+                }
+            }
+        }
+        throw IllegalStateException("CONVERSATION_SESSION_REPLACED")
+    }
 
     private fun getOrCreateSession(conversationId: Uuid): ConversationSession {
         return sessions.computeIfAbsent(conversationId) { id ->
@@ -503,8 +816,9 @@ class ChatService(
             return
         }
         if (sessions.remove(conversationId, session)) {
-            session.cleanup()
+            tavernRuntimeReadiness.clear(conversationId)
             _sessionsVersion.value++
+            appScope.launch { session.closeForCleanup() }
             Log.i(TAG, "removeSession: $conversationId (remaining: ${sessions.size})")
         }
     }
@@ -537,6 +851,9 @@ class ChatService(
         return getOrCreateSession(conversationId).state
     }
 
+    override fun isTavernRuntimeConversationReady(conversationId: Uuid): Boolean =
+        tavernRuntimeReadiness.isReady(conversationId)
+
     fun getGenerationJobStateFlow(conversationId: Uuid): Flow<Job?> {
         val session = sessions[conversationId] ?: return flowOf(null)
         return session.generationJob
@@ -565,11 +882,13 @@ class ChatService(
     // ---- 初始化对话 ----
 
     suspend fun initializeConversation(conversationId: Uuid) {
-        getOrCreateSession(conversationId) // 确保 session 存在
+        val session = getOrCreateSession(conversationId)
+        if (tavernRuntimeReadiness.isReady(conversationId)) return
+        val initializationToken = session.beginInitialization()
         val conversation = conversationRepo.getConversationById(conversationId)
         if (conversation != null) {
+            if (conversation.assistantId in deletingAssistantIds) return
             settingsStore.updateAssistant(conversation.assistantId)
-            statusVariableStore.init(conversationId, conversation.statusVariables)
             val settings = settingsStore.settingsFlowRaw.first()
             val assistant = settings.getAssistantById(conversation.assistantId)
                 ?: settings.getCurrentAssistant()
@@ -602,17 +921,18 @@ class ChatService(
                 cleanedConversation.withLegacyOpeningMetadata(it).withoutDuplicateLegacyOpeningCopies(it)
             }
                 ?: cleanedConversation
-            updateConversation(conversationId, annotatedConversation)
+            installInitializedConversation(
+                conversationId = conversationId,
+                session = session,
+                token = initializationToken,
+                conversation = annotatedConversation,
+                promptTraceCleanup = when {
+                    withoutNudges != renderedConversation -> PromptTraceCleanup.RemovedMessages(renderedConversation)
+                    else -> PromptTraceCleanup.None
+                },
+                shouldPersist = annotatedConversation != renderedConversation,
+            )
             restoreCommittedOpeningRuntime(conversationId, annotatedConversation, settings)
-            when {
-                withoutNudges != renderedConversation -> saveConversationAfterRemovingMessages(
-                    conversationId = conversationId,
-                    before = renderedConversation,
-                    after = annotatedConversation,
-                )
-
-                annotatedConversation != renderedConversation -> saveConversation(conversationId, annotatedConversation)
-            }
             if (card != null && card.allGreetings().isNotEmpty() &&
                 !requiresNewConversationForGreetingChange(annotatedConversation)
             ) {
@@ -623,26 +943,95 @@ class ChatService(
             val currentSettings = settingsStore.settingsFlowRaw.first()
             val assistant = currentSettings.getCurrentAssistant()
             val card = assistant.tavernCardJson?.let(TavernCharacterCard::fromJson)
-            statusVariableStore.init(conversationId, JsonObject(emptyMap()))
-            val presetMessages = renderPresetMessages(
+            if (assistant.id in deletingAssistantIds) return
+            val presetCandidate = renderInitializationStatusCandidate(
                 conversationId = conversationId,
-                settings = currentSettings,
-                assistant = assistant,
-                messages = card?.let { filterTavernOpeningPresetMessages(assistant.presetMessages, it) }
-                    ?: assistant.presetMessages,
-            )
+                initialStatusVariables = JsonObject(emptyMap()),
+            ) { temporaryStore ->
+                renderPresetMessages(
+                    conversationId = conversationId,
+                    settings = currentSettings,
+                    assistant = assistant,
+                    statusVariableStore = temporaryStore,
+                    messages = card?.let { filterTavernOpeningPresetMessages(assistant.presetMessages, it) }
+                        ?: assistant.presetMessages,
+                )
+            }
             var newConversation = Conversation.ofId(
                 id = conversationId,
                 assistantId = assistant.id,
                 newConversation = true
-            ).updateCurrentMessages(presetMessages)
-                .copy(statusVariables = statusVariableStore.getValue(conversationId))
+            ).updateCurrentMessages(presetCandidate.value)
+                .copy(statusVariables = presetCandidate.statusVariables)
             if (card != null && card.allGreetings().isNotEmpty()) {
                 newConversation = newConversation.withLegacyOpeningMetadata(card).withoutOpeningMessages()
             }
-            updateConversation(conversationId, newConversation)
+            installInitializedConversation(
+                conversationId = conversationId,
+                session = session,
+                token = initializationToken,
+                conversation = newConversation,
+                promptTraceCleanup = PromptTraceCleanup.None,
+                shouldPersist = false,
+            )
             if (card != null && card.allGreetings().isNotEmpty()) {
-                val greetingSession = prepareGreetingSession(conversationId, newConversation, card)
+                prepareGreetingSession(conversationId, newConversation, card)
+            }
+        }
+    }
+
+    /**
+     * Repository loading and rendering intentionally happen before this method. The final install verifies that no
+     * newer session or mutation won the race, so an old load can never replace live runtime changes.
+     */
+    private suspend fun installInitializedConversation(
+        conversationId: Uuid,
+        session: ConversationSession,
+        token: ConversationInitializationToken,
+        conversation: Conversation,
+        promptTraceCleanup: PromptTraceCleanup,
+        shouldPersist: Boolean,
+    ) {
+        // Keep assistant admission and conversation publication in one critical section. Otherwise an initializer
+        // that started before assistant deletion could publish after the deletion gate has already been established.
+        assistantDeletionGateMutex.withLock {
+            if (conversation.assistantId in deletingAssistantIds) return
+            session.withRefSuspend {
+                session.withConversationMutationLock {
+                    val action = initializationInstallAction(
+                        session = session,
+                        token = token,
+                        sessionIsCurrent = sessions[conversationId] === session,
+                        isReady = tavernRuntimeReadiness.isReady(conversationId),
+                    )
+                    when (action) {
+                        InitializationInstallAction.INSTALL -> {
+                            val installed = persistInitializationThenPublishStatusVariables(
+                                persistAndPublish = {
+                                    if (shouldPersist) {
+                                        saveConversationUnlocked(conversationId, conversation, promptTraceCleanup)
+                                    } else {
+                                        updateConversation(conversationId, conversation)
+                                        true
+                                    }
+                                },
+                                publishStatusVariables = {
+                                    applyInitializedStatusVariables(
+                                        action = action,
+                                        store = statusVariableStore,
+                                        conversationId = conversationId,
+                                        variables = conversation.statusVariables,
+                                    )
+                                },
+                            )
+                            if (!installed) return@withConversationMutationLock
+                            tavernRuntimeReadiness.markReady(conversationId)
+                        }
+
+                        InitializationInstallAction.MARK_READY -> tavernRuntimeReadiness.markReady(conversationId)
+                        InitializationInstallAction.SKIP -> Unit
+                    }
+                }
             }
         }
     }
@@ -658,14 +1047,20 @@ class ChatService(
         val messages = conversation.currentMessages
         if (!messages.hasUnrenderedStatusInstructions()) return conversation
 
-        val renderedMessages = renderPresetMessages(
+        val candidate = renderInitializationStatusCandidate(
             conversationId = conversationId,
-            settings = settings,
-            assistant = assistant,
-            messages = messages,
-        )
-        return conversation.updateCurrentMessages(renderedMessages)
-            .copy(statusVariables = statusVariableStore.getValue(conversationId))
+            initialStatusVariables = conversation.statusVariables,
+        ) { temporaryStore ->
+            renderPresetMessages(
+                conversationId = conversationId,
+                settings = settings,
+                assistant = assistant,
+                messages = messages,
+                statusVariableStore = temporaryStore,
+            )
+        }
+        return conversation.updateCurrentMessages(candidate.value)
+            .copy(statusVariables = candidate.statusVariables)
     }
 
     private fun List<UIMessage>.hasUnrenderedStatusInstructions(): Boolean {
@@ -683,6 +1078,8 @@ class ChatService(
         settings: me.rerere.rikkahub.data.datastore.Settings,
         assistant: Assistant,
         messages: List<UIMessage> = assistant.presetMessages,
+        statusVariableStore: StatusVariableStore? = null,
+        allowStatusVariableMutations: Boolean = true,
     ): List<UIMessage> {
         val presetMessages = messages
         if (presetMessages.isEmpty()) return presetMessages
@@ -702,6 +1099,8 @@ class ChatService(
             assistant = assistant,
             settings = settings,
             conversationId = conversationId,
+            statusVariableStore = statusVariableStore,
+            allowStatusVariableMutations = allowStatusVariableMutations,
         )
     }
 
@@ -727,14 +1126,22 @@ class ChatService(
             assistant = assistant,
             messages = listOf(UIMessage.assistantHtml(greeting)),
         )
-        if (renderedGreeting.isNotEmpty()) {
-            saveConversation(
-                conversationId,
-                conversation.copy(
+        if (renderedGreeting.isEmpty()) return
+
+        withConversationMutation(conversationId) { session ->
+            val latestConversation = session.state.value
+            val updatedConversation = if (latestConversation.currentMessages.any { it.role == MessageRole.USER }) {
+                latestConversation.copy(
+                    messageNodes = latestConversation.messageNodes + renderedGreeting.map { it.toMessageNode() },
+                    statusVariables = statusVariableStore.getValue(conversationId),
+                )
+            } else {
+                latestConversation.copy(
                     messageNodes = renderedGreeting.map { it.toMessageNode() },
                     statusVariables = statusVariableStore.getValue(conversationId),
-                ),
-            )
+                )
+            }
+            saveConversationUnlocked(conversationId, updatedConversation, PromptTraceCleanup.None)
         }
     }
 
@@ -872,8 +1279,7 @@ class ChatService(
             statusVariableStore.set(conversationId, before.variables)
             saveConversation(conversationId, before.conversation)
         },
-        )
-    }
+        )    }
 
     private suspend fun appendUserMessage(
         conversationId: Uuid,
@@ -883,7 +1289,8 @@ class ChatService(
         commitSelectedGreetingIfNeeded(conversationId)
         val currentConversation = session.state.value
         val settings = settingsStore.settingsFlow.first()
-        val assistant = settings.getAssistantById(currentConversation.assistantId)
+        val assistantId = session.state.value.assistantId
+        val assistant = settings.getAssistantById(assistantId)
             ?: settings.getCurrentAssistant()
         restoreCommittedOpeningRuntime(conversationId, currentConversation, settings)
         val processedContent = preprocessUserInputParts(content, assistant, conversationId)
@@ -891,11 +1298,14 @@ class ChatService(
             role = MessageRole.USER,
             parts = processedContent,
         )
-        val addressedConversation = currentConversation.withUpdatedGroupAddressedState(assistant, userMessage)
-        val newConversation = addressedConversation.copy(
-            messageNodes = addressedConversation.messageNodes + userMessage.toMessageNode(),
-        )
-        saveConversation(conversationId, newConversation)
+        withConversationMutation(conversationId) { currentSession ->
+            val currentConversation = currentSession.state.value
+            val addressedConversation = currentConversation.withUpdatedGroupAddressedState(assistant, userMessage)
+            val newConversation = addressedConversation.copy(
+                messageNodes = addressedConversation.messageNodes + userMessage.toMessageNode(),
+            )
+            saveConversationUnlocked(conversationId, newConversation, PromptTraceCleanup.None)
+        }
     }
 
     fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) {
@@ -913,7 +1323,8 @@ class ChatService(
                 commitSelectedGreetingIfNeeded(conversationId)
                 val currentConversation = session.state.value
                 val settings = settingsStore.settingsFlow.first()
-                val assistant = settings.getAssistantById(currentConversation.assistantId)
+                val assistantId = session.state.value.assistantId
+                val assistant = settings.getAssistantById(assistantId)
                     ?: settings.getCurrentAssistant()
                 restoreCommittedOpeningRuntime(conversationId, currentConversation, settings)
                 val processedContent = preprocessUserInputParts(content, assistant, conversationId)
@@ -927,16 +1338,17 @@ class ChatService(
                     role = MessageRole.USER,
                     parts = hookedContent,
                 )
-                val addressedConversation = currentConversation.withUpdatedGroupAddressedState(
-                    assistant = assistant,
-                    userMessage = userMessage,
-                )
-
-                // 添加消息到列表
-                val newConversation = addressedConversation.copy(
-                    messageNodes = addressedConversation.messageNodes + userMessage.toMessageNode(),
-                )
-                saveConversation(conversationId, newConversation)
+                withConversationMutation(conversationId) { currentSession ->
+                    val currentConversation = currentSession.state.value
+                    val addressedConversation = currentConversation.withUpdatedGroupAddressedState(
+                        assistant = assistant,
+                        userMessage = userMessage,
+                    )
+                    val newConversation = addressedConversation.copy(
+                        messageNodes = addressedConversation.messageNodes + userMessage.toMessageNode(),
+                    )
+                    saveConversationUnlocked(conversationId, newConversation, PromptTraceCleanup.None)
+                }
 
                 // 酒馆脚本宿主事件：消息发送前
                 tavernHostEventBus.emit(
@@ -1076,7 +1488,7 @@ class ChatService(
         tavernSendHookStore.installCommitted(conversationId, controller)
     }
 
-    private fun preprocessUserInputParts(
+    private suspend fun preprocessUserInputParts(
         parts: List<UIMessagePart>,
         assistant: Assistant,
         conversationId: Uuid,
@@ -1091,17 +1503,15 @@ class ChatService(
                     )
                     // 酒馆脚本注册宏：USER 正则之后同步展开（mutate 通道；失败保留原文）；
                     // 宏是脚本功能，受 allowScripts 总开关保护——关闭时跳过展开
-                    val macroExpanded = expandMacrosIfAllowed(
-                        expander = tavernScriptRegistry,
-                        text = regexApplied,
-                        context = MacroExpandContext(
+                    val macroContext = MacroExpandContext(
                             userName = settingsStore.settingsFlow.value.displaySetting.userNickname
                                 .ifBlank { "User" },
                             charName = assistant.name,
                             conversationId = conversationId.toString(),
-                        ),
-                        allowScripts = settingsStore.settingsFlow.value.runtimePermissions.allowScripts,
-                    )
+                        )
+                    val macroExpanded = if (settingsStore.settingsFlow.value.runtimePermissions.allowScripts) {
+                        tavernScriptRegistry.expandMacrosAsync(regexApplied, macroContext)
+                    } else regexApplied
                     part.copy(text = macroExpanded)
                 }
 
@@ -1169,26 +1579,28 @@ class ChatService(
             )
         }
         val result = session.withGroupDirectorLock {
-            val current = session.state.value
-            val enabledIds = assistant.groupMembers.filter { it.enabled }.map { it.id }
-            val orderedIds = normalizeGroupMemberQueue(current.groupMemberQueue, enabledIds)
-            val reduced = groupDirectorEngine.reduce(
-                state = current.groupRuntimeState.director,
-                command = command,
-                context = GroupDirectorCommandContext(
-                    generationActive = session.isGroupReplyActiveLocked(),
-                    orderedEnabledMemberIds = orderedIds,
-                ),
-            )
-            if (reduced.state != current.groupRuntimeState.director) {
-                saveConversation(
-                    conversationId,
-                    current.copy(
-                        groupRuntimeState = current.groupRuntimeState.copy(director = reduced.state)
+            mutateConversation(session) { current ->
+                val enabledIds = assistant.groupMembers.filter { it.enabled }.map { it.id }
+                val orderedIds = normalizeGroupMemberQueue(current.groupMemberQueue, enabledIds)
+                val reduced = groupDirectorEngine.reduce(
+                    state = current.groupRuntimeState.director,
+                    command = command,
+                    context = GroupDirectorCommandContext(
+                        generationActive = session.isGroupReplyActiveLocked(),
+                        orderedEnabledMemberIds = orderedIds,
                     ),
                 )
+                if (reduced.state != current.groupRuntimeState.director) {
+                    saveConversationUnlocked(
+                        conversationId,
+                        current.copy(
+                            groupRuntimeState = current.groupRuntimeState.copy(director = reduced.state),
+                        ),
+                        PromptTraceCleanup.None,
+                    )
+                }
+                reduced
             }
-            reduced
         }
         if (result.status == GroupDirectorCommandStatus.APPLIED && result.shouldStartGeneration) {
             startGroupDirectorGeneration(conversationId)
@@ -1217,7 +1629,7 @@ class ChatService(
                         generationJob = coroutineContext[Job],
                         engine = groupDirectorEngine,
                     ) { updated ->
-                        saveConversation(conversationId, updated)
+                        saveConversationUnlocked(conversationId, updated, PromptTraceCleanup.None)
                     }
                     throw error
                 } catch (error: Exception) {
@@ -1242,24 +1654,23 @@ class ChatService(
 
         val job = appScope.launch {
             try {
-                val conversation = session.state.value
-
                 if (message.role == MessageRole.USER) {
-                    // 如果是用户消息，则截止到当前消息
-                    val newConversation = buildConversationAfterUserRegeneration(
-                        conversation = conversation,
-                        messageId = message.id,
-                    )
-                    saveConversationAfterRemovingMessages(
-                        conversationId = conversationId,
-                        before = conversation,
-                        after = newConversation,
-                    )
+                    withConversationMutation(conversationId) { currentSession ->
+                        val conversation = currentSession.state.value
+                        val newConversation = buildConversationAfterUserRegeneration(conversation, message.id)
+                        saveConversationUnlocked(
+                            conversationId,
+                            newConversation,
+                            PromptTraceCleanup.RemovedMessages(conversation),
+                        )
+                    }
                     handleMessageComplete(conversationId, memberId = memberId, allowAutoChain = false)
                 } else {
                     if (regenerateAssistantMsg) {
-                        val node = conversation.getMessageNodeByMessage(message)
-                        val nodeIndex = conversation.messageNodes.indexOf(node)
+                        val nodeIndex = withConversationMutation(conversationId) { currentSession ->
+                            val conversation = currentSession.state.value
+                            conversation.messageNodes.indexOf(conversation.getMessageNodeByMessage(message))
+                        }
                         handleMessageComplete(
                             conversationId,
                             memberId = memberId,
@@ -1267,7 +1678,13 @@ class ChatService(
                             allowAutoChain = memberId == null,
                         )
                     } else {
-                        saveConversation(conversationId, conversation)
+                        withConversationMutation(conversationId) { currentSession ->
+                            saveConversationUnlocked(
+                                conversationId,
+                                currentSession.state.value,
+                                PromptTraceCleanup.None,
+                            )
+                        }
                     }
                 }
 
@@ -1296,38 +1713,37 @@ class ChatService(
 
         val job = appScope.launch {
             try {
-                val conversation = session.state.value
                 val newApprovalState = when {
                     answer != null -> ToolApprovalState.Answered(answer)
                     approved -> ToolApprovalState.Approved
                     else -> ToolApprovalState.Denied(reason)
                 }
 
-                // Update the tool approval state
-                val updatedNodes = conversation.messageNodes.map { node ->
-                    node.copy(
-                        messages = node.messages.map { msg ->
-                            msg.copy(
-                                parts = msg.parts.map { part ->
-                                    when {
-                                        part is UIMessagePart.Tool && part.toolCallId == toolCallId -> {
-                                            part.copy(approvalState = newApprovalState)
+                val hasPendingTools = withConversationMutation(conversationId) { currentSession ->
+                    val conversation = currentSession.state.value
+                    val updatedNodes = conversation.messageNodes.map { node ->
+                        node.copy(
+                            messages = node.messages.map { msg ->
+                                msg.copy(
+                                    parts = msg.parts.map { part ->
+                                        when {
+                                            part is UIMessagePart.Tool && part.toolCallId == toolCallId -> {
+                                                part.copy(approvalState = newApprovalState)
+                                            }
+
+                                            else -> part
                                         }
-
-                                        else -> part
                                     }
-                                }
-                            )
+                                )
+                            }
+                        )
+                    }
+                    val updatedConversation = conversation.copy(messageNodes = updatedNodes)
+                    saveConversationUnlocked(conversationId, updatedConversation, PromptTraceCleanup.None)
+                    updatedNodes.any { node ->
+                        node.currentMessage.parts.any { part ->
+                            part is UIMessagePart.Tool && part.isPending
                         }
-                    )
-                }
-                val updatedConversation = conversation.copy(messageNodes = updatedNodes)
-                saveConversation(conversationId, updatedConversation)
-
-                // Check if there are still pending tools
-                val hasPendingTools = updatedNodes.any { node ->
-                    node.currentMessage.parts.any { part ->
-                        part is UIMessagePart.Tool && part.isPending
                     }
                 }
 
@@ -1420,6 +1836,7 @@ class ChatService(
         } else {
             model.displayName
         }
+        val useExternalWebSearch = shouldUseExternalWebSearch(assistant, model)
         var dynamicContextResult: DynamicGroupContextResult? = null
 
         runCatching {
@@ -1427,16 +1844,18 @@ class ChatService(
             // Reset suggestions without overwriting group speaker state persisted during resolution.
             val generationSession = getOrCreateSession(conversationId)
             generationSession.withGroupDirectorLock {
-                val resolvedConversation = generationSession.state.value
-                updateConversation(
-                    conversationId,
-                    conversationAtGenerationStart(initialConversation, resolvedConversation),
-                )
+                generationSession.withConversationMutationLock {
+                    val resolvedConversation = generationSession.state.value
+                    updateConversation(
+                        conversationId,
+                        conversationAtGenerationStart(initialConversation, resolvedConversation),
+                    )
+                }
             }
 
             // memory tool
             if (!model.abilities.contains(ModelAbility.TOOL)) {
-                if (assistant.enableWebSearch || mcpManager.getAllAvailableTools().isNotEmpty()) {
+                if (useExternalWebSearch || mcpManager.getAllAvailableTools().isNotEmpty()) {
                     addError(
                         IllegalStateException(context.getString(R.string.tools_warning)),
                         conversationId,
@@ -1448,17 +1867,18 @@ class ChatService(
             val conversation = if (groupAssistant.assistantType == AssistantType.GROUP) {
                 val session = getOrCreateSession(conversationId)
                 session.withGroupDirectorLock {
-                    checkInvalidMessages(conversationId)
-                    val rawConversation = session.state.value
-                    val cleanedConversation = rawConversation.removeGroupContinuationNudgeNodes()
-                    if (cleanedConversation != rawConversation) {
-                        saveConversationAfterRemovingMessages(
-                            conversationId = conversationId,
-                            before = rawConversation,
-                            after = cleanedConversation,
-                        )
+                    mutateConversation(session) { rawConversation ->
+                        val checkedConversation = rawConversation.removeInvalidUnresolvedToolMessages()
+                        val cleanedConversation = checkedConversation.removeGroupContinuationNudgeNodes()
+                        if (cleanedConversation != rawConversation) {
+                            saveConversationUnlocked(
+                                conversationId,
+                                cleanedConversation,
+                                PromptTraceCleanup.RemovedMessages(rawConversation),
+                            )
+                        }
+                        cleanedConversation
                     }
-                    cleanedConversation
                 }
             } else {
                 checkInvalidMessages(conversationId)
@@ -1473,7 +1893,9 @@ class ChatService(
             )
             dynamicContextResult = groupContext.dynamicResult
             val visibleMessages = groupContext.visibleMessages.applyEnhancementPrompt(assistant)
-            val localSpeakerScore = if (effectiveMemberId != null && groupAssistant.assistantType == AssistantType.GROUP) {
+            val localSpeakerScore = if (
+                effectiveMemberId != null && groupAssistant.assistantType == AssistantType.GROUP
+            ) {
                 GroupSpeakerScorer().score(
                     groupAssistant = groupAssistant,
                     messages = conversation.currentMessages,
@@ -1566,7 +1988,7 @@ class ChatService(
                 },
                 outputTransformers = outputTransformers,
                 tools = buildList {
-                    if (assistant.enableWebSearch) {
+                    if (useExternalWebSearch) {
                         addAll(createSearchTools(settings))
                     }
                     addAll(localTools.getTools(assistant.localTools))
@@ -1586,7 +2008,9 @@ class ChatService(
                         val invalidNames = allTools
                             .map { it.second }
                             .distinct()
-                            .filter { name -> name.isEmpty() || !name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' } }
+                            .filter { name ->
+                                name.isEmpty() || !name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' }
+                            }
                         if (invalidNames.isNotEmpty()) {
                             addError(
                                 error = IllegalStateException(
@@ -1617,14 +2041,16 @@ class ChatService(
                 // 可能被取消了，或者意外结束，兜底更新
                 val session = getOrCreateSession(conversationId)
                 val updatedConversation = session.withGroupDirectorLock {
-                    val updated = session.state.value.copy(
-                        messageNodes = session.state.value.messageNodes.map { node ->
-                            node.copy(messages = node.messages.map { it.finishReasoning() })
-                        },
-                        updateAt = Instant.now(),
-                    )
-                    updateConversation(conversationId, updated)
-                    updated
+                    session.withConversationMutationLock {
+                        val updated = session.state.value.copy(
+                            messageNodes = session.state.value.messageNodes.map { node ->
+                                node.copy(messages = node.messages.map { it.finishReasoning() })
+                            },
+                            updateAt = Instant.now(),
+                        )
+                        updateConversation(conversationId, updated)
+                        updated
+                    }
                 }
 
                 // 生成结束：取消 Live Update 通知，后台时发送完成通知
@@ -1649,9 +2075,11 @@ class ChatService(
                         } else chunk.messages
                         val session = getOrCreateSession(conversationId)
                         val updatedConversation = session.withGroupDirectorLock {
-                            val merged = session.state.value.mergeMessages(stampedMessages)
-                            updateConversation(conversationId, merged)
-                            merged
+                            session.withConversationMutationLock {
+                                val merged = session.state.value.mergeMessages(stampedMessages)
+                                updateConversation(conversationId, merged)
+                                merged
+                            }
                         }
 
                         chunk.messages.lastOrNull()?.let { lastMessage ->
@@ -1670,7 +2098,7 @@ class ChatService(
                         generationJob = generationJob,
                         engine = groupDirectorEngine,
                     ) { updated ->
-                        saveConversation(conversationId, updated)
+                        saveConversationUnlocked(conversationId, updated, PromptTraceCleanup.None)
                     }
                 }
                 throw it
@@ -1678,15 +2106,17 @@ class ChatService(
             if (groupAssistant.assistantType == AssistantType.GROUP && effectiveMemberId != null) {
                 val session = getOrCreateSession(conversationId)
                 session.completeGroupReplyHandoff(generationJob) {
-                    val current = session.state.value
-                    val failedState = groupDirectorEngine.afterFailure(current.groupRuntimeState.director)
-                    if (failedState != current.groupRuntimeState.director) {
-                        saveConversation(
-                            conversationId,
-                            current.copy(
-                                groupRuntimeState = current.groupRuntimeState.copy(director = failedState)
-                            ),
-                        )
+                    mutateConversation(session) { current ->
+                        val failedState = groupDirectorEngine.afterFailure(current.groupRuntimeState.director)
+                        if (failedState != current.groupRuntimeState.director) {
+                            saveConversationUnlocked(
+                                conversationId,
+                                current.copy(
+                                    groupRuntimeState = current.groupRuntimeState.copy(director = failedState)
+                                ),
+                                PromptTraceCleanup.None,
+                            )
+                        }
                     }
                     GroupGenerationHandoffResult(Unit, shouldContinue = false)
                 }
@@ -1704,47 +2134,51 @@ class ChatService(
             ) {
                 val session = getOrCreateSession(conversationId)
                 session.completeGroupReplyHandoff(generationJob) {
-                    val latest = session.state.value
-                    val runtimeWithDebug = latest.groupRuntimeState.copy(
-                        lastResolverDebug = dynamicContextResult?.debugState
-                            ?: latest.groupRuntimeState.lastResolverDebug,
-                    )
-                    val updatedRuntime = GroupRuntimeStateUpdater().updateAfterReply(
-                        previous = runtimeWithDebug,
-                        groupAssistant = groupAssistant,
-                        messages = latest.currentMessages,
-                        speakerId = effectiveMemberId,
-                    )
-                    val updated = latest.copy(
-                        groupRuntimeState = updatedRuntime.copy(
-                            director = groupDirectorEngine.afterReply(
-                                updatedRuntime.director,
-                                effectiveMemberId,
-                            )
+                    val result = mutateConversation(session) { latest ->
+                        val runtimeWithDebug = latest.groupRuntimeState.copy(
+                            lastResolverDebug = dynamicContextResult?.debugState
+                                ?: latest.groupRuntimeState.lastResolverDebug,
                         )
-                    )
-                    val alreadySent = countGroupRepliesSinceLastUserMessage(updated, groupAssistant)
-                    val director = updated.groupRuntimeState.director
-                    val effectiveStrategy = groupDirectorEngine.effectiveStrategy(
-                        director,
-                        groupAssistant.turnTakingStrategy,
-                    )
-                    val shouldContinue = allowAutoChain && groupDirectorEngine.shouldContinueAfterReply(
-                        state = director,
-                        effectiveStrategy = effectiveStrategy,
-                        isAddressedTurn = isAddressedTurn,
-                        alreadySent = alreadySent,
-                        configuredLimit = groupAssistant.groupReplyOptions.maxAutoRepliesPerUserTurn,
-                    )
-                    saveConversation(conversationId, updated)
-                    GroupGenerationHandoffResult(updated, shouldContinue)
+                        val updatedRuntime = GroupRuntimeStateUpdater().updateAfterReply(
+                            previous = runtimeWithDebug,
+                            groupAssistant = groupAssistant,
+                            messages = latest.currentMessages,
+                            speakerId = effectiveMemberId,
+                        )
+                        val updated = latest.copy(
+                            groupRuntimeState = updatedRuntime.copy(
+                                director = groupDirectorEngine.afterReply(
+                                    updatedRuntime.director,
+                                    effectiveMemberId,
+                                ),
+                            ),
+                        )
+                        val alreadySent = countGroupRepliesSinceLastUserMessage(updated, groupAssistant)
+                        val director = updated.groupRuntimeState.director
+                        val effectiveStrategy = groupDirectorEngine.effectiveStrategy(
+                            director,
+                            groupAssistant.turnTakingStrategy,
+                        )
+                        val shouldContinue = allowAutoChain && groupDirectorEngine.shouldContinueAfterReply(
+                            state = director,
+                            effectiveStrategy = effectiveStrategy,
+                            isAddressedTurn = isAddressedTurn,
+                            alreadySent = alreadySent,
+                            configuredLimit = groupAssistant.groupReplyOptions.maxAutoRepliesPerUserTurn,
+                        )
+                        saveConversationUnlocked(conversationId, updated, PromptTraceCleanup.None)
+                        GroupGenerationHandoffResult(updated, shouldContinue)
+                    }
+                    result
                 }
             } else {
                 null
             }
             val conversationAfterRuntimeUpdate = groupHandoff?.value ?: run {
-                getConversationFlow(conversationId).value.also {
-                    saveConversation(conversationId, it)
+                withConversationMutation(conversationId) { session ->
+                    session.state.value.also { conversation ->
+                        saveConversationUnlocked(conversationId, conversation, PromptTraceCleanup.None)
+                    }
                 }
             }
 
@@ -1768,7 +2202,8 @@ class ChatService(
         if (workspace.shellStatus != WorkspaceShellStatus.READY.name) {
             Log.d(
                 TAG,
-                "createWorkspaceToolsIfReady: skip workspace tools, workspace=$workspaceId, status=${workspace.shellStatus}"
+                "createWorkspaceToolsIfReady: skip workspace tools, workspace=$workspaceId, " +
+                    "status=${workspace.shellStatus}",
             )
             return emptyList()
         }
@@ -1778,14 +2213,16 @@ class ChatService(
     // ---- 检查无效消息 ----
 
     private suspend fun checkInvalidMessages(conversationId: Uuid) {
-        val before = getConversationFlow(conversationId).value
-        val after = before.removeInvalidUnresolvedToolMessages()
-        if (after != before) {
-            saveConversationAfterRemovingMessages(
-                conversationId = conversationId,
-                before = before,
-                after = after,
-            )
+        withConversationMutation(conversationId) { session ->
+            val before = session.state.value
+            val after = before.removeInvalidUnresolvedToolMessages()
+            if (after != before) {
+                saveConversationUnlocked(
+                    conversationId,
+                    after,
+                    PromptTraceCleanup.RemovedMessages(before),
+                )
+            }
         }
     }
 
@@ -1793,7 +2230,8 @@ class ChatService(
         return tool.copy(
             output = listOf(
                 UIMessagePart.Text(
-                    """{"status":"cancelled","error":"Generation cancelled by user before tool execution completed."}"""
+                    """{"status":"cancelled","error":"Generation cancelled by user before tool execution """ +
+                        """completed."}"""
                 )
             ),
             approvalState = ToolApprovalState.Denied("Generation cancelled by user")
@@ -1801,22 +2239,21 @@ class ChatService(
     }
 
     private suspend fun finishInterruptedPendingTools(conversationId: Uuid) {
-        val currentConversation = getConversationFlow(conversationId).value
-        val lastNode = currentConversation.messageNodes.lastOrNull() ?: return
-        val lastMessage = lastNode.currentMessage
-        val updatedMessage = lastMessage.finishPendingTools(::cancelToolByUser)
-        if (updatedMessage == lastMessage) {
-            return
-        }
-
-        val updatedConversation = currentConversation.copy(
-            messageNodes = currentConversation.messageNodes.dropLast(1) + lastNode.copy(
-                messages = lastNode.messages.map { message ->
-                    if (message.id == lastMessage.id) updatedMessage else message
-                }
+        withConversationMutation(conversationId) { session ->
+            val currentConversation = session.state.value
+            val lastNode = currentConversation.messageNodes.lastOrNull() ?: return@withConversationMutation
+            val lastMessage = lastNode.currentMessage
+            val updatedMessage = lastMessage.finishPendingTools(::cancelToolByUser)
+            if (updatedMessage == lastMessage) return@withConversationMutation
+            val updatedConversation = currentConversation.copy(
+                messageNodes = currentConversation.messageNodes.dropLast(1) + lastNode.copy(
+                    messages = lastNode.messages.map { message ->
+                        if (message.id == lastMessage.id) updatedMessage else message
+                    }
+                )
             )
-        )
-        saveConversation(conversationId, updatedConversation)
+            saveConversationUnlocked(conversationId, updatedConversation, PromptTraceCleanup.None)
+        }
     }
 
     // ---- 生成标题 ----
@@ -1825,18 +2262,19 @@ class ChatService(
         conversationId: Uuid,
         conversation: Conversation,
         force: Boolean = false
-    ) {
+    ) = withContext(Dispatchers.IO) {
         val shouldGenerate = when {
             force -> true
             conversation.title.isBlank() -> true
             else -> false
         }
-        if (!shouldGenerate) return
+        if (!shouldGenerate) return@withContext
 
         runCatching {
             val settings = settingsStore.settingsFlow.first()
-            val model = settings.findModelById(settings.titleModelId, fallback = settings.fastModelId) ?: return
-            val provider = model.findProvider(settings.providers) ?: return
+            val model = settings.findModelById(settings.titleModelId, fallback = settings.fastModelId)
+                ?: return@runCatching
+            val provider = model.findProvider(settings.providers) ?: return@runCatching
 
             val providerHandler = providerManager.getProviderByType(provider)
             val result = providerHandler.generateText(
@@ -1852,11 +2290,12 @@ class ChatService(
                 params = backgroundTextGenerationParams(model),
             )
 
-            // 生成完，conversation可能不是最新了，因此需要重新获取
-            conversationRepo.getConversationById(conversation.id)?.let {
-                saveConversation(
+            val title = result.message.toText().trim()
+            withConversationMutation(conversationId) { session ->
+                saveConversationUnlocked(
                     conversationId,
-                    it.copy(title = result.choices[0].message?.toText()?.trim() ?: "")
+                    session.state.value.copy(title = title),
+                    PromptTraceCleanup.None,
                 )
             }
         }.onFailure {
@@ -1872,18 +2311,23 @@ class ChatService(
 
     // ---- 生成建议 ----
 
-    suspend fun generateSuggestion(conversationId: Uuid, conversation: Conversation) {
+    suspend fun generateSuggestion(
+        conversationId: Uuid,
+        conversation: Conversation,
+    ) = withContext(Dispatchers.IO) {
         runCatching {
             val settings = settingsStore.settingsFlow.first()
-            if (!settings.enableSuggestion) return
-            val model = settings.findModelById(settings.suggestionModelId, fallback = settings.fastModelId) ?: return
-            val provider = model.findProvider(settings.providers) ?: return
+            if (!settings.enableSuggestion) return@runCatching
+            val model = settings.findModelById(settings.suggestionModelId, fallback = settings.fastModelId)
+                ?: return@runCatching
+            val provider = model.findProvider(settings.providers) ?: return@runCatching
 
             sessions[conversationId]?.let { session ->
-                updateConversation(
-                    conversationId,
-                    session.state.value.copy(chatSuggestions = emptyList())
-                )
+                session.withRefSuspend {
+                    mutateConversation(session) { current ->
+                        updateConversation(conversationId, current.copy(chatSuggestions = emptyList()))
+                    }
+                }
             }
 
             val providerHandler = providerManager.getProviderByType(provider)
@@ -1900,20 +2344,16 @@ class ChatService(
                 params = backgroundTextGenerationParams(model),
             )
             val suggestions =
-                result.choices[0].message?.toText()?.split("\n")?.map { it.trim() }
-                    ?.filter { it.isNotBlank() } ?: emptyList()
+                result.message.toText().split("\n").map { it.trim() }
+                    .filter { it.isNotBlank() }
 
-            val latestConversation = conversationRepo.getConversationById(conversationId)
-                ?: sessions[conversationId]?.state?.value
-                ?: conversation
-            saveConversation(
-                conversationId,
-                latestConversation.copy(
-                    chatSuggestions = suggestions.take(
-                        10
-                    )
+            withConversationMutation(conversationId) { session ->
+                saveConversationUnlocked(
+                    conversationId,
+                    session.state.value.copy(chatSuggestions = suggestions.take(10)),
+                    PromptTraceCleanup.None,
                 )
-            )
+            }
         }.onFailure {
             it.printStackTrace()
         }
@@ -1981,7 +2421,7 @@ class ChatService(
                 params = backgroundTextGenerationParams(model),
             )
 
-            return result.choices[0].message?.toText()?.trim()
+            return result.message.toText().trim().takeIf { it.isNotBlank() }
                 ?: throw IllegalStateException("Failed to generate compressed summary")
         }
 
@@ -1991,23 +2431,20 @@ class ChatService(
                 .awaitAll()
         }
 
-        // Create new conversation with compressed history as multiple user messages + kept messages
-        val newMessageNodes = buildList {
-            compressedSummaries.forEach { summary ->
-                add(UIMessage.user(summary).toMessageNode())
-            }
-            addAll(messagesToKeep.map { it.toMessageNode() })
+        withConversationMutation(conversationId) { session ->
+            val latest = session.state.value
+            val updated = applyCompressedConversation(
+                baseline = conversation,
+                latest = latest,
+                compressedSummaries = compressedSummaries,
+                keepRecentMessages = messagesToKeep.size,
+            )
+            saveConversationUnlocked(
+                conversationId,
+                updated,
+                PromptTraceCleanup.RemovedMessages(conversation),
+            )
         }
-        val newConversation = conversation.copy(
-            messageNodes = newMessageNodes,
-            chatSuggestions = emptyList(),
-        )
-
-        saveConversationAfterRemovingMessages(
-            conversationId = conversationId,
-            before = conversation,
-            after = newConversation,
-        )
     }
 
     // ---- 对话状态更新 ----
@@ -2019,11 +2456,131 @@ class ChatService(
         val published = advanceConversationRevision(current, conversation)
         checkFilesDelete(published, current)
         session.state.value = published
+        session.recordConversationMutation()
     }
 
-    fun updateConversationState(conversationId: Uuid, update: (Conversation) -> Conversation) {
-        val current = getConversationFlow(conversationId).value
-        updateConversation(conversationId, update(current))
+    suspend fun updateConversationState(
+        conversationId: Uuid,
+        update: (Conversation) -> Conversation,
+    ) {
+        withConversationMutation(conversationId) { session ->
+            updateConversation(conversationId, update(session.state.value))
+        }
+    }
+
+    suspend fun persistCurrentConversation(conversationId: Uuid) {
+        withConversationMutation(conversationId) { session ->
+            saveConversationUnlocked(conversationId, session.state.value, PromptTraceCleanup.None)
+        }
+    }
+
+    suspend fun updateTitle(conversationId: Uuid, title: String): Boolean = updateExistingConversationField(
+        conversationId = conversationId,
+        transform = { current -> current.copy(title = title) },
+        updateInactive = { conversationRepo.updateConversationTitle(conversationId, title) },
+    )
+
+    suspend fun updatePinnedStatus(conversationId: Uuid): Boolean = updateExistingConversationField(
+        conversationId = conversationId,
+        transform = { current -> current.copy(isPinned = !current.isPinned) },
+        updateInactive = { conversationRepo.toggleConversationPinStatus(conversationId) },
+    )
+
+    suspend fun updateAssistant(
+        conversationId: Uuid,
+        assistantId: Uuid,
+        clearFolder: Boolean,
+    ): Boolean {
+        return assistantDeletionGateMutex.withLock {
+            if (!canMoveConversationToAssistant(assistantId, deletingAssistantIds)) return@withLock false
+            updateExistingConversationField(
+                conversationId = conversationId,
+                transform = { current ->
+                    current.copy(assistantId = assistantId, folderId = if (clearFolder) null else current.folderId)
+                },
+                updateInactive = {
+                    conversationRepo.updateConversationAssistant(conversationId, assistantId, clearFolder)
+                },
+            )
+        }
+    }
+
+    suspend fun updateConversationMessageFields(
+        conversationId: Uuid,
+        requested: Conversation,
+    ): Conversation = updateConversationFields(conversationId) { current ->
+        mergeConversationUiFields(current, requested)
+    }
+
+    /** Restores only into an existing assistant that is not in the full assistant-deletion gate. */
+    suspend fun restoreConversationAtomic(conversation: Conversation): Boolean {
+        return assistantDeletionGateMutex.withLock {
+            val settings = settingsStore.settingsFlowRaw.first()
+            val assistantExists = settings.getAssistantById(conversation.assistantId) != null
+            if (!canRestoreConversation(assistantExists, conversation.assistantId in deletingAssistantIds)) {
+                return@withLock false
+            }
+            if (conversationRepo.existsConversationById(conversation.id)) return@withLock false
+            conversationRepo.insertConversation(conversation)
+            true
+        }
+    }
+
+    suspend fun updateConversationInjections(
+        conversationId: Uuid,
+        modeInjectionIds: Set<Uuid>,
+        lorebookIds: Set<Uuid>,
+    ): Conversation = updateConversationFields(conversationId) { current ->
+        current.copy(modeInjectionIds = modeInjectionIds, lorebookIds = lorebookIds)
+    }
+
+    suspend fun replaceConversationMessageNode(
+        conversationId: Uuid,
+        node: me.rerere.rikkahub.data.model.MessageNode,
+    ): Conversation = updateConversationFields(conversationId) { current ->
+        current.copy(messageNodes = current.messageNodes.map { existing ->
+            if (existing.id == node.id) node else existing
+        })
+    }
+
+    private suspend fun updateConversationFields(
+        conversationId: Uuid,
+        transform: (Conversation) -> Conversation,
+    ): Conversation = withConversationMutation(conversationId) { session ->
+        val updated = transform(session.state.value)
+        saveConversationUnlocked(conversationId, updated, PromptTraceCleanup.None)
+        updated
+    }
+
+    /**
+     * Updates a persisted conversation without creating a session for an unknown id. Active sessions take the shared
+     * mutation lock; inactive conversations use a DAO field update so their message tree is never read and re-saved.
+     */
+    private suspend fun updateExistingConversationField(
+        conversationId: Uuid,
+        transform: (Conversation) -> Conversation,
+        updateInactive: suspend () -> Boolean,
+    ): Boolean {
+        repeat(2) {
+            val session = sessions[conversationId] ?: return updateInactive()
+            val updated = try {
+                session.withRefSuspend {
+                    session.withConversationMutationLock {
+                        if (sessions[conversationId] !== session) return@withConversationMutationLock null
+                        if (!conversationRepo.existsConversationById(conversationId)) {
+                            return@withConversationMutationLock false
+                        }
+                        val next = transform(session.state.value)
+                        saveConversationUnlocked(conversationId, next, PromptTraceCleanup.None)
+                        true
+                    }
+                }
+            } catch (error: IllegalStateException) {
+                if (error.message == "CONVERSATION_SESSION_CLOSED") null else throw error
+            }
+            if (updated != null) return updated
+        }
+        return updateInactive()
     }
 
     /**
@@ -2034,12 +2591,155 @@ class ChatService(
      * 后续任意 saveConversation(id, state.value) 会用整对象把 folder_id 覆盖回旧值，导致移动丢失。
      * 先改内存可确保这段窗口内的整对象保存也带上新 folderId。
      */
-    suspend fun moveConversationToFolder(conversationId: Uuid, folderId: Uuid?) {
-        if (sessions.containsKey(conversationId)) {
-            updateConversationState(conversationId) { it.copy(folderId = folderId) }
+    suspend fun moveConversationToFolder(conversationId: Uuid, folderId: Uuid?): Boolean =
+        updateExistingConversationField(
+            conversationId = conversationId,
+            transform = { current -> current.copy(folderId = folderId) },
+            updateInactive = { conversationRepo.updateConversationFolderId(conversationId, folderId) },
+        )
+
+    private data class ConversationDeletionCommitResult(
+        val result: ConversationDeleteResult,
+        val conversation: Conversation? = null,
+    )
+
+    private suspend fun commitConversationDeletion(
+        conversationId: Uuid,
+        expectedAssistantId: Uuid?,
+    ): ConversationDeletionCommitResult {
+        val conversation = conversationRepo.getConversationById(conversationId)
+            ?: return ConversationDeletionCommitResult(ConversationDeleteResult.NOT_FOUND)
+        if (expectedAssistantId != null && conversation.assistantId != expectedAssistantId) {
+            return ConversationDeletionCommitResult(ConversationDeleteResult.MOVED)
         }
-        conversationRepo.updateConversationFolderId(conversationId, folderId)
+        val commit = if (expectedAssistantId == null) {
+            conversationRepo.commitConversationDeletion(conversation)
+        } else {
+            conversationRepo.commitConversationDeletionIfAssistantId(conversation, expectedAssistantId)
+        }
+        if (!commit.committed) {
+            val result = if (expectedAssistantId == null) {
+                ConversationDeleteResult.NOT_FOUND
+            } else {
+                ConversationDeleteResult.MOVED
+            }
+            return ConversationDeletionCommitResult(result)
+        }
+        return ConversationDeletionCommitResult(ConversationDeleteResult.DELETED, commit.conversation)
     }
+
+    private suspend fun cleanupCommittedConversationDeletion(conversation: Conversation) {
+        conversationRepo.cleanupCommittedConversationDeletion(conversation).forEach { error ->
+            Log.w(TAG, "Conversation deletion cleanup failed: ${conversation.id}", error)
+        }
+    }
+
+    private fun closeCommittedConversationSession(conversationId: Uuid, session: ConversationSession?) {
+        tavernRuntimeReadiness.clear(conversationId)
+        statusVariableStore.remove(conversationId)
+        if (session != null) {
+            session.closeLockedForCleanup()
+            if (sessions.remove(conversationId, session)) _sessionsVersion.value++
+        }
+    }
+
+    private suspend fun deleteInactiveConversationAtomically(
+        conversationId: Uuid,
+        expectedAssistantId: Uuid?,
+    ): ConversationDeleteResult {
+        val commit = commitConversationDeletion(conversationId, expectedAssistantId)
+        val conversation = commit.conversation ?: return commit.result
+        closeCommittedConversationSession(conversationId, session = null)
+        cleanupCommittedConversationDeletion(conversation)
+        return ConversationDeleteResult.DELETED
+    }
+
+    /** Commits Room deletion before revoking the live owner; cleanup cannot revive an already deleted id. */
+    suspend fun deleteConversationAtomic(
+        conversationId: Uuid,
+        expectedAssistantId: Uuid? = null,
+    ): ConversationDeleteResult = withContext(NonCancellable) {
+        repeat(2) {
+            val session = sessions[conversationId] ?: return@withContext deleteInactiveConversationAtomically(
+                conversationId,
+                expectedAssistantId,
+            )
+            val committed = try {
+                session.withRefSuspend {
+                    session.withConversationMutationLock {
+                        if (sessions[conversationId] !== session) return@withConversationMutationLock null
+                        // Session state may still be a placeholder while Room loading is in flight. Always let the
+                        // conditional Room delete decide persisted ownership before consulting live-only readiness.
+                        val commit = commitConversationDeletion(conversationId, expectedAssistantId)
+                        if (commit.result == ConversationDeleteResult.NOT_FOUND) {
+                            // A live-only conversation has not reached Room yet. Closing its authoritative session is
+                            // the deletion commit; treating this as failure would let a pre-gate initializer survive.
+                            val wasReady = tavernRuntimeReadiness.isReady(conversationId)
+                            closeCommittedConversationSession(conversationId, session)
+                            return@withConversationMutationLock ConversationDeletionCommitResult(
+                                if (wasReady) ConversationDeleteResult.DELETED else ConversationDeleteResult.NOT_FOUND,
+                            )
+                        }
+                        val conversation = commit.conversation ?: return@withConversationMutationLock commit
+                        closeCommittedConversationSession(conversationId, session)
+                        ConversationDeletionCommitResult(ConversationDeleteResult.DELETED, conversation)
+                    }
+                }
+            } catch (error: IllegalStateException) {
+                if (error.message == "CONVERSATION_SESSION_CLOSED") null else throw error
+            }
+            if (committed == null) return@repeat
+            val conversation = committed.conversation
+            if (conversation != null) cleanupCommittedConversationDeletion(conversation)
+            return@withContext committed.result
+        }
+        deleteInactiveConversationAtomically(conversationId, expectedAssistantId)
+    }
+
+    private suspend fun deleteConversationsForDeletingAssistant(assistantId: Uuid): Boolean {
+        val repositoryIds = conversationRepo.getConversationsOfAssistant(assistantId).first().map { it.id }
+        val liveSessionIds = sessions.values
+            .filter { it.state.value.assistantId == assistantId }
+            .map { it.id }
+        val conversationIds = orderedAssistantConversationDeletionIds(repositoryIds + liveSessionIds)
+        return deleteAssistantConversationIds(conversationIds) { conversationId ->
+            isAssistantBatchDeleteSuccess(
+                deleteConversationAtomic(conversationId, expectedAssistantId = assistantId),
+            )
+        }.succeeded
+    }
+
+    /** Holds the deletion gate through conversation removal and caller-owned assistant settings/memory finalization. */
+    suspend fun deleteAssistantAtomically(
+        assistantId: Uuid,
+        finalizeAssistantDeletion: suspend () -> Unit,
+    ): AssistantDeletionResult {
+        val acquired = assistantDeletionGateMutex.withLock { deletingAssistantIds.add(assistantId) }
+        if (!acquired) return AssistantDeletionResult(succeeded = false)
+        return try {
+            if (!deleteConversationsForDeletingAssistant(assistantId)) {
+                AssistantDeletionResult(succeeded = false)
+            } else {
+                try {
+                    finalizeAssistantDeletion()
+                    AssistantDeletionResult(succeeded = true)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Log.e(TAG, "Failed to finalize assistant deletion: $assistantId", error)
+                    AssistantDeletionResult(succeeded = false, finalizeError = error)
+                }
+            }
+        } finally {
+            withContext(NonCancellable) {
+                assistantDeletionGateMutex.withLock { deletingAssistantIds.remove(assistantId) }
+            }
+        }
+    }
+
+    /** Closes every live assistant conversation through the same gate as full assistant deletion. */
+    suspend fun deleteConversationsOfAssistantAtomic(assistantId: Uuid): Boolean =
+        deleteAssistantAtomically(assistantId) {}.succeeded
 
     /**
      * 文件夹内是否存在正在生成回复的会话。
@@ -2075,12 +2775,19 @@ class ChatService(
         }
     }
 
-    suspend fun saveConversation(conversationId: Uuid, conversation: Conversation) {
-        saveConversation(
-            conversationId = conversationId,
-            conversation = conversation,
-            promptTraceCleanup = PromptTraceCleanup.None,
-        )
+    suspend fun saveConversation(
+        conversationId: Uuid,
+        conversation: Conversation,
+        allowCreate: Boolean = false,
+    ) {
+        withConversationMutation(conversationId) {
+            saveConversationUnlocked(
+                conversationId,
+                conversation,
+                PromptTraceCleanup.None,
+                allowCreate,
+            )
+        }
     }
 
     /** Persists a full-function editor preview's message side effect to its explicitly selected real conversation. */
@@ -2152,43 +2859,52 @@ class ChatService(
         before: Conversation,
         after: Conversation,
     ) {
-        saveConversation(
-            conversationId = conversationId,
-            conversation = after,
-            promptTraceCleanup = PromptTraceCleanup.RemovedMessages(before),
-        )
+        withConversationMutation(conversationId) {
+            saveConversationUnlocked(conversationId, after, PromptTraceCleanup.RemovedMessages(before))
+        }
     }
 
-    private suspend fun saveConversation(
+    private suspend fun saveConversationUnlocked(
         conversationId: Uuid,
         conversation: Conversation,
         promptTraceCleanup: PromptTraceCleanup,
-    ) = conversationPersistenceGate.withConversation(conversationId) {
+        allowCreate: Boolean = false,
+    ): Boolean {
         val exists = conversationRepo.existsConversationById(conversation.id)
+        if (conversation.assistantId in deletingAssistantIds) return false
+        if (!canPersistConversation(exists, tavernRuntimeReadiness.isReady(conversationId), allowCreate)) {
+            return false
+        }
         if (!exists && conversation.title.isBlank() && conversation.messageNodes.isEmpty()) {
-            return@withConversation // 新会话且为空时不保存
+            return false // 新会话且为空时不保存
         }
 
         val preparedRebase = tavernPreviewMutationRebaser.prepareRebase(conversationId, conversation)
-        val updatedConversation = preparedRebase.conversation.copy()
+        val updatedConversation = preparedRebase.conversation.copy(newConversation = false)
         persistConversationAndCleanupPromptTraces(
             conversationId = conversationId,
             conversation = updatedConversation,
             promptTraceCleanup = promptTraceCleanup,
             promptTraceRepository = promptTraceRepository,
         ) { persistedConversation ->
-            updateConversation(conversationId, persistedConversation)
-            if (!exists) {
-                conversationRepo.insertConversation(persistedConversation)
-            } else {
-                conversationRepo.updateConversation(persistedConversation)
-            }
+            persistConversationThenPublishLive(
+                conversation = persistedConversation,
+                persist = { candidate ->
+                    if (!exists) {
+                        conversationRepo.insertConversation(candidate)
+                    } else {
+                        conversationRepo.updateConversation(candidate)
+                    }
+                },
+                publishLive = { committed -> updateConversation(conversationId, committed) },
+            )
             if (requiresNewConversationForGreetingChange(persistedConversation)) {
                 greetingSessionFlows[conversationId]?.value?.lock()
                 greetingSessionFlows[conversationId]?.value = null
             }
         }
         preparedRebase.commit()
+        return true
     }
 
     // ---- 翻译消息 ----
@@ -2221,8 +2937,14 @@ class ChatService(
                     updateTranslationField(conversationId, message.id, translatedText)
                 }.collect { /* Final translation already handled in onStreamUpdate */ }
 
-                // Save the conversation after translation is complete
-                saveConversation(conversationId, getConversationFlow(conversationId).value)
+                // Save the latest live state while holding the same mutation lock as runtime writes.
+                withConversationMutation(conversationId) { session ->
+                    saveConversationUnlocked(
+                        conversationId,
+                        session.state.value,
+                        PromptTraceCleanup.None,
+                    )
+                }
             } catch (e: Exception) {
                 // Clear translation field on error
                 clearTranslationField(conversationId, message.id)
@@ -2236,26 +2958,65 @@ class ChatService(
         messageId: Uuid,
         translationText: String
     ) {
-        val currentConversation = getConversationFlow(conversationId).value
-        val updatedNodes = currentConversation.messageNodes.map { node ->
-            if (node.messages.any { it.id == messageId }) {
-                val updatedMessages = node.messages.map { msg ->
-                    if (msg.id == messageId) {
-                        msg.copy(translation = translationText)
+        appScope.launch {
+            withConversationMutation(conversationId) { session ->
+                val currentConversation = session.state.value
+                val updatedNodes = currentConversation.messageNodes.map { node ->
+                    if (node.messages.any { it.id == messageId }) {
+                        val updatedMessages = node.messages.map { msg ->
+                            if (msg.id == messageId) msg.copy(translation = translationText) else msg
+                        }
+                        node.copy(messages = updatedMessages)
                     } else {
-                        msg
+                        node
                     }
                 }
-                node.copy(messages = updatedMessages)
-            } else {
-                node
+                updateConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
             }
         }
-
-        updateConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
     }
 
     // ---- 消息操作 ----
+
+    /** Selected branch used by the Tavern browser runtime; remains backed by the live conversation session. */
+    override fun getTavernRuntimeMessages(conversationId: Uuid): List<UIMessage> =
+        getConversationFlow(conversationId).value.currentMessages
+
+    override suspend fun readTavernRuntimeMessageSnapshot(conversationId: Uuid): List<UIMessage>? {
+        val session = sessions[conversationId] ?: return null
+        return session.withRefSuspend {
+            session.withConversationMutationLock {
+                if (sessions[conversationId] !== session || !tavernRuntimeReadiness.isReady(conversationId)) {
+                    null
+                } else {
+                    session.state.value.currentMessages
+                }
+            }
+        }
+    }
+
+    /** Appends a real message node, persists it, refreshes live state, and emits the matching Tavern event. */
+    override suspend fun createTavernRuntimeMessage(
+        conversationId: Uuid,
+        role: MessageRole,
+        text: String,
+    ): UIMessage = tavernRuntimeMessageStore.create(conversationId, role, text)
+
+    /** Updates the existing message object in-place; unlike [editMessage], this never creates a swipe. */
+    override suspend fun updateTavernRuntimeMessageText(
+        conversationId: Uuid,
+        messageId: Uuid,
+        text: String,
+    ): UIMessage? = tavernRuntimeMessageStore.update(conversationId, messageId, text)
+
+    override suspend fun updateLatestTavernRuntimeMessage(
+        conversationId: Uuid,
+        text: String,
+    ): UIMessage? = tavernRuntimeMessageStore.updateLatest(conversationId, text)
+
+    /** Deletes an exact selected-branch message using the normal ChatService persistence and cleanup path. */
+    override suspend fun deleteTavernRuntimeMessage(conversationId: Uuid, messageId: Uuid): Boolean =
+        tavernRuntimeMessageStore.delete(conversationId, messageId)
 
     suspend fun editMessage(
         conversationId: Uuid,
@@ -2269,26 +3030,33 @@ class ChatService(
         val assistant = settings.getAssistantById(currentConversation.assistantId)
             ?: settings.getCurrentAssistant()
         val processedParts = preprocessUserInputParts(parts, assistant, conversationId)
-        var edited = false
-
-        val updatedNodes = currentConversation.messageNodes.map { node ->
-            if (!node.messages.any { it.id == messageId }) {
-                return@map node
+        val edited = withConversationMutation(conversationId) { session ->
+            val latestConversation = session.state.value
+            var found = false
+            val updatedNodes = latestConversation.messageNodes.map { node ->
+                if (!node.messages.any { it.id == messageId }) {
+                    return@map node
+                }
+                found = true
+                node.copy(
+                    messages = node.messages + UIMessage(
+                        role = node.role,
+                        parts = processedParts,
+                    ),
+                    selectIndex = node.messages.size,
+                )
             }
-            edited = true
-
-            node.copy(
-                messages = node.messages + UIMessage(
-                    role = node.role,
-                    parts = processedParts,
-                ),
-                selectIndex = node.messages.size
-            )
+            if (found) {
+                saveConversationUnlocked(
+                    conversationId,
+                    latestConversation.copy(messageNodes = updatedNodes),
+                    PromptTraceCleanup.None,
+                )
+            }
+            found
         }
 
         if (!edited) return
-
-        saveConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
 
         tavernHostEventBus.emit(
             type = TavernHostEventType.MESSAGE_EDITED,
@@ -2308,7 +3076,7 @@ class ChatService(
             copyPart = { part -> part.copyWithForkedFileUrl() },
         )
 
-        saveConversation(forkConversation.id, forkConversation)
+        saveConversation(forkConversation.id, forkConversation, allowCreate = true)
         return forkConversation
     }
 
@@ -2317,27 +3085,26 @@ class ChatService(
         nodeId: Uuid,
         selectIndex: Int
     ) {
-        val currentConversation = getConversationFlow(conversationId).value
-        val targetNode = currentConversation.messageNodes.firstOrNull { it.id == nodeId }
-            ?: throw NotFoundException("Message node not found")
-
-        if (selectIndex !in targetNode.messages.indices) {
-            throw BadRequestException("Invalid selectIndex")
-        }
-
-        if (targetNode.selectIndex == selectIndex) {
-            return
-        }
-
-        val updatedNodes = currentConversation.messageNodes.map { node ->
-            if (node.id == nodeId) {
-                node.copy(selectIndex = selectIndex)
-            } else {
-                node
+        val changed = withConversationMutation(conversationId) { session ->
+            val currentConversation = session.state.value
+            val targetNode = currentConversation.messageNodes.firstOrNull { it.id == nodeId }
+                ?: throw NotFoundException("Message node not found")
+            if (selectIndex !in targetNode.messages.indices) {
+                throw BadRequestException("Invalid selectIndex")
             }
+            if (targetNode.selectIndex == selectIndex) return@withConversationMutation false
+            val updatedNodes = currentConversation.messageNodes.map { node ->
+                if (node.id == nodeId) node.copy(selectIndex = selectIndex) else node
+            }
+            saveConversationUnlocked(
+                conversationId,
+                currentConversation.copy(messageNodes = updatedNodes),
+                PromptTraceCleanup.None,
+            )
+            true
         }
 
-        saveConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
+        if (!changed) return
 
         tavernHostEventBus.emit(
             type = TavernHostEventType.MESSAGE_SWIPED,
@@ -2354,21 +3121,24 @@ class ChatService(
         messageId: Uuid,
         failIfMissing: Boolean = true,
     ) {
-        val currentConversation = getConversationFlow(conversationId).value
-        val updatedConversation = buildConversationAfterMessageDelete(currentConversation, messageId)
+        val deleted = withConversationMutation(conversationId) { session ->
+            val currentConversation = session.state.value
+            val updatedConversation = buildConversationAfterMessageDelete(currentConversation, messageId)
+                ?: return@withConversationMutation false
+            saveConversationUnlocked(
+                conversationId,
+                updatedConversation,
+                PromptTraceCleanup.RemovedMessages(currentConversation),
+            )
+            true
+        }
 
-        if (updatedConversation == null) {
+        if (!deleted) {
             if (failIfMissing) {
                 throw NotFoundException("Message not found")
             }
             return
         }
-
-        saveConversationAfterRemovingMessages(
-            conversationId = conversationId,
-            before = currentConversation,
-            after = updatedConversation,
-        )
 
         tavernHostEventBus.emit(
             type = TavernHostEventType.MESSAGE_DELETED,
@@ -2432,23 +3202,22 @@ class ChatService(
     }
 
     fun clearTranslationField(conversationId: Uuid, messageId: Uuid) {
-        val currentConversation = getConversationFlow(conversationId).value
-        val updatedNodes = currentConversation.messageNodes.map { node ->
-            if (node.messages.any { it.id == messageId }) {
-                val updatedMessages = node.messages.map { msg ->
-                    if (msg.id == messageId) {
-                        msg.copy(translation = null)
+        appScope.launch {
+            withConversationMutation(conversationId) { session ->
+                val currentConversation = session.state.value
+                val updatedNodes = currentConversation.messageNodes.map { node ->
+                    if (node.messages.any { it.id == messageId }) {
+                        val updatedMessages = node.messages.map { msg ->
+                            if (msg.id == messageId) msg.copy(translation = null) else msg
+                        }
+                        node.copy(messages = updatedMessages)
                     } else {
-                        msg
+                        node
                     }
                 }
-                node.copy(messages = updatedMessages)
-            } else {
-                node
+                updateConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
             }
         }
-
-        updateConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
     }
 
     // 停止当前会话生成任务（不清理会话缓存）
@@ -2490,94 +3259,140 @@ class ChatService(
     ): Uuid? {
         val session = getOrCreateSession(conversation.id)
         return try {
-            session.withGroupDirectorLock {
-                val current = session.state.value
-                val enabledIds = groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
-                val director = groupDirectorEngine.sanitize(
-                    state = current.groupRuntimeState.director,
-                    enabledMemberIds = enabledIds,
-                    generationActive = true,
-                )
-                val eligibleIds = groupDirectorEngine.eligibleMemberIds(director, enabledIds)
-                val orderedEligible = normalizeGroupMemberQueue(current.groupMemberQueue, eligibleIds)
-                val effectiveStrategy = groupDirectorEngine.effectiveStrategy(
-                    director,
-                    groupAssistant.turnTakingStrategy,
-                )
-
-                val normalSelection = if (director.oneShotNextMemberId != null) {
-                    null
-                } else {
-                    when (effectiveStrategy) {
-                        TurnTakingStrategy.MANUAL,
-                        TurnTakingStrategy.AUTO_ROUND_ROBIN -> resolveLocalGroupTurnSelection(
+            val moderatorSnapshot = session.withGroupDirectorLock {
+                mutateConversation(session) { current ->
+                    val enabledIds = groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
+                    val director = groupDirectorEngine.sanitize(
+                        state = current.groupRuntimeState.director,
+                        enabledMemberIds = enabledIds,
+                        generationActive = true,
+                    )
+                    val strategy = groupDirectorEngine.effectiveStrategy(
+                        director,
+                        groupAssistant.turnTakingStrategy,
+                    )
+                    if (strategy == TurnTakingStrategy.AUTO_MODERATOR && director.oneShotNextMemberId == null) {
+                        ModeratorDecisionSnapshot(
+                            conversation = current,
                             director = director,
-                            effectiveStrategy = effectiveStrategy,
-                            persistedQueue = current.groupMemberQueue,
-                            persistedIndex = current.groupMemberQueueIndex,
-                            activeMemberId = current.activeGroupMemberId,
-                            orderedEligibleMemberIds = orderedEligible,
+                            orderedEligibleMemberIds = orderedModeratorEligibleMemberIds(
+                                current.groupMemberQueue,
+                                groupDirectorEngine.eligibleMemberIds(director, enabledIds),
+                            ),
+                            allowStop = allowModeratorStop || director.oneRoundActive,
                         )
-                        TurnTakingStrategy.AUTO_MODERATOR -> {
-                            val resolved = resolveNextSpeakerViaModerator(
-                                conversation = current,
-                                groupAssistant = groupAssistant,
-                                settings = settings,
-                                allowStop = allowModeratorStop || director.oneRoundActive,
-                                eligibleMemberIds = orderedEligible,
-                            )
-                            selectModeratorTurn(
+                    } else {
+                        null
+                    }
+                }
+            }
+            // Provider work deliberately runs outside conversationMutationMutex.
+            val moderatorDecision = moderatorSnapshot?.let { snapshot ->
+                resolveNextSpeakerViaModerator(
+                    conversation = snapshot.conversation,
+                    groupAssistant = groupAssistant,
+                    settings = settings,
+                    allowStop = snapshot.allowStop,
+                    eligibleMemberIds = snapshot.orderedEligibleMemberIds,
+                )
+            }
+            session.withGroupDirectorLock {
+                mutateConversation(session) { current ->
+                    val enabledIds = groupAssistant.groupMembers.filter { it.enabled }.map { it.id }
+                    val director = groupDirectorEngine.sanitize(
+                        state = current.groupRuntimeState.director,
+                        enabledMemberIds = enabledIds,
+                        generationActive = true,
+                    )
+                    val eligibleIds = groupDirectorEngine.eligibleMemberIds(director, enabledIds)
+                    val orderedEligible = normalizeGroupMemberQueue(current.groupMemberQueue, eligibleIds)
+                    val effectiveStrategy = groupDirectorEngine.effectiveStrategy(
+                        director,
+                        groupAssistant.turnTakingStrategy,
+                    )
+
+                    val normalSelection = if (director.oneShotNextMemberId != null) {
+                        null
+                    } else {
+                        when (effectiveStrategy) {
+                            TurnTakingStrategy.MANUAL,
+                            TurnTakingStrategy.AUTO_ROUND_ROBIN -> resolveLocalGroupTurnSelection(
+                                director = director,
+                                effectiveStrategy = effectiveStrategy,
                                 persistedQueue = current.groupMemberQueue,
-                                enabledMemberIds = orderedEligible,
+                                persistedIndex = current.groupMemberQueueIndex,
                                 activeMemberId = current.activeGroupMemberId,
-                                resolvedMemberId = resolved,
-                                allowConsecutiveSameSpeaker =
-                                    groupAssistant.groupReplyOptions.allowConsecutiveSameSpeaker,
+                                orderedEligibleMemberIds = orderedEligible,
                             )
+                            TurnTakingStrategy.AUTO_MODERATOR -> {
+                                if (
+                                    moderatorSnapshot == null ||
+                                    moderatorSnapshot.director != director ||
+                                    moderatorSnapshot.orderedEligibleMemberIds != orderedEligible ||
+                                    moderatorSnapshot.conversation.groupRuntimeState != current.groupRuntimeState ||
+                                    moderatorSnapshot.conversation.activeGroupMemberId != current.activeGroupMemberId ||
+                                    moderatorSnapshot.conversation.groupMemberQueue != current.groupMemberQueue ||
+                                    moderatorSnapshot.conversation.groupMemberQueueIndex !=
+                                    current.groupMemberQueueIndex ||
+                                    moderatorSnapshot.conversation.currentMessages.map { it.id } !=
+                                    current.currentMessages.map { it.id }
+                                ) {
+                                    return@mutateConversation null
+                                }
+                                selectModeratorTurn(
+                                    persistedQueue = current.groupMemberQueue,
+                                    enabledMemberIds = orderedEligible,
+                                    activeMemberId = current.activeGroupMemberId,
+                                    resolvedMemberId = moderatorDecision,
+                                    allowConsecutiveSameSpeaker =
+                                        groupAssistant.groupReplyOptions.allowConsecutiveSameSpeaker,
+                                )
+                            }
                         }
                     }
-                }
 
-                val selection = groupDirectorEngine.applyCandidate(
-                    state = director,
-                    normalCandidateId = normalSelection?.memberId,
-                    orderedCandidateMemberIds = normalSelection?.queue ?: orderedEligible,
-                )
-                val selectedId = selection.memberId
-                if (selectedId == null) {
-                    val stopped = if (
-                        selection.state.playbackState == GroupPlaybackState.PAUSED &&
-                        selection.status == GroupDirectorCommandStatus.APPLIED
-                    ) {
-                        selection.state
-                    } else {
-                        groupDirectorEngine.afterNoCandidate(
-                            state = selection.state,
-                            effectiveStrategy = effectiveStrategy,
-                        )
+                    val selection = groupDirectorEngine.applyCandidate(
+                        state = director,
+                        normalCandidateId = normalSelection?.memberId,
+                        orderedCandidateMemberIds = normalSelection?.queue ?: orderedEligible,
+                    )
+                    val selectedId = selection.memberId
+                    if (selectedId == null) {
+                        val stopped = if (
+                            selection.state.playbackState == GroupPlaybackState.PAUSED &&
+                            selection.status == GroupDirectorCommandStatus.APPLIED
+                        ) {
+                            selection.state
+                        } else {
+                            groupDirectorEngine.afterNoCandidate(
+                                state = selection.state,
+                                effectiveStrategy = effectiveStrategy,
+                            )
+                        }
+                        if (stopped != current.groupRuntimeState.director) {
+                            saveConversationUnlocked(
+                                current.id,
+                                current.copy(
+                                    groupRuntimeState = current.groupRuntimeState.copy(director = stopped),
+                                ),
+                                PromptTraceCleanup.None,
+                            )
+                        }
+                        session.releaseGroupGenerationLocked(generationJob)
+                        return@mutateConversation null
                     }
-                    if (stopped != current.groupRuntimeState.director) {
-                        saveConversation(
-                            current.id,
-                            current.copy(
-                                groupRuntimeState = current.groupRuntimeState.copy(director = stopped)
-                            ),
-                        )
-                    }
-                    session.releaseGroupGenerationLocked(generationJob)
-                    return@withGroupDirectorLock null
-                }
 
-                val committedQueue = normalSelection?.queue ?: orderedEligible
-                val committed = current.copy(
-                    activeGroupMemberId = selectedId,
-                    groupMemberQueue = committedQueue,
-                    groupMemberQueueIndex = committedQueue.indexOf(selectedId).coerceAtLeast(0),
-                    groupRuntimeState = current.groupRuntimeState.copy(director = selection.state),
-                )
-                saveConversation(current.id, committed)
-                session.markGroupReplyStartedLocked(generationJob)
-                selectedId
+                    val committedQueue = normalSelection?.queue ?: orderedEligible
+                    val committed = current.copy(
+                        activeGroupMemberId = selectedId,
+                        groupMemberQueue = committedQueue,
+                        groupMemberQueueIndex = committedQueue.indexOf(selectedId).coerceAtLeast(0),
+                        groupRuntimeState = current.groupRuntimeState.copy(director = selection.state),
+                    )
+                    saveConversationUnlocked(current.id, committed, PromptTraceCleanup.None)
+                    session.markGroupReplyStartedLocked(generationJob)
+                    selectedId
+                }
             }
         } catch (error: CancellationException) {
             normalizeCancelledGroupGeneration(
@@ -2585,7 +3400,7 @@ class ChatService(
                 generationJob = generationJob,
                 engine = groupDirectorEngine,
             ) { updated ->
-                saveConversation(conversation.id, updated)
+                saveConversationUnlocked(conversation.id, updated, PromptTraceCleanup.None)
             }
             throw error
         }
@@ -2625,7 +3440,10 @@ class ChatService(
         val prompt = buildString {
             appendLine("You are a conversation moderator. Decide which character should speak next.")
             if (allowStop) {
-                appendLine("Reply ONLY with a character ID (UUID), or STOP if the current user turn has already been answered enough.")
+                appendLine(
+                    "Reply ONLY with a character ID (UUID), or STOP if the current user turn has already " +
+                        "been answered enough.",
+                )
             } else {
                 appendLine("Reply ONLY with the character ID (UUID).")
             }
@@ -2660,8 +3478,7 @@ class ChatService(
                 messages = listOf(UIMessage.user(prompt)),
                 params = TextGenerationParams(model = moderatorModel, maxTokens = 32),
             )
-            val responseText = result.choices.firstOrNull()?.message
-                ?.parts?.filterIsInstance<UIMessagePart.Text>()
+            val responseText = result.message.parts.filterIsInstance<UIMessagePart.Text>()
                 ?.joinToString("") { it.text }?.trim().orEmpty()
             parseGroupModeratorDecision(
                 responseText = responseText,

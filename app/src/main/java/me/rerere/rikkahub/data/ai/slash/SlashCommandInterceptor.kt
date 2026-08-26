@@ -119,7 +119,7 @@ class SlashCommandInterceptor(
         // WebView 注册命令（SlashCommandParser.add）第三档；未注册返回 null
         // 受 allowScripts 总开关保护（与宏展开/sendHook 门控一致）
         val registered = if (scriptsEnabled) {
-            tavernScriptRegistry.executeSlashCommand(
+            tavernScriptRegistry.executeSlashCommandAsync(
                 command,
                 rawArgs,
                 MacroExpandContext(

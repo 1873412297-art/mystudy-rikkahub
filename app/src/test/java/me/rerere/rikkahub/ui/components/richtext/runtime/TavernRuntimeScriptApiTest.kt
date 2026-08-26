@@ -357,7 +357,10 @@ class TavernRuntimeScriptApiTest {
 
         assertEquals(1, seen.size)
         assertEquals("first", seen[0].first)
-        assertEquals(listOf("first" to JsonPrimitive(1), "second" to null).map { it.first }, bus.recent().map { it.first })
+        assertEquals(
+            listOf("first" to JsonPrimitive(1), "second" to null).map { it.first },
+            bus.recent().map { it.first },
+        )
     }
 
     // ── messages.getCurrent ────────────────────────────────────────
@@ -366,13 +369,13 @@ class TavernRuntimeScriptApiTest {
     fun `messages getCurrent returns host injected message`() {
         val controller = TavernRuntimeController()
         val before = controller.dispatch(TavernRuntimeRequest(id = "m1", method = "messages.getCurrent"))
-        assertEquals(JsonNull, before.result)
+        assertEquals("NO_ACTIVE_CONVERSATION", before.error!!.code)
 
         controller.setCurrentMessage(buildJsonObject { put("id", "msg-1") })
         val after = controller.dispatch(TavernRuntimeRequest(id = "m2", method = "messages.getCurrent"))
 
         assertTrue(after.ok)
-        assertEquals("msg-1", after.result!!.jsonObject.getValue("id").jsonPrimitive.content)
+        assertEquals("msg-1", after.result!!.jsonObject.getValue("messageId").jsonPrimitive.content)
     }
 
     // ── 序列化 ──────────────────────────────────────────────────────

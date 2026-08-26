@@ -65,6 +65,8 @@ data class Assistant(
     // ── 作者注释（Author's Note @ Depth）──
     val authorNote: AuthorNote = AuthorNote(),          // 助手级作者注释
     val allowConversationAuthorNote: Boolean = false,   // 允许会话级作者注释覆盖助手配置
+    // ── 酒馆脚本变量（character / preset 作用域，JSON 命名空间隔离） ──
+    val tavernVariables: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
 )
 
 /**

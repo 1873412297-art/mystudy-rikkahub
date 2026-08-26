@@ -19,6 +19,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
@@ -253,8 +256,20 @@ class ChatVM(
     }
 
     // Update checker
-    val updateState =
-        updateChecker.checkUpdate().stateIn(viewModelScope, SharingStarted.Eagerly, UiState.Loading)
+    val updateState = settingsStore.settingsFlow
+        .map { settings ->
+            !settings.init &&
+                settings.displaySetting.updateCheckDisabledUntilEpochMillis <= System.currentTimeMillis()
+        }
+        .distinctUntilChanged()
+        .flatMapLatest { enabled ->
+            if (enabled) updateChecker.checkUpdate() else flowOf(UiState.Loading)
+        }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
+            UiState.Loading,
+        )
 
     /**
      * 处理消息发送
@@ -374,41 +389,33 @@ class ChatVM(
 
     fun saveConversationAsync() {
         viewModelScope.launch {
-            chatService.saveConversation(_conversationId, conversation.value)
+            chatService.persistCurrentConversation(_conversationId)
         }
     }
 
     fun updateTitle(title: String) {
         viewModelScope.launch {
-            val updatedConversation = conversation.value.copy(title = title)
-            chatService.saveConversation(_conversationId, updatedConversation)
+            chatService.updateTitle(_conversationId, title)
         }
     }
 
     fun deleteConversation(conversation: Conversation): Job =
         viewModelScope.launch {
-            conversationRepo.deleteConversation(conversation)
+            chatService.deleteConversationAtomic(conversation.id)
         }
 
     fun updatePinnedStatus(conversation: Conversation) {
         viewModelScope.launch {
-            conversationRepo.togglePinStatus(conversation.id)
+            chatService.updatePinnedStatus(conversation.id)
         }
     }
 
     fun moveConversationToAssistant(conversation: Conversation, targetAssistantId: Uuid) {
         viewModelScope.launch {
-            val conversationFull = conversationRepo.getConversationById(conversation.id) ?: return@launch
             // 文件夹是助手内分组，切换助手后原文件夹在新助手下不可见，需清空归属避免会话丢失
-            val updatedConversation = conversationFull.copy(
-                assistantId = targetAssistantId,
-                folderId = null,
-            )
-            if (conversation.id == _conversationId) {
-                chatService.saveConversation(_conversationId, updatedConversation)
+            val updated = chatService.updateAssistant(conversation.id, targetAssistantId, clearFolder = true)
+            if (updated && conversation.id == _conversationId) {
                 settingsStore.updateAssistant(targetAssistantId)
-            } else {
-                conversationRepo.updateConversation(updatedConversation)
             }
         }
     }
@@ -435,8 +442,14 @@ class ChatVM(
     }
 
     fun updateConversation(newConversation: Conversation) {
-        chatService.updateConversationState(_conversationId) {
-            newConversation
+        viewModelScope.launch {
+            chatService.updateConversationMessageFields(_conversationId, newConversation)
+        }
+    }
+
+    fun selectMessageNode(nodeId: Uuid, selectIndex: Int) {
+        viewModelScope.launch {
+            chatService.selectMessageNode(_conversationId, nodeId, selectIndex)
         }
     }
 

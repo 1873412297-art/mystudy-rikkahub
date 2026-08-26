@@ -71,6 +71,89 @@ internal class SettingsBackedTavernWorldRepository(
         }
         return deleted
     }
+
+    override fun listBooks(): List<JsonObject> {
+        return gateway.currentSettings().lorebooks.map { it.toBookJson(includeEntries = false) }
+    }
+
+    override fun getBook(nameOrId: String): JsonObject? {
+        return gateway.currentSettings().lorebooks.findWorldBook(nameOrId)?.toBookJson(includeEntries = true)
+    }
+
+    override fun createBook(name: String, entries: List<JsonObject>): JsonObject? {
+        if (name.isBlank()) return null
+        var created: Lorebook? = null
+        gateway.updateSettings { settings ->
+            if (settings.lorebooks.any { it.matchesWorldBook(name) }) {
+                created = null
+                settings
+            } else {
+                val book = Lorebook(
+                    id = Uuid.random(),
+                    name = name,
+                    enabled = true,
+                    entries = entries.map { entry -> entry.toRegexInjection(entry.newWorldEntryId()) },
+                )
+                created = book
+                settings.copy(lorebooks = settings.lorebooks + book)
+            }
+        }
+        return created?.toBookJson(includeEntries = true)
+    }
+
+    override fun updateBook(nameOrId: String, patch: JsonObject): JsonObject? {
+        var updated: Lorebook? = null
+        gateway.updateSettings { settings ->
+            val index = settings.lorebooks.indexOfFirst { it.matchesWorldBook(nameOrId) }
+            if (index < 0) {
+                updated = null
+                settings
+            } else {
+                val book = settings.lorebooks[index]
+                val newName = patch.getString("name")?.takeIf { it.isNotBlank() } ?: book.name
+                val nameClash = newName != book.name &&
+                    settings.lorebooks.any { it.id != book.id && it.name == newName }
+                if (nameClash) {
+                    // 撞名：保持原数据不变，返回 null 由调用方区分 ALREADY_EXISTS
+                    updated = null
+                    settings
+                } else {
+                    val newBook = book.copy(
+                        name = newName,
+                        description = patch.getString("description") ?: book.description,
+                        enabled = patch.getBoolean("enabled", book.enabled),
+                        tokenBudget = patch.getInt("tokenBudget", book.tokenBudget),
+                        recursiveScanning = patch.getBoolean("recursiveScanning", book.recursiveScanning),
+                        entries = (patch["entries"] as? JsonArray)?.let { array ->
+                            array.mapNotNull { it as? JsonObject }.map { entry ->
+                                entry.toRegexInjection(entry.newWorldEntryId())
+                            }
+                        } ?: book.entries,
+                    )
+                    updated = newBook
+                    settings.copy(
+                        lorebooks = settings.lorebooks.mapIndexed { i, lorebook ->
+                            if (i == index) newBook else lorebook
+                        }
+                    )
+                }
+            }
+        }
+        return updated?.toBookJson(includeEntries = true)
+    }
+
+    override fun deleteBook(nameOrId: String): Boolean {
+        var deleted = false
+        gateway.updateSettings { settings ->
+            val remaining = settings.lorebooks.filterNot { book ->
+                val matches = book.matchesWorldBook(nameOrId)
+                if (matches) deleted = true
+                matches
+            }
+            if (deleted) settings.copy(lorebooks = remaining) else settings
+        }
+        return deleted
+    }
 }
 
 private fun List<Lorebook>.upsertWorldEntry(
@@ -129,6 +212,31 @@ private fun List<Lorebook>.deleteWorldEntry(id: String): Pair<List<Lorebook>, Bo
         }
     }
     return updated to deleted
+}
+
+private fun Lorebook.matchesWorldBook(nameOrId: String): Boolean =
+    id.toString() == nameOrId || name == nameOrId
+
+private fun List<Lorebook>.findWorldBook(nameOrId: String): Lorebook? =
+    firstOrNull { it.id.toString() == nameOrId } ?: firstOrNull { it.name == nameOrId }
+
+private fun Lorebook.toBookJson(includeEntries: Boolean): JsonObject = buildJsonObject {
+    put("id", JsonPrimitive(id.toString()))
+    put("name", JsonPrimitive(name))
+    put("description", JsonPrimitive(description))
+    put("enabled", JsonPrimitive(enabled))
+    put("tokenBudget", JsonPrimitive(tokenBudget))
+    put("recursiveScanning", JsonPrimitive(recursiveScanning))
+    put("entryCount", JsonPrimitive(entries.size))
+    if (includeEntries) {
+        put("entries", JsonArray(entries.map { entry -> entry.toWorldJson(this@toBookJson) }))
+    }
+}
+
+/** 生成条目 id：仅接受可解析的 UUID，缺失或非 UUID 时随机生成（底层模型要求 UUID 主键） */
+private fun JsonObject.newWorldEntryId(): String {
+    val raw = getString("id")?.takeIf { it.isNotBlank() } ?: return Uuid.random().toString()
+    return raw.toUuidOrNull()?.toString() ?: Uuid.random().toString()
 }
 
 private fun PromptInjection.RegexInjection.toWorldJson(lorebook: Lorebook): JsonObject = buildJsonObject {
