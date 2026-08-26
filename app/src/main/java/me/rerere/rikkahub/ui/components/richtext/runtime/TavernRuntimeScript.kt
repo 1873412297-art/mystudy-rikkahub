@@ -219,10 +219,9 @@ internal fun buildTavernRuntimeScript(): String = """
       },
       setChatMessages: function(messages, options){
         return call('messages.setChatMessages', { messages: messages || [], options: options || {} });
-      }
+      },
       create: function(role, text){ return call('messages.create', { role: role, text: text }); },
       update: function(id, text){ return call('messages.update', { id: id, text: text }); },
-      updateCurrent: function(patch){ return call('messages.updateCurrent', { patch: patch }); },
       delete: function(id){ return call('messages.delete', { id: id }); }
     },
     generation: {
