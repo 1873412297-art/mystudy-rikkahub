@@ -794,7 +794,7 @@ class TavernConversationDocumentInstrumentedTest {
                 awaitJson(view, 30) {
                     """
                     (function(){
-                      var nav=document.querySelector('.opening-swipe-nav');
+                      var nav=document.querySelector('.mes.opening-swipe .name_text');
                       var color=nav && getComputedStyle(nav).backgroundColor;
                       var parts=String(color || '').match(/[\d.]+/g) || [];
                       return JSON.stringify({
@@ -818,7 +818,7 @@ class TavernConversationDocumentInstrumentedTest {
         assertEquals(1.0, light.getDouble("alpha"), 0.001)
         assertEquals(1.0, dark.getDouble("alpha"), 0.001)
         assertEquals("sticky", light.getString("position"))
-        assertEquals("0px", light.getString("top"))
+        assertEquals("-12px", light.getString("top"))
     }
 
     @Test

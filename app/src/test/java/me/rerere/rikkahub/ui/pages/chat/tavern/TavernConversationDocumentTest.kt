@@ -452,7 +452,7 @@ class TavernConversationDocumentTest {
     }
 
     @Test
-    fun `opening navigation uses a sticky toolbar without covering the message`() {
+    fun `opening navigation lives in the sticky name row without its own toolbar row`() {
         val rootStyle = template.substringAfter(":root {").substringBefore("}")
         val openingCss = template.substringAfter(".mes.opening-swipe {")
             .substringBefore("@keyframes opening-enter-forward")
@@ -460,6 +460,8 @@ class TavernConversationDocumentTest {
         assertTrue(rootStyle.contains("--rikkahub-sticky-bg: Canvas"))
         assertTrue(template.contains("opening-swipe-nav"))
         assertTrue(openingCss.contains(".mes.opening-swipe .opening-swipe-nav"))
+        assertTrue(openingCss.contains(".mes.opening-swipe .name_text"))
+        assertTrue(openingCss.contains("justify-content: space-between"))
         assertTrue(openingCss.contains("position: sticky"))
         assertTrue(openingCss.contains("top: -12px"))
         assertTrue(openingCss.contains("background: var(--rikkahub-sticky-bg)"))

@@ -76,15 +76,17 @@
     .swipe_left:disabled, .swipe_right:disabled { visibility: hidden; }
     .swipes-counter { align-self: center; flex: 0 0 auto; min-height: 22px; padding: 2px 9px; color: var(--rikkahub-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
     .opening-loading { opacity: .68; }
-    .mes.opening-swipe { display: block; padding-top: 8px; }
-    .mes.opening-swipe .mesAvatarWrapper { position: absolute; top: 10px; left: 8px; z-index: 1; }
+    .mes.opening-swipe { display: block; padding-top: 6px; }
+    .mes.opening-swipe .mesAvatarWrapper { position: absolute; top: 6px; left: 8px; z-index: 5; }
     .mes.opening-swipe .mes_block { width: 100%; }
-    .mes.opening-swipe .name_text { min-height: 46px; margin: 0 0 6px 60px; }
+    .mes.opening-swipe .mesAvatarWrapper .avatar { width: 40px; height: 40px; font-size: 20px; }
+    .mes.opening-swipe .name_text { position: sticky; top: -12px; z-index: 4; justify-content: space-between; gap: 8px; min-height: 44px; margin: 0 0 6px; padding-left: 50px; background: var(--rikkahub-sticky-bg); box-shadow: 0 1px 0 var(--rikkahub-border); }
+    .mes.opening-swipe .name_text .ch_name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .mes.opening-swipe .mes_text { line-height: 1.62; }
-    .mes.opening-swipe .opening-swipe-nav { position: sticky; top: -12px; z-index: 4; display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 2px 0 8px; background: var(--rikkahub-sticky-bg); box-shadow: 0 1px 0 var(--rikkahub-border); }
+    .mes.opening-swipe .opening-swipe-nav { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
     .mes.opening-swipe .swipe_left,
     .mes.opening-swipe .swipe_right { min-width: 44px; width: 44px; height: 44px; margin: 0; border: 1px solid var(--rikkahub-border); background: color-mix(in srgb, var(--rikkahub-surface) 94%, transparent); opacity: .78; transition: opacity 160ms ease, background-color 160ms ease; }
-    .mes.opening-swipe .swipes-counter { min-width: 42px; min-height: 24px; border: 1px solid var(--rikkahub-border); border-radius: 999px; padding: 4px 12px; background: color-mix(in srgb, var(--rikkahub-surface) 94%, transparent); text-align: center; }
+    .mes.opening-swipe .swipes-counter { min-width: 42px; min-height: 20px; border: 1px solid var(--rikkahub-border); border-radius: 999px; padding: 3px 10px; background: color-mix(in srgb, var(--rikkahub-surface) 94%, transparent); text-align: center; }
     .mes.opening-swipe .swipe_left:focus-visible,
     .mes.opening-swipe .swipe_right:focus-visible,
     .mes.opening-swipe .swipe_left:active,
@@ -934,7 +936,7 @@
           swipeRight.setAttribute('aria-label', 'Next greeting');
           swipeRight.textContent = '\u203a';
           openingNav.appendChild(swipeRight);
-          block.appendChild(openingNav);
+          nameText.appendChild(openingNav);
         }
 
         var text = document.createElement('div');
