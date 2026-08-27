@@ -6,6 +6,7 @@ import me.rerere.rikkahub.utils.base64Encode
 import me.rerere.rikkahub.utils.escapeHtml
 import me.rerere.rikkahub.utils.toCssHex
 import me.rerere.rikkahub.ui.components.richtext.runtime.buildTavernRuntimeScript
+import me.rerere.rikkahub.ui.components.richtext.st.BundledVendorAssets
 
 private data class MarkdownPreviewAssets(
     val template: String,
@@ -50,28 +51,8 @@ private fun loadMarkdownPreviewAssets(context: Context): MarkdownPreviewAssets {
     return synchronized(MarkdownPreviewAssets::class.java) {
         cachedMarkdownPreviewAssets ?: MarkdownPreviewAssets(
             template = context.assets.open("html/mark.html").bufferedReader().use { it.readText() },
-            vendorScripts = context.assets.list("html/vendor")
-                .orEmpty()
-                .filter { it.endsWith(".js") }
-                .sorted()
-                .joinToString("\n") { name ->
-                    val code = context.assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
-                    "<script>$code</script>"
-                },
-            vendorStyles = context.assets.list("html/vendor")
-                .orEmpty()
-                .filter { it.endsWith(".css") }
-                .sorted()
-                .joinToString("\n") { name ->
-                    val css = context.assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
-                    val localizedCss = if (name == "katex.min.css") {
-                        val fonts = loadBundledKatexFontData(context)
-                        inlineKatexFontSources(css, fonts::get)
-                    } else {
-                        css
-                    }
-                    "<style>$localizedCss</style>"
-                },
+            vendorScripts = BundledVendorAssets.scripts(context),
+            vendorStyles = BundledVendorAssets.styles(context),
         ).also { cachedMarkdownPreviewAssets = it }
     }
 }

@@ -4,8 +4,6 @@ import android.content.Context
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.data.ai.status.CssSanitizer
-import me.rerere.rikkahub.ui.components.richtext.inlineKatexFontSources
-import me.rerere.rikkahub.ui.components.richtext.loadBundledKatexFontData
 
 private val json = Json {
     encodeDefaults = true
@@ -25,40 +23,34 @@ private val DEFAULT_CSS_VARIABLES = mapOf(
 /**
  * 从 assets 读取 st-message.html 模板，把本地 vendor 库（assets/html/vendor/）内联为
  * <script>/<style> 块后注入消息 JSON。运行时无 CDN/file:// 依赖。
+ * 模板与 vendor 内联产物进程级缓存（APK 资产运行期不变），重复调用零 I/O。
  */
+@Volatile
+private var cachedStableMessageTemplate: String? = null
+
+private val stableMessageTemplateLock = Any()
+
 internal fun buildStableMessageHtml(
     context: Context,
     message: StableDomMessage,
     cssVariables: Map<String, String> = emptyMap(),
     extraCss: String? = null,
 ): String {
-    val template = context.assets
-        .open("html/st-message.html")
-        .bufferedReader()
-        .use { it.readText() }
-    val vendorScripts = context.assets.list("html/vendor")
-        .orEmpty()
-        .filter { it.endsWith(".js") }
-        .sorted()
-        .joinToString("\n") { name ->
-            val code = context.assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
-            "<script>$code</script>"
-        }
-    val vendorStyles = context.assets.list("html/vendor")
-        .orEmpty()
-        .filter { it.endsWith(".css") }
-        .sorted()
-        .joinToString("\n") { name ->
-            val css = context.assets.open("html/vendor/$name").bufferedReader().use { it.readText() }
-            val localizedCss = if (name == "katex.min.css") {
-                val fonts = loadBundledKatexFontData(context)
-                inlineKatexFontSources(css, fonts::get)
-            } else {
-                css
-            }
-            "<style>$localizedCss</style>"
-        }
-    return buildStableMessageHtml(message, template, vendorScripts, vendorStyles, cssVariables, extraCss)
+    val template = cachedStableMessageTemplate ?: synchronized(stableMessageTemplateLock) {
+        cachedStableMessageTemplate ?: context.assets
+            .open("html/st-message.html")
+            .bufferedReader()
+            .use { it.readText() }
+            .also { cachedStableMessageTemplate = it }
+    }
+    return buildStableMessageHtml(
+        message,
+        template,
+        BundledVendorAssets.scripts(context),
+        BundledVendorAssets.styles(context),
+        cssVariables,
+        extraCss,
+    )
 }
 
 /** 单遍占位符正则：一次遍历替换所有 {{XXX}}，替换值不会再次被扫描（双向防碰撞）。 */
