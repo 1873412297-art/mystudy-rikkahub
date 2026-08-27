@@ -267,6 +267,13 @@ internal fun containsJsonPatchBlockTag(content: String): Boolean {
     return findBareJsonPatch(content) != null || JSON_PATCH_TRIGGER_REGEX.containsMatchIn(content)
 }
 
+/**
+ * STABLE_DOM html 重建键的内容分量：流式期间冻结（token 更新经 applySegmentPatch 增量推送，
+ * 成品 html 不被重载），非流式跟随内容变化。
+ */
+internal fun stableDomHtmlContentKey(normalizedContent: String, streaming: Boolean): String =
+    if (streaming) "streaming-frozen" else normalizedContent
+
 @Composable
 fun MarkdownBlock(
     content: String,
@@ -339,18 +346,32 @@ fun MarkdownBlock(
                     )
                 }
             }
-            // buildStableMessageHtml 会读 assets 模板 + 内联 ~5MB vendor 库，重开销；
-            // 用 remember 缓存，避免无关 recompose（如选中态/滚动）触发重复构建。
-            // 键含 cssVariables/roleName/stableRole：主题切换、角色变化时同步重建（与
+            // 流式期间冻结初始段快照：烘焙进 MESSAGE_JSON 的段与 MarkdownWebView 的
+            // lastSegments 初值必须同源，否则差集段永远不会被 patch（丢文本）。
+            val frozenInitialSegments = remember(streaming) { stableSegments }
+            // buildStableMessageHtml 读模板 + 内联 ~5MB vendor（已进程级缓存）；键含
+            // cssVariables/roleName/stableRole：主题切换、角色变化时同步重建（与
             // MarkdownWebView baseKey 的颜色失效一致），streaming 翻转时恰好重建一次。
-            val html = remember(normalizedContent, tavernCardStyle, streaming, cssVariables, roleName, stableRole) {
+            // 流式期间内容分量冻结（stableDomHtmlContentKey），token 更新全走段 diff。
+            val html = remember(
+                stableDomHtmlContentKey(normalizedContent, streaming),
+                tavernCardStyle,
+                streaming,
+                cssVariables,
+                roleName,
+                stableRole,
+            ) {
                 buildStableMessageHtml(
                     context,
                     StableDomMessage(
-                        id = normalizedContent.hashCode().toString(),
+                        id = if (streaming) {
+                            frozenInitialSegments.hashCode().toString()
+                        } else {
+                            normalizedContent.hashCode().toString()
+                        },
                         role = stableRole?.toStableDomRole() ?: StableDomRole.ASSISTANT,
                         name = roleName,
-                        segments = stableSegments,
+                        segments = if (streaming) frozenInitialSegments else stableSegments,
                         streaming = streaming,
                     ),
                     cssVariables = cssVariables,
@@ -363,6 +384,7 @@ fun MarkdownBlock(
                 isRawHtml = true,
                 streaming = streaming,
                 streamSegments = stableSegments,
+                initialStreamSegments = if (streaming) frozenInitialSegments else null,
                 tavernStyleVersionKey = tavernCardStyle?.versionKey,
                 tavernConversationId = tavernConversationId,
                 tavernCurrentMessage = tavernCurrentMessage,

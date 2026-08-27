@@ -299,6 +299,11 @@ internal fun MarkdownWebView(
      */
     streamSegments: List<StableDomSegment>? = null,
     /**
+     * 流式冻结 shell 的初始段快照（与烘焙进 content 的 MESSAGE_JSON 同源）。
+     * null 时退回 streamSegments（非流式 / 旧调用方行为不变）。
+     */
+    initialStreamSegments: List<StableDomSegment>? = null,
+    /**
      * 初始最小高度（dp），首次上报前占位，避免 0dp 闪烁或 100dp 假高
      */
     minHeightDp: Int = 24,
@@ -932,7 +937,7 @@ internal fun MarkdownWebView(
                     loadDataWithBaseURL("https://rikkahub.local/", html, "text/html", "UTF-8", null)
                     lastBaseKey.value = baseKey
                     lastContentKey.value = contentKey
-                    lastSegments.value = streamSegments.orEmpty()
+                    lastSegments.value = initialStreamSegments ?: streamSegments.orEmpty()
                 }
             },
             update = { webView ->
