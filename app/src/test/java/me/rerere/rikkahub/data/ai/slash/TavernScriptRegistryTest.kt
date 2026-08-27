@@ -223,4 +223,43 @@ class TavernScriptRegistryTest {
 
         assertEquals(listOf("keep"), registry.listMacros(ownerId = "chat"))
     }
+
+    @Test
+    fun `send hook slot does not leak into macro list`() {
+        // sendHook 走独立槽位（不经 {{}} 宏命名空间）：宏列表/宏查找均不可见，
+        // 防止特殊宏名泄漏（2026-08-26 合并后语义，回归锁定）。
+        val registry = registry()
+        assertTrue(registry.registerSendHook("function hook(args){ return args; }"))
+        assertTrue(registry.listMacros().isEmpty())
+        assertFalse(registry.hasMacro("__send_hook__"))
+        assertFalse(registry.hasMacro("sendHook"))
+    }
+
+    @Test
+    fun `registerBatch folds macro names case insensitively`() {
+        val registry = registry()
+        assertTrue(registry.registerBatch(mapOf("Hello" to "() => 1"), emptyMap()))
+        assertTrue(registry.hasMacro("hello"))
+        assertTrue(registry.hasMacro("HELLO"))
+    }
+
+    @Test
+    fun `async expand falls back safely without runner`() = kotlinx.coroutines.runBlocking {
+        // 无 Context（无 runner 进程）→ 回退共享 QuickJS 同步路径；
+        // JVM 无引擎 → 展开安全兜底为原文，sendHook 兜底为 null（不抛异常）。
+        val registry = registry()
+        registry.registerMacro("foo", "function macro(args){ return 'bar'; }")
+        assertEquals("say {{foo}}", registry.expandMacrosAsync("say {{foo}}", MacroExpandContext()))
+        registry.registerSendHook("function hook(args){ return args; }")
+        assertNull(registry.expandSendHookAsync("text"))
+    }
+
+    @Test
+    fun `async slash command falls back to sync path without runner`() = kotlinx.coroutines.runBlocking {
+        val registry = registry()
+        registry.registerSlashCommand("flip", "function callback(args){ return 'flipped'; }", emptyList(), "flip")
+        val result = registry.executeSlashCommandAsync("flip", "x", MacroExpandContext("U", "C"))
+        assertEquals("callback evaluation failed", result?.error)
+        assertNull(registry.executeSlashCommandAsync("unknown", "x", MacroExpandContext("U", "C")))
+    }
 }

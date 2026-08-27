@@ -301,6 +301,10 @@ class TavernScriptRegistry(context: Context? = null) : MacroExpander {
     /**
      * 同步展开注册宏：`{{name::args}}` 形态。
      * 无注册宏/无可用引擎/执行失败时保留原文。
+     *
+     * 仅供 JVM 测试与无 Context 环境回退；生产发送管线走 [expandMacrosAsync]
+     * （独立 runner 进程，超时拆绑停服可真正中断）。QuickJS evaluate 不响应线程
+     * 中断，future.cancel(true) 不能终止死循环——新增生产调用方必须使用 Async 变体。
      */
     override fun expandMacros(text: String, context: MacroExpandContext): String {
         if (macros.isEmpty()) return text
@@ -393,6 +397,7 @@ class TavernScriptRegistry(context: Context? = null) : MacroExpander {
         }
     }
 
+    /** 同步执行路径（无 runner 回退）：超时只是放弃等待，QuickJS 死循环仍会占住 executor 线程。 */
     private fun <T> runOnExecutor(block: () -> T): T? {
         val future = executor.submit(block)
         return try {
