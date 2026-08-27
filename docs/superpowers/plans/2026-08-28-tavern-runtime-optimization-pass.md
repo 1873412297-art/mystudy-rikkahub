@@ -1,6 +1,6 @@
 # 酒馆渲染/脚本运行时优化 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 清理 AGENTS.md 记录的酒馆渲染/脚本运行时遗留项：流式期间 ~5MB HTML 每 token 重建、宏执行路径回归锁定、死代码与 CDN 本地化收尾、lint 驱动清理。
 
@@ -39,7 +39,7 @@
 - Consumes: 现有 `loadBundledKatexFontData(context)` / `inlineKatexFontSources(css, fonts::get)`（`ui/components/richtext/` 包）
 - Produces: `internal object BundledVendorAssets`，方法 `fun scripts(context: Context): String` 与 `fun styles(context: Context): String`，进程级 `@Volatile` 缓存 + 双检锁；Task 4c 的 `MarkdownWeb.buildTavernCardPreviewHtml` / `buildCharacterCardViewerHtml` 也消费它
 
-- [ ] **Step 1: 新建共享 loader（含缓存）**
+- [x] **Step 1: 新建共享 loader（含缓存）**
 
 ```kotlin
 // app/src/main/java/me/rerere/rikkahub/ui/components/richtext/st/BundledVendorAssets.kt
@@ -96,7 +96,7 @@ internal object BundledVendorAssets {
 }
 ```
 
-- [ ] **Step 2: StableMessageHtmlRenderer 复用 loader + 缓存模板**
+- [x] **Step 2: StableMessageHtmlRenderer 复用 loader + 缓存模板**
 
 `StableMessageHtmlRenderer.kt` 的 context 重载改为：
 
@@ -127,16 +127,16 @@ internal fun buildStableMessageHtml(
 
 （`@Volatile private var cachedTemplate` 放在文件级，`synchronized(this)` 改为 `synchronized(StableMessageHtmlRendererCache)` 之类的文件级私有锁对象均可；保持纯函数重载签名不变。）
 
-- [ ] **Step 3: MarkdownWeb.loadMarkdownPreviewAssets 去重**
+- [x] **Step 3: MarkdownWeb.loadMarkdownPreviewAssets 去重**
 
 把 `MarkdownWeb.kt:48-83` 中 vendor 拼接逻辑替换为 `BundledVendorAssets.scripts(context)` / `.styles(context)`，保留其自身的 `cachedMarkdownPreviewAssets`（模板不同，仍由它缓存 mark.html 模板）。行为不变。
 
-- [ ] **Step 4: 跑测试验证**
+- [x] **Step 4: 跑测试验证**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "me.rerere.rikkahub.ui.components.richtext.st.*"`
 Expected: PASS（纯函数重载未动，契约测试不受影响）
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add app/src/main/java/me/rerere/rikkahub/ui/components/richtext/st/BundledVendorAssets.kt \
@@ -162,7 +162,7 @@ git commit -m "perf: cache st-message template and vendor inline bundles process
 
 关键约束（防踩坑）：`MarkdownWebView.kt:935` 在初次 `loadDataWithBaseURL` 后用当时的 `streamSegments` 初始化 `lastSegments`。若烘焙进 MESSAGE_JSON 的段（冻结快照）与 `lastSegments` 初值不一致，两者的差集永远不会被 patch，会丢文本。因此必须把同一份冻结快照传给 `initialStreamSegments`。
 
-- [ ] **Step 1: 写失败测试（键函数语义）**
+- [x] **Step 1: 写失败测试（键函数语义）**
 
 ```kotlin
 // app/src/test/java/me/rerere/rikkahub/ui/components/richtext/MarkdownStableDomKeyTest.kt
@@ -193,7 +193,7 @@ class MarkdownStableDomKeyTest {
 Run: `./gradlew :app:testDebugUnitTest --tests "*MarkdownStableDomKeyTest*"`
 Expected: FAIL（函数不存在，编译错误）
 
-- [ ] **Step 2: 实现键函数 + MarkdownBlock 冻结逻辑**
+- [x] **Step 2: 实现键函数 + MarkdownBlock 冻结逻辑**
 
 `Markdown.kt`（文件级，internal）：
 
@@ -244,7 +244,7 @@ internal fun stableDomHtmlContentKey(normalizedContent: String, streaming: Boole
             )
 ```
 
-- [ ] **Step 3: MarkdownWebView 增加 initialStreamSegments 参数**
+- [x] **Step 3: MarkdownWebView 增加 initialStreamSegments 参数**
 
 参数区（`streaming`/`streamSegments` 声明之后）加：
 
@@ -264,17 +264,17 @@ internal fun stableDomHtmlContentKey(normalizedContent: String, streaming: Boole
 
 注意 `update` 块里 contentKey 变化时 `lastContentKey`/`lastSegments` 的既有推进逻辑不动。
 
-- [ ] **Step 4: 跑测试验证**
+- [x] **Step 4: 跑测试验证**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "*MarkdownStableDomKeyTest*" --tests "*richtext*"`
 Expected: PASS
 
-- [ ] **Step 5: 全量单测 + 编译**
+- [x] **Step 5: 全量单测 + 编译**
 
 Run: `./gradlew :app:testDebugUnitTest :app:compileDebugKotlin`
 Expected: BUILD SUCCESSFUL，0 失败
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/java/me/rerere/rikkahub/ui/components/richtext/Markdown.kt \
@@ -295,7 +295,7 @@ git commit -m "perf: freeze stable-dom shell during streaming, patch tokens via 
 - Consumes: `TavernScriptRegistry()` 无 Context 构造（JVM 环境自动降级无引擎模式）、`registerMacro/registerSendHook/listMacros/expandMacrosAsync/expandSendHookAsync/registerBatch`
 - Produces: 锁定以下语义的回归测试：宏名大小写折叠、sendHook 槽位不进宏列表、无 runner 时异步 API 安全回退
 
-- [ ] **Step 1: 写回归测试**
+- [x] **Step 1: 写回归测试**
 
 ```kotlin
 // 追加到 TavernScriptRegistryTest（无 QuickJS 原生库的 JVM 环境：引擎降级，
@@ -333,12 +333,12 @@ fun `registerBatch folds macro names case insensitively`() {
 }
 ```
 
-- [ ] **Step 2: 跑测试验证**
+- [x] **Step 2: 跑测试验证**
 
 Run: `./gradlew :app:testDebugUnitTest --tests "*TavernScriptRegistryTest*"`
 Expected: PASS（若 `hasMacro` 对全局宏的 ownerId 语义与断言不符，按 `TavernScriptRegistry.kt:199-204` 的实际语义修正断言，不改生产代码）
 
-- [ ] **Step 3: 同步路径补充注释（无行为变更）**
+- [x] **Step 3: 同步路径补充注释（无行为变更）**
 
 在 `TavernScriptRegistry.kt` 的 `expandMacros` / `callGlobal` / `runOnExecutor` 注释中明确：
 
@@ -350,7 +350,7 @@ Expected: PASS（若 `hasMacro` 对全局宏的 ownerId 语义与断言不符，
  */
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add app/src/test/java/me/rerere/rikkahub/data/ai/slash/TavernScriptRegistryTest.kt \
@@ -368,7 +368,7 @@ git commit -m "test: lock in macro case-folding, send-hook slot isolation and as
 - Modify: `app/src/main/assets/html/st-message.html:121`（删除 `renderMarkdownAll` 方法）
 - Test: `app/src/test/java/me/rerere/rikkahub/ui/components/richtext/st/StableMessageTemplateContractTest.kt:50`
 
-- [ ] **Step 1 (4a): 删死代码 + 改断言**
+- [x] **Step 1 (4a): 删死代码 + 改断言**
 
 `st-message.html` 的 `RikkahubDomBridge` 对象字面量中删除 `renderMarkdownAll: function(){…}` 整个属性（注意删除后对象字面量逗号仍然合法）。契约测试第 50 行 `assertTrue(template.contains("renderMarkdownAll"))` 改为 `assertFalse(template.contains("renderMarkdownAll"))`。
 
@@ -380,7 +380,7 @@ Commit: `git commit -m "chore: drop dead renderMarkdownAll bridge method (no cal
 **Files (4b):**
 - Modify: `app/src/main/assets/html/html_viewer.html:6,98-101`
 
-- [ ] **Step 2 (4b): html_viewer 去掉 esm.sh js-base64**
+- [x] **Step 2 (4b): html_viewer 去掉 esm.sh js-base64**
 
 第 98-101 行的 ES module import 改为原生解码（js-base64 只为 `Base64.decode`，零依赖可替代）：
 
@@ -401,7 +401,7 @@ Commit: `git commit -m "fix: decode base64 natively in html_viewer, drop esm.sh 
 - Modify: `app/src/main/java/me/rerere/rikkahub/ui/components/richtext/MarkdownWeb.kt:138-157,183-210`（两个 builder 注入 vendor）
 - Test: `app/src/test/java/me/rerere/rikkahub/ui/components/richtext/`（若有 tavern_card 相关契约测试，同步更新）
 
-- [ ] **Step 3 (4c): tavern_card 本地化**
+- [x] **Step 3 (4c): tavern_card 本地化**
 
 1. `tavern_card.html` 第 8-9 行的两个 CDN `<link>` 替换为 `{{VENDOR_STYLES}}` 占位符（位置保持在 `<style>` 之前）。
 2. 第 158-165 行的 ES import 段整段替换为 `{{VENDOR_LIBS}}` 占位符 + 经典脚本（参考 `mark.html:219-266` 的全局变量用法）：
@@ -442,7 +442,7 @@ Commit: `git commit -m "fix: localize tavern_card vendor libs and styles, drop C
 - Test: `app/src/test/java/me/rerere/rikkahub/ui/components/richtext/st/StableMessageTemplateContractTest.kt`（加 CSP 断言）
 - Test: `app/src/test/java/me/rerere/rikkahub/ui/components/richtext/st/StableSegmentSnapshotTest.kt`（已存在则追加 encodePatches 契约测试）
 
-- [ ] **Step 4 (4d): st-message CSP 收紧 + 断言**
+- [x] **Step 4 (4d): st-message CSP 收紧 + 断言**
 
 `st-message.html:6` 的 `font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com https://fontsapi.zeoseven.com` 改为 `font-src 'self' data:`。契约测试追加：
 
@@ -458,7 +458,7 @@ fun `template does not allow remote font or script cdns`() {
 
 Run: `./gradlew :app:testDebugUnitTest --tests "*StableMessageTemplateContractTest*"` → PASS
 
-- [ ] **Step 5 (4e): encodePatches 序列化契约测试**
+- [x] **Step 5 (4e): encodePatches 序列化契约测试**
 
 先读 `st-message.html` 中 `applySegmentPatch` 的字段消费代码（`grep -n "applySegmentPatch" -A 20 app/src/main/assets/html/st-message.html`），确认 JS 侧读取的字段名，然后写：
 
@@ -499,16 +499,16 @@ Commit (4d+4e): `git commit -m "fix: tighten st-message CSP and pin segment patc
 
 **Files:** 视 lint 报告而定
 
-- [ ] **Step 1: 生成报告**
+- [x] **Step 1: 生成报告**
 
 Run: `./gradlew :app:lintDebug`
 Expected: BUILD SUCCESSFUL 或分析报告路径 `app/build/reports/lint-results-debug.html`（同时产物 `lint-results-debug.txt` 便于 grep）
 
-- [ ] **Step 2: 分诊**
+- [x] **Step 2: 分诊**
 
 只处理本次改动相关包（`ui/components/richtext/`、`data/ai/slash/`、`service/` 酒馆相关）内的 **Error 级** 与高信号 Warning（UnusedResources 不动、上游合并代码不动、需要行为变更的不动）。逐条在提交信息中记录处理/忽略理由。
 
-- [ ] **Step 3: 修复 + 复跑**
+- [x] **Step 3: 修复 + 复跑**
 
 `./gradlew :app:lintDebug :app:testDebugUnitTest` 全绿后 commit：
 `git commit -m "chore: address lint findings in tavern runtime scope"`
@@ -517,12 +517,12 @@ Expected: BUILD SUCCESSFUL 或分析报告路径 `app/build/reports/lint-results
 
 ### Task 6: 全量验证与收尾
 
-- [ ] **Step 1: 全量验证**
+- [x] **Step 1: 全量验证**
 
 Run: `./gradlew :app:testDebugUnitTest :app:compileDebugKotlin :app:assembleDebug`
 Expected: BUILD SUCCESSFUL，0 失败（基线 153 类 / 1074+ 测试）
 
-- [ ] **Step 2: 装机冒烟**
+- [x] **Step 2: 装机冒烟**
 
 ```bash
 ADB="C:/Users/18734/AppData/Local/Android/Sdk/platform-tools/adb.exe"
@@ -533,7 +533,7 @@ ADB="C:/Users/18734/AppData/Local/Android/Sdk/platform-tools/adb.exe"
 
 重点手验：酒馆会话流式生成期间滚动流畅（Task 2 收益）；角色卡预览页（tavern_card 本地化后）markdown/公式/mermaid 渲染正常。
 
-- [ ] **Step 3: 更新 AGENTS.md 状态块并推送**
+- [x] **Step 3: 更新 AGENTS.md 状态块并推送**
 
 在 AGENTS.md 顶部加 2026-08-28 状态块（本计划各任务结果 + 仍遗留项），`git push origin master`，`private-main` 纯快进对齐。
 

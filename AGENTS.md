@@ -77,6 +77,38 @@ Built with Jetpack Compose, Kotlin, and follows Material Design 3 principles.
 
 ## Current Status
 
+**2026-08-28：酒馆渲染/脚本运行时优化收尾（6 提交，计划文档驱动）。**
+
+- 计划：`docs/superpowers/plans/2026-08-28-tavern-runtime-optimization-pass.md`（写计划前读码审计，
+  发现 AGENTS.md 部分遗留项已被 08-26 合并完成：宏异步化/超时可中断/sendHook 独立槽/宏名折叠/
+  mark.html 与 katex 字体本地化——本轮只补回归锁定，不重复实现）
+- `4be43f79` 模板+vendor 进程级缓存：`BundledVendorAssets`（双检锁）抽取自
+  StableMessageHtmlRenderer 与 MarkdownWeb.loadMarkdownPreviewAssets 的重复内联逻辑；
+  st-message 模板同步缓存，主题切换/流式翻转/新消息不再重读 ~5MB assets
+- `bd704431` **流式冻结 shell（核心性能修复）**：MarkdownBlock remember 键的内容分量改由
+  `stableDomHtmlContentKey`（流式期间冻结）——此前流式每 token 主线程重建 ~5MB HTML 而 WebView
+  只走 applySegmentPatch；新增 `MarkdownWebView.initialStreamSegments` 保证烘焙 MESSAGE_JSON
+  与段 diff 基线同源（防丢文本）
+- `6d7f3c22` 宏路径回归锁定：sendHook 槽不进宏列表、registerBatch 大小写折叠、
+  无 runner 时 Async API 安全回退；同步路径注释警示（QuickJS 不可中断，生产必须走 Async）
+- `8dd90cf1` 死代码 renderMarkdownAll 桥方法删除（无 Kotlin 调用方）+ html_viewer 原生
+  base64 解码（去 esm.sh js-base64，CSP 收紧）
+- `32a16642` **tavern_card 整页 CDN 本地化**：ES import → vendor window 全局
+  （MarkdownIt/vscodeKatex/MarkdownItTaskLists/katex/hljs/mermaid/DOMPurify），
+  两个 Kotlin builder 注入 {{VENDOR_LIBS}}/{{VENDOR_STYLES}}；浏览器实测 markdown/KaTeX/
+  mermaid/宏高亮全部离线渲染正常。至此 assets/html/ 全部运行时路径零 CDN
+- `2e278160` st-message CSP font-src 收紧（字体已 b64 内联）+ encodePatches 序列化契约测试
+  （segmentId/kind/raw 字段名与枚举名钉死）
+- `311fa443` lint 分诊修复（酒馆作用域）：LocalContextGetResourceValueCall ×6（stringResource
+  预取）、EmptySuperCall ×1；MissingTranslation 按 AGENTS.md i18n 策略不动、ModifierParameter
+  样式项不动（理由见提交信息）。注意：lint 全量报告用 08-22 既有产物分诊（lint 任务本机 >5min
+  超时两轮），增量文件经 compile+全量单测把关
+- 验证：`:app:testDebugUnitTest` 全绿（新增 MarkdownStableDomKeyTest/宏回归/CSP/encodePatches
+  契约测试）、`:app:compileDebugKotlin`、`:app:assembleDebug` 全绿；装机 XHD0223523008702
+  Success，RouteActivity 前台无 FATAL
+- 遗留（下轮候选）：lint 全量复跑确认新文件零告警；WebView 重载后 getContext 重推；
+  MESSAGE_SENDING 严格同步语义；ModifierParameter 签名整理；真机流式流畅度对比验证
+
 **2026-08-26：JS-Slash-Runner 酒馆原生运行时合并进 master 并装机推送。**
 
 - 合并提交 `8427115a`（`merge: integrate JS-Slash-Runner tavern native runtime into master`）：
