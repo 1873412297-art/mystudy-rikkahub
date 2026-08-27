@@ -51,6 +51,8 @@ fun Mermaid(
     val activity = LocalActivity.current
     val toaster = LocalToaster.current
     val navController = LocalNavController.current
+    val exportSuccessMessage = stringResource(R.string.mermaid_export_success)
+    val exportFailedMessage = stringResource(R.string.mermaid_export_failed)
 
     val jsInterface = remember {
         MermaidInterface(
@@ -70,16 +72,10 @@ fun Mermaid(
                             e.printStackTrace()
                         }
                     }
-                    toaster.show(
-                        context.getString(R.string.mermaid_export_success),
-                        type = ToastType.Success
-                    )
+                    toaster.show(exportSuccessMessage, type = ToastType.Success)
                 }.onFailure {
                     it.printStackTrace()
-                    toaster.show(
-                        context.getString(R.string.mermaid_export_failed),
-                        type = ToastType.Error
-                    )
+                    toaster.show(exportFailedMessage, type = ToastType.Error)
                 }
             }
         )

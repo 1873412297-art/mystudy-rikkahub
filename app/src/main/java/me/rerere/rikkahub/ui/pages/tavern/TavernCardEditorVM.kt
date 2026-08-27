@@ -275,7 +275,6 @@ class TavernCardEditorVM(
         previewSideEffectQueue.close()
         previewConversationLease.clear()
         previewTargetSelection.clear()
-        super.onCleared()
     }
 
     companion object {

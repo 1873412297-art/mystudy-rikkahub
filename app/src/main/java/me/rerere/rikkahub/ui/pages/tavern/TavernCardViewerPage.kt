@@ -93,6 +93,8 @@ fun TavernCardViewerPage(
     val colorScheme = MaterialTheme.colorScheme
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val defaultError = stringResource(R.string.assistant_importer_import_failed)
+    val exportSuccessMessage = stringResource(R.string.tavern_card_export_success)
+    val exportFailedMessage = stringResource(R.string.tavern_card_export_failed)
 
     var card by remember { mutableStateOf<TavernCharacterCard?>(null) }
     var isLoading by remember { mutableStateOf(true) }
@@ -153,9 +155,9 @@ fun TavernCardViewerPage(
                             os.write(json.toByteArray(Charsets.UTF_8))
                         }
                     }
-                    toaster.show(context.getString(R.string.tavern_card_export_success))
+                    toaster.show(exportSuccessMessage)
                 } catch (e: Exception) {
-                    toaster.show(context.getString(R.string.tavern_card_export_failed))
+                    toaster.show(exportFailedMessage)
                 }
             }
         }
@@ -183,9 +185,9 @@ fun TavernCardViewerPage(
                         }
                         bitmap.recycle()
                     }
-                    toaster.show(context.getString(R.string.tavern_card_export_success))
+                    toaster.show(exportSuccessMessage)
                 } catch (e: Exception) {
-                    toaster.show(context.getString(R.string.tavern_card_export_failed))
+                    toaster.show(exportFailedMessage)
                 }
             }
         }
