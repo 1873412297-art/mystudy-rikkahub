@@ -47,7 +47,7 @@ class StableMessageTemplateContractTest {
         assertTrue(template.contains("{{EXTRA_CSS}}"))
         assertTrue(template.contains("RikkahubDomBridge"))
         assertTrue(template.contains("applySegmentPatch"))
-        assertTrue(template.contains("renderMarkdownAll"))
+        assertFalse(template.contains("renderMarkdownAll"))
         assertFalse(template.contains("mes_segment"))
         assertFalse(template.contains("mes_header"))
     }

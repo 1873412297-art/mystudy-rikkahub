@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://esm.sh; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://esm.sh; frame-src 'self' data: blob:; child-src 'self' data: blob:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; frame-src 'self' data: blob:; child-src 'self' data: blob:;">
     <title>HTML Preview</title>
 
     <style>
@@ -94,11 +94,12 @@
         </div>
     </div>
 
-    <script type="module">
-        import { Base64 } from 'https://esm.sh/js-base64@3.7.5';
-
+    <script>
         const htmlBase64 = `{{HTML_BASE64}}`;
-        let htmlContent = Base64.decode(htmlBase64);
+        // 原生 base64 → UTF-8 解码（替代原 js-base64 依赖，无网络请求）
+        const htmlBinary = atob(htmlBase64);
+        const htmlBytes = Uint8Array.from(htmlBinary, (ch) => ch.charCodeAt(0));
+        let htmlContent = new TextDecoder('utf-8').decode(htmlBytes);
 
         const bgColor = '{{BACKGROUND_COLOR}}';
         const textColor = '{{ON_BACKGROUND_COLOR}}';
