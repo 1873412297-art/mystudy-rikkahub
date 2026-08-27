@@ -1,5 +1,8 @@
 package me.rerere.rikkahub.ui.components.richtext.st
 
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import me.rerere.rikkahub.ui.components.richtext.RichTextSegment
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -58,5 +61,33 @@ class StableSegmentSnapshotTest {
             listOf(SegmentPatch(segmentId = "s1", kind = RichTextSegment.Kind.STATUS_BLOCK, raw = "<status_block>updated")),
             patches
         )
+    }
+
+    @Test
+    fun `encodePatches emits the field contract consumed by applySegmentPatch`() {
+        // st-message.html applySegmentPatch 逐字消费 p.segmentId / p.kind / p.raw，
+        // kind 按枚举名序列化（'MARKDOWN' 等字符串比较）。字段名变更会破坏流式增量渲染。
+        val patches = StableSegmentSnapshot.diff(
+            old = listOf(seg("segment-0", "old")),
+            new = listOf(
+                seg("segment-0", "new"),
+                seg("segment-1", "<div>x</div>", RichTextSegment.Kind.FRONTEND_HTML),
+            ),
+        )
+        val encoded = StableSegmentSnapshot.encodePatches(patches)
+        val array = kotlinx.serialization.json.Json.parseToJsonElement(encoded).jsonArray
+        assertEquals(2, array.size)
+        val first = array[0].jsonObject
+        assertEquals("segment-0", first.getValue("segmentId").jsonPrimitive.content)
+        assertEquals("MARKDOWN", first.getValue("kind").jsonPrimitive.content)
+        assertEquals("new", first.getValue("raw").jsonPrimitive.content)
+        val second = array[1].jsonObject
+        assertEquals("FRONTEND_HTML", second.getValue("kind").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `diff never emits removals for shrunk inputs`() {
+        val old = listOf(seg("s0", "a"), seg("s1", "b"))
+        assertEquals(emptyList<SegmentPatch>(), StableSegmentSnapshot.diff(old, emptyList()))
     }
 }

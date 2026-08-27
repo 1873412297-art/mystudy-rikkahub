@@ -86,4 +86,13 @@ class StableMessageTemplateContractTest {
         val html = buildStableMessageHtml(message, template)
         assertFalse(html.contains("{{"))
     }
+
+    @Test
+    fun templateCspDoesNotAllowRemoteFontOrScriptCdns() {
+        // katex 字体已 b64 内联（BundledVendorAssets.styles），CSP 不应再放行任何远程字体/脚本源
+        val csp = template.substringAfter("Content-Security-Policy").substringBefore("\">")
+        listOf("cdn.jsdelivr", "fonts.gstatic", "fonts.googleapis", "fontsapi.zeoseven", "esm.sh", "unpkg", "cdnjs").forEach {
+            assertFalse("CSP still allows $it", csp.contains(it))
+        }
+    }
 }
