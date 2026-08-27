@@ -125,6 +125,8 @@ fun buildTavernCardPreviewHtml(context: Context, content: String, colorScheme: C
     }
 
     return htmlTemplate
+        .replace("{{VENDOR_LIBS}}", BundledVendorAssets.scripts(context))
+        .replace("{{VENDOR_STYLES}}", BundledVendorAssets.styles(context))
         .replace("{{CONTENT_BASE64}}", content.base64Encode())
         .replace("{{BACKGROUND_COLOR}}", colorScheme.background.toCssHex())
         .replace("{{ON_BACKGROUND_COLOR}}", colorScheme.onBackground.toCssHex())
@@ -299,6 +301,8 @@ fun buildCharacterCardViewerHtml(
     }
 
     return htmlTemplate
+        .replace("{{VENDOR_LIBS}}", BundledVendorAssets.scripts(context))
+        .replace("{{VENDOR_STYLES}}", BundledVendorAssets.styles(context))
         .replace("{{CONTENT_BASE64}}", cardContent.base64Encode())
         .replace("{{BACKGROUND_COLOR}}", colorScheme.background.toCssHex())
         .replace("{{ON_BACKGROUND_COLOR}}", colorScheme.onBackground.toCssHex())

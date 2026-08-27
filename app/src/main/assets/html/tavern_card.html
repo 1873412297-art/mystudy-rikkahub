@@ -3,10 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fontsapi.zeoseven.com https://fonts.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://esm.sh; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net https://fonts.gstatic.com https://fontsapi.zeoseven.com; connect-src 'self' https://cdn.jsdelivr.net https://esm.sh;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; frame-src 'self' data: blob:; child-src 'self' data: blob:;">
     <title>Character Card</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/atom-one-dark.min.css">
+    {{VENDOR_STYLES}}
     <style>
         :root {
             --bg: {{BACKGROUND_COLOR}};
@@ -154,15 +153,28 @@
 </head>
 <body><div id="content"></div>
 
-<script type="module">
-import MarkdownIt from 'https://esm.sh/markdown-it@14.0.0';
-import vscodemarkdownItKatex from 'https://esm.sh/@vscode/markdown-it-katex';
-import markdownItTaskLists from 'https://esm.sh/markdown-it-task-lists@2.1.1';
-import katex from 'https://esm.sh/katex@0.16.8';
-import hljs from 'https://esm.sh/highlight.js@11.9.0';
-import mermaid from 'https://esm.sh/mermaid@11';
-import { Base64 } from 'https://esm.sh/js-base64@3.7.5';
-import DOMPurify from 'https://esm.sh/dompurify@3.1.7';
+{{VENDOR_LIBS}}
+<script>
+(function(){
+const MarkdownIt = window.MarkdownIt;
+const vscodeKatex = window.vscodeKatex;
+const markdownItTaskLists = window.MarkdownItTaskLists;
+const katex = window.katex;
+const hljs = window.hljs;
+const mermaid = window.mermaid;
+const DOMPurify = window.DOMPurify;
+
+// 原生 base64 → UTF-8 解码（替代原 js-base64 依赖，无网络请求）
+function decodeBase64(b64) {
+    const bin = atob(b64);
+    const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+    return new TextDecoder('utf-8').decode(bytes);
+}
+
+if (!MarkdownIt || !DOMPurify) {
+    document.getElementById('content').innerHTML = '<p style="color:#c00">Render libraries unavailable.</p>';
+    return;
+}
 
 const md = new MarkdownIt({
     html: true,         // 允许 raw HTML，但渲染后用 DOMPurify 白名单过滤（见 render() 末尾）
@@ -173,15 +185,15 @@ const md = new MarkdownIt({
     typographer: true,
     quotes: '“”‘’',
     highlight(str, lang) {
-        if (lang && hljs.getLanguage(lang)) {
+        if (lang && hljs && hljs.getLanguage(lang)) {
             try { return '<pre class="hljs"><code>'+hljs.highlight(str,{language:lang,ignoreIllegals:true}).value+'</code></pre>'; }
             catch(__) {}
         }
         return '<pre class="hljs"><code>'+md.utils.escapeHtml(str)+'</code></pre>';
     }
 });
-md.use(vscodemarkdownItKatex);
-md.use(markdownItTaskLists, { enabled: true, label: true, labelAfter: true });
+if (vscodeKatex) md.use(vscodeKatex, { katex: katex });
+if (markdownItTaskLists) md.use(markdownItTaskLists, { enabled: true, label: true, labelAfter: true });
 
 // Mermaid fence
 const fence = md.renderer.rules.fence||((t,i,o,e,r)=>r.renderToken(t,i,o));
@@ -192,9 +204,9 @@ md.renderer.rules.fence = function(t,i,o,e,r) {
     }
     return fence(t,i,o,e,r);
 };
-mermaid.initialize({startOnLoad:false,theme:'default',securityLevel:'strict',fontFamily:'inherit'});
+if (mermaid) mermaid.initialize({startOnLoad:false,theme:'default',securityLevel:'strict',fontFamily:'inherit'});
 
-const rawContent = Base64.decode(`{{CONTENT_BASE64}}`);
+const rawContent = decodeBase64(`{{CONTENT_BASE64}}`);
 
 // Pre-process: handle ST-specific formatting
 function preProcess(content) {
@@ -224,11 +236,13 @@ async function render() {
 
         // Mermaid
         const mm = document.querySelectorAll('.mermaid');
-        if (mm.length) await mermaid.run({ nodes: mm });
+        if (mm.length && mermaid) await mermaid.run({ nodes: mm });
 
         // KaTeX
-        document.querySelectorAll('.math.inline').forEach(el=>{try{katex.render(el.textContent,el,{throwOnError:false})}catch(e){}});
-        document.querySelectorAll('.math.block').forEach(el=>{try{katex.render(el.textContent,el,{displayMode:true,throwOnError:false})}catch(e){}});
+        if (katex) {
+            document.querySelectorAll('.math.inline').forEach(el=>{try{katex.render(el.textContent,el,{throwOnError:false})}catch(e){}});
+            document.querySelectorAll('.math.block').forEach(el=>{try{katex.render(el.textContent,el,{displayMode:true,throwOnError:false})}catch(e){}});
+        }
 
         // External links
         document.querySelectorAll('a[href^="http"]').forEach(l=>{l.target='_blank';l.rel='noopener noreferrer'});
@@ -289,7 +303,7 @@ async function render() {
     }
 }
 render();
+})();
 </script>
-<script nomodule>alert('WebView too old — please update Android System WebView.');</script>
 </body>
 </html>
