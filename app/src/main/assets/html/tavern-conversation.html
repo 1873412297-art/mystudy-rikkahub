@@ -83,14 +83,16 @@
     .mes.opening-swipe .name_text { position: sticky; top: -12px; z-index: 4; justify-content: space-between; gap: 8px; min-height: 44px; margin: 0 0 6px; padding-left: 50px; background: var(--rikkahub-sticky-bg); box-shadow: 0 1px 0 var(--rikkahub-border); }
     .mes.opening-swipe .name_text .ch_name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .mes.opening-swipe .mes_text { line-height: 1.62; }
-    .mes.opening-swipe .opening-swipe-nav { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+    .mes.opening-swipe .opening-swipe-nav { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
     .mes.opening-swipe .swipe_left,
-    .mes.opening-swipe .swipe_right { min-width: 44px; width: 44px; height: 44px; margin: 0; border: 1px solid var(--rikkahub-border); background: color-mix(in srgb, var(--rikkahub-surface) 94%, transparent); opacity: .78; transition: opacity 160ms ease, background-color 160ms ease; }
-    .mes.opening-swipe .swipes-counter { min-width: 42px; min-height: 20px; border: 1px solid var(--rikkahub-border); border-radius: 999px; padding: 3px 10px; background: color-mix(in srgb, var(--rikkahub-surface) 94%, transparent); text-align: center; }
+    .mes.opening-swipe .swipe_right { min-width: 44px; width: 44px; height: 44px; margin: 0; border: 0; border-radius: 50%; color: var(--rikkahub-text-secondary); background: transparent; font-size: 24px; opacity: .85; transition: opacity 160ms ease, background-color 160ms ease; }
+    .mes.opening-swipe .swipe_left:disabled,
+    .mes.opening-swipe .swipe_right:disabled { visibility: visible; opacity: .3; }
+    .mes.opening-swipe .swipes-counter { min-width: 40px; min-height: 20px; padding: 2px 4px; text-align: center; }
     .mes.opening-swipe .swipe_left:focus-visible,
     .mes.opening-swipe .swipe_right:focus-visible,
     .mes.opening-swipe .swipe_left:active,
-    .mes.opening-swipe .swipe_right:active { opacity: 1; }
+    .mes.opening-swipe .swipe_right:active { opacity: 1; background: color-mix(in srgb, var(--rikkahub-surface-variant) 80%, transparent); }
     .mes.opening-forward .mes_block { animation: opening-enter-forward 220ms cubic-bezier(.2,.8,.2,1) both; }
     .mes.opening-backward .mes_block { animation: opening-enter-backward 220ms cubic-bezier(.2,.8,.2,1) both; }
     @keyframes opening-enter-forward {
